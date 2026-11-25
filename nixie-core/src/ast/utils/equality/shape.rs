@@ -68,7 +68,7 @@ pub(super) fn fold_args(kind: &TermKind) -> Option<(crate::interner::Spur, TermI
 
 /// Extract `(function symbol, codomain sort, bag)` from `BagMap`.
 /// The symbol is a payload, not a child (`fold_args`'s discipline); the
-/// codomain sort is carried with it — a same-named function with a
+/// codomain sort is carried with it – a same-named function with a
 /// different image sort is a different function.
 pub(super) fn map_args(
     kind: &TermKind,

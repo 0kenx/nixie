@@ -1,10 +1,10 @@
 //! Planted-solution fuzzing at real ZK primes (`docs/FF_THEORY_DESIGN.md`
 //! §10.3): sample a witness `z ∈ 𝔽_pⁿ`, generate constraints it satisfies
-//! — ground truth is `sat`, so **any `unsat` is a hard failure at n = 1**.
+//! – ground truth is `sat`, so **any `unsat` is a hard failure at n = 1**.
 //! Mutated instances (constraints the witness violates) are exercised for
 //! crash-freedom and honest verdicts only, never scored.
 //!
-//! The generator builds R1CS-shaped systems — the circuit shape the
+//! The generator builds R1CS-shaped systems – the circuit shape the
 //! theory exists for: linear-plus-a-thin-layer-of-rank-1-quadratics.
 
 use nixie_core::ast::{TermId, TermManager};
@@ -40,7 +40,7 @@ fn field_of(manager: &TermManager, sort: nixie_core::sort::SortId) -> FieldId {
 
 /// One planted round: `n` variables, `k` constraints over 𝔽_p, all
 /// satisfied by the planted witness. The procedure must answer
-/// `Model` (validated) or, on tiny budgets, `OutOfBudget` — never
+/// `Model` (validated) or, on tiny budgets, `OutOfBudget` – never
 /// `Unsat`/`Exhausted`.
 fn planted_round(p: &BigUint, n: usize, k: usize, seed: u64) {
     planted_round_bounded(p, n, k, seed, 1 << 24);
@@ -131,13 +131,13 @@ fn planted_round_bounded(p: &BigUint, n: usize, k: usize, seed: u64, budget: u64
                 .unwrap_or_default();
             assert!(err.is_empty(), "planted solution failed validation: {err}");
             // The model need not equal the witness (any point works), but
-            // it must satisfy — which validate_model just proved.
+            // it must satisfy – which validate_model just proved.
         }
         FfOutcome::OutOfBudget { .. } => {
             // An honest refusal and one of the design's listed Unknown
             // sources (§5): search or Gröbner budget exhaustion, or the
             // positive-dimensional enumeration cap at a huge prime. The
-            // invariants that matter are pinned by the other arms —
+            // invariants that matter are pinned by the other arms –
             // never a false verdict, never an unvalidated model.
         }
         FfOutcome::Unsat(core) => {
@@ -165,7 +165,7 @@ fn planted_round_bounded(p: &BigUint, n: usize, k: usize, seed: u64, budget: u64
 }
 
 /// Mutated rounds: corrupt one constraint so the system has no planted
-/// witness. No ground truth — assert only that the verdict is one of the
+/// witness. No ground truth – assert only that the verdict is one of the
 /// honest outcomes and (on Model) that validation passes.
 fn mutated_round(p: &BigUint, n: usize, k: usize, seed: u64) {
     // Mutated systems are crash/honesty probes, not verdict probes: a
@@ -222,7 +222,7 @@ fn planted_solutions_at_goldilocks() {
 fn planted_zero_dimensional_systems_decide_at_bn254() {
     // n constraints pinning every variable through dense linear forms:
     // zero-dimensional, so the search must terminate in a model (never a
-    // budget excuse) — the strongest form of the planted oracle.
+    // budget excuse) – the strongest form of the planted oracle.
     let p: BigUint =
         "21888242871839275222246405745257275088548364400416034343698204186575808495617"
             .parse()

@@ -10,7 +10,7 @@
 //! the induced equivalence partitions and the conflict verdicts.
 //!
 //! Any disagreement is a genuine incremental-state divergence of exactly
-//! the class the per-final-check resync backstop was installed to hide —
+//! the class the per-final-check resync backstop was installed to hide –
 //! and a soundness bug in its own right (a missed congruence is a missed
 //! conflict, i.e. a potential false `sat`).
 

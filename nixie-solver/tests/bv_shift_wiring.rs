@@ -6,7 +6,7 @@
 //! for `0 < k < w`.  The wiring makes shift-heavy identities converge
 //! *syntactically* under the simplify cascade (the `bitrev` family:
 //! 1.5–2× faster at every width, measured), at the price of concat-spine
-//! terms — hence off by default pending the 509-file screen.
+//! terms – hence off by default pending the 509-file screen.
 //!
 //! Every case is the unsat/sat pair: negated identity must refute, the
 //! positive must hold.
@@ -74,7 +74,7 @@ fn lshr_const_is_concat_wiring() {
 
 /// The boundary distances must keep their exact semantics: `k = 0` is the
 /// identity, `k >= w` is all-zero (the wiring does not fire there; the
-/// fold handles it — these pin the ends so a future off-by-one cannot
+/// fold handles it – these pin the ends so a future off-by-one cannot
 /// hide between them).
 #[test]
 fn shift_boundary_distances() {

@@ -300,7 +300,7 @@ pub struct CounterExampleGenerator {
     candidate_cache: FxHashMap<SortId, Vec<TermId>>,
     /// Injected candidates (ground terms of the problem, Skolem apps): merged
     /// INTO the computed candidate lists by `build_candidate_lists`, never a
-    /// replacement for them — extras alone would starve the pool of model
+    /// replacement for them – extras alone would starve the pool of model
     /// values and defaults. Kept separate from `candidate_cache`, which is a
     /// pure per-round memo of computed lists.
     injected_candidates: FxHashMap<SortId, Vec<TermId>>,
@@ -312,7 +312,7 @@ pub struct CounterExampleGenerator {
     /// built).  This is what makes the finite-exhaustion `Satisfied` sound:
     /// "no counterexample among the enumerated tuples" only proves the
     /// quantifier holds when the enumeration covered the model's whole
-    /// domain — the CLEARSY/00779 false `sat` enumerated 10 of a 2405-term
+    /// domain – the CLEARSY/00779 false `sat` enumerated 10 of a 2405-term
     /// pool while the exhaustion check counted an 8-value universe.
     exhaustive_candidates: FxHashMap<SortId, Option<usize>>,
 }
@@ -363,8 +363,8 @@ impl CounterExampleGenerator {
         let mut candidates = self.build_candidate_lists(&quantifier.bound_vars, model, manager);
         // Semantic normalization for constructor argument axes (see
         // `constructor_tables`): a defining axiom's tuple variables take
-        // the *semantic* domain — the universe with compounds collapsed
-        // through the computed tables — so the sampler stops proposing
+        // the *semantic* domain – the universe with compounds collapsed
+        // through the computed tables – so the sampler stops proposing
         // `(x, b, union(b,b))` next to `(x, b, b)`: the instantiation at
         // the compound is what mints `union(b, union(b,b))` and chases the
         // compound closure without bound.  Collapsing is value-determining
@@ -372,7 +372,7 @@ impl CounterExampleGenerator {
         // the body reads its tuple variables only through the observer
         // (row-determined) and tabled constructors (row-closed), so an
         // evaluation at a representative answers for every element it
-        // represents — including for the finite-exhaustion gate that
+        // represents – including for the finite-exhaustion gate that
         // trusts this coverage.
         for (i, list) in candidates.iter_mut().enumerate() {
             if let Some(domain) = model.semantic_domains.get(&(quantifier.term, i)) {
@@ -383,7 +383,7 @@ impl CounterExampleGenerator {
             {
                 // Table mode: the completed structure's domain governs the
                 // whole problem, so every axis of every quantifier ranges
-                // over the frozen domain — the raw universe grows with
+                // over the frozen domain – the raw universe grows with
                 // every witness and compound the ground solver mints, and
                 // enumerating the fresh points re-moves the model every
                 // round (the loop that never converges) while bloating the
@@ -545,7 +545,7 @@ impl CounterExampleGenerator {
             }
 
             // Strategy 2: Use values from the model.  The *value's own*
-            // sort must match — an assignments entry whose term and value
+            // sort must match – an assignments entry whose term and value
             // carry different sorts (a harvested artifact) must not leak
             // a foreign-sorted value into this sort's candidate list
             // (the ill-typed-instantiation vector).
@@ -564,7 +564,7 @@ impl CounterExampleGenerator {
 
             // Every value a *total* reading of the completed model can
             // exhibit for this sort: the universe, every same-sort assignment
-            // value, and every same-sort function-table argument and result —
+            // value, and every same-sort function-table argument and result –
             // **untruncated**.  This is the candidate domain the
             // finite-exhaustion `Satisfied` needs covered; the universe alone
             // is a `MAX_UNIVERSE_SIZE`-truncated *sample* (CLEARSY/00779: an
@@ -618,7 +618,7 @@ impl CounterExampleGenerator {
             // parity benchmark to `unknown`.  For *exhaustion-eligible*
             // sorts (Bool, uninterpreted) the pool is merged AFTER the
             // strategies: the required values lead, so truncation may only
-            // ever cut extra pool entries, never a required value — a bare
+            // ever cut extra pool entries, never a required value – a bare
             // pool is a syntactic sample, and a truncated sample silently
             // dropped the falsifying value of the CLEARSY/00779 goal.
             let finite_by_kind = matches!(
@@ -645,7 +645,7 @@ impl CounterExampleGenerator {
             // Coverage verdict for the finite-exhaustion gate.  `None` (a
             // sample, not a domain) when the sort is not finite-by-kind,
             // the truncated list dropped a required value, or an
-            // uninterpreted sort yielded NO required values — the harvest
+            // uninterpreted sort yielded NO required values – the harvest
             // could not see the model's domain at all (SMT-LIB domains are
             // non-empty, so "no values found" is a harvest failure, not an
             // empty domain; treating it as vacuously covered is the
@@ -714,10 +714,10 @@ impl CounterExampleGenerator {
         } else if let Some(width) = manager.sorts.get(sort).and_then(|s| s.bitvec_width()) {
             // BitVec: the domain is FINITE, so for small widths enumerate it
             // exhaustively (a quantifier over 2^w values can then be fully
-            // instantiated — complete, not heuristic).  Above the exhaustive
+            // instantiated – complete, not heuristic).  Above the exhaustive
             // bound the cap would truncate away the informative values, so
             // fall back to a deterministic structural set: zero, one, the
-            // sign bit, and all-ones — the values most likely to falsify an
+            // sign bit, and all-ones – the values most likely to falsify an
             // operator's algebraic identity (overflow / sign behaviour).
             let exhaustive = width <= 3; // 8 values <= default candidate cap
             if exhaustive {
@@ -877,7 +877,7 @@ impl CounterExampleGenerator {
                 && !num_traits::Zero::is_zero(&a)
             {
                 // Euclidean division: exact quotient only when the
-                // remainder is zero (sign-independent for our purpose —
+                // remainder is zero (sign-independent for our purpose –
                 // a non-exact point still gets the symbolic fallback).
                 let (q, r) = (num / &a, num % &a);
                 if num_traits::Zero::is_zero(&r) {
@@ -2238,7 +2238,7 @@ impl CounterExampleGenerator {
     /// The actual number of candidates enumerated for `sort` this round, when
     /// that list provably covers every value the completed model can exhibit
     /// for the sort (see `build_candidate_lists`).  `None` means the
-    /// enumeration was a sample — sound for *finding* counterexamples, sound
+    /// enumeration was a sample – sound for *finding* counterexamples, sound
     /// for nothing else.
     pub fn exhaustive_candidate_len(&self, sort: SortId) -> Option<usize> {
         self.exhaustive_candidates.get(&sort).copied().flatten()

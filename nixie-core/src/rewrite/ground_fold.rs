@@ -2,7 +2,7 @@
 //!
 //! `fold_ground` collapses every *fully ground* arithmetic/Boolean
 //! subterm of `term` to its constant value, so that trivially-foldable
-//! inputs are never measured — and refused — at their unfolded structural
+//! inputs are never measured – and refused – at their unfolded structural
 //! depth by the encode-depth guard (see `nixie-solver`'s
 //! `ENCODE_DEPTH_LIMIT` and the deep-nesting finding in
 //! `bench/obligation/README.md`).
@@ -11,7 +11,7 @@
 //!
 //! * One explicit-stack post-order walk, memoized per unique `TermId`:
 //!   linear in the number of *unique* DAG nodes (sublinear in the expanded
-//!   tree whenever the input shares subterms), zero native recursion —
+//!   tree whenever the input shares subterms), zero native recursion –
 //!   stack-safe on arbitrarily deep input.
 //! * One final [`TermManager::substitute`] (itself iterative and
 //!   capture-avoiding) rebuilds every ancestor of a collapsed node in a
@@ -24,9 +24,9 @@
 //!
 //! In addition to ground collapse, associative chains are *normalized*:
 //! same-operator, same-sort children are spliced flat and their constants
-//! combined exactly — Int sums/products in `BigInt`, Real sums via checked
+//! combined exactly – Int sums/products in `BigInt`, Real sums via checked
 //! `Rational64` (on overflow the partial sum is kept and later constants
-//! stay as arguments — same value, no loss), and wraparound BV
+//! stay as arguments – same value, no loss), and wraparound BV
 //! `xor`/`add`/`mul` in exact modular arithmetic.  A 5 000-deep constant
 //! `bvxor` chain over a variable collapses to `x ⊕ C`; `(+ 1 (+ 1 … x))`
 //! becomes `(+ C x)`.
@@ -118,7 +118,7 @@ pub fn fold_ground(term: TermId, manager: &mut TermManager) -> TermId {
 }
 
 /// SMT-LIB Euclidean division on `BigInt`: quotient/remainder with the
-/// remainder in `[0, |b|)` (implemented on inherent ops — the
+/// remainder in `[0, |b|)` (implemented on inherent ops – the
 /// `num-integer` trait is not uniformly in scope for `BigInt` here).
 fn big_div_euclid(a: &BigInt, b: &BigInt) -> BigInt {
     let mut q = a / b;
@@ -249,8 +249,8 @@ fn fold_node(
             // Associative-chain normalization: splice same-op, same-sort
             // children into one flat argument list, then combine the
             // constants exactly.  This subsumes the fully-ground collapse
-            // and additionally rescues chains with a variable base —
-            // `(+ 1 (+ 1 … x))` normalizes to `(+ 600 x)` — so the
+            // and additionally rescues chains with a variable base –
+            // `(+ 1 (+ 1 … x))` normalizes to `(+ 600 x)` – so the
             // encode-depth guard measures the *normalized* term, not the
             // unfolded chain.
             let is_int = sort_is(manager, sort, Sort::is_int);
@@ -283,7 +283,7 @@ fn fold_node(
                 } else if !rat_overflow && let Some(v) = rat_val(k, manager) {
                     // Real: checked combine; on overflow keep the partial
                     // sum as one constant and stop combining (the remaining
-                    // constants stay as arguments — same value, no loss).
+                    // constants stay as arguments – same value, no loss).
                     match rat_sum.checked_add(&v) {
                         Some(s) => {
                             rat_sum = s;
@@ -513,7 +513,7 @@ fn fold_node(
         TermKind::And(_) => {
             // Total shortcuts only: a single false child decides the value;
             // an all-constant set evaluates. Dropping a `true` child would
-            // need a structural rebuild — left to the main simplifier.
+            // need a structural rebuild – left to the main simplifier.
             let mut any_false = false;
             let mut all_true = true;
             let mut all_const = true;

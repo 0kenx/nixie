@@ -5,7 +5,7 @@
 //!
 //! * `#P2b-24`: `encode_bool_node` accepted only `not`/`and`/`or` over
 //!   `=`/`bvult`/`bvule`/`bvslt`/`bvsle`, so a selector using `distinct`,
-//!   `xor`, `=>`, a Bool `ite` or a Bool `=` had no circuit — and `bv_ite`
+//!   `xor`, `=>`, a Bool `ite` or a Bool `=` had no circuit – and `bv_ite`
 //!   returned `()` without saying so, leaving the caller to abstract the term
 //!   into free bits.
 //! * `#P2b-25`: a truth value pinned into a boolean node by
@@ -191,7 +191,7 @@ fn a_pinned_selector_is_named_in_the_conflict_explanation() {
     ));
     assert!(solver.pinned_terms().is_empty());
 
-    // The pin arrives after the last check — the shape whose refutation went
+    // The pin arrives after the last check – the shape whose refutation went
     // unexamined before `assert_bool_value` reported "pinned a live node".
     assert!(solver.assert_bool_value(p, true));
     assert_eq!(solver.pinned_terms(), &[p]);
@@ -204,7 +204,7 @@ fn a_pinned_selector_is_named_in_the_conflict_explanation() {
             assert!(
                 explanation.contains(&p),
                 "0.3.3/0.3.4 omitted the pinned selector from the explanation, \
-                 which made the CDCL(T) core learn a clause without `p` — a \
+                 which made the CDCL(T) core learn a clause without `p` – a \
                  false proof: {explanation:?}"
             );
         }
@@ -276,12 +276,12 @@ fn a_value_recorded_before_the_node_exists_is_pinned_on_creation() {
     assert_eq!(solver.get_value(x), Some(2));
 }
 
-// ---------------------------------------------------------------------------
-// `#P2b-27` / `#P2b-29` — what the circuit exposes to the theory manager
-// ---------------------------------------------------------------------------
+// ========  ========
+// `#P2b-27` / `#P2b-29` – what the circuit exposes to the theory manager
+// ========  ========
 
 /// The value the circuit chose for a selector the enclosing search never
-/// assigned is readable through `bool_node_terms` + `bool_value` — the pair
+/// assigned is readable through `bool_node_terms` + `bool_value` – the pair
 /// `nixie-solver`'s model builder publishes (`#P2b-27`): `x = (ite p 1 2)`
 /// with `x = 1` pinned leaves `p = true` as the only model.
 #[test]
@@ -319,7 +319,7 @@ fn a_selector_the_outer_search_never_assigned_is_readable_from_the_circuit() {
 /// `bv/solver/scope.rs`) both outlive every `pop`; `reset` clears both.
 ///
 /// Until re-fix pass 12 this test asserted that a leaf created inside a scope
-/// was retracted with it — which was right while `sat.pop()` deleted the
+/// was retracted with it – which was right while `sat.pop()` deleted the
 /// leaf's clauses, and is the same invariant (record ⇔ live circuit) now.
 #[test]
 fn opaque_leaves_live_exactly_as_long_as_their_circuits() {

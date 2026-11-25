@@ -1,9 +1,9 @@
-//! `obligation-run` — check a solver against the certificates.
+//! `obligation-run` – check a solver against the certificates.
 //!
 //! For every instance: run the solver, parse one answer per `check-sat`
 //! (SMT-LIB or SAT-competition format), compare against the expected
 //! vector. Optionally cross-check the *generator* by running Z3 (SMT2 and
-//! CNF) and CaDiCaL (CNF) — a Z3 disagreement with the certificate is
+//! CNF) and CaDiCaL (CNF) – a Z3 disagreement with the certificate is
 //! reported as GENFAIL, distinct from a solver mismatch.
 //!
 //! Timeouts use a poll/kill/reap loop: the child is always reaped, unlike
@@ -11,7 +11,7 @@
 //!
 //! Mismatches, crashes and generator disagreements are written to the
 //! artifacts directory together with the exact input, expected answers,
-//! and provenance — never deleted automatically.
+//! and provenance – never deleted automatically.
 
 use nixie_obligation::registry::{self, Size};
 use nixie_obligation::stress::StressCfg;
@@ -472,7 +472,7 @@ fn main() -> ExitCode {
 
 fn load_corpus(dir: &Path) -> Result<Vec<Instance>, String> {
     // Regenerate from manifest names is not possible without seeds in the
-    // name — but names embed family/seed/size, so parse them back.
+    // name – but names embed family/seed/size, so parse them back.
     let manifest = std::fs::read_to_string(dir.join("manifest.json"))
         .map_err(|e| format!("cannot read manifest: {e}"))?;
     let mut out = Vec::new();

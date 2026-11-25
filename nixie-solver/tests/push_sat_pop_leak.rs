@@ -1,5 +1,5 @@
 //! Soundness guards for the `push / check-sat (sat) / pop / assert / check-sat`
-//! incremental leak — a **pre-existing base-solver bug found during the
+//! incremental leak – a **pre-existing base-solver bug found during the
 //! upstream-v0.3.3 port** and fixed by journalling the clause-dedup memos on
 //! the undo trail (`TrailOp::NumericEqSplitPairAdded`,
 //! `TrailOp::ArithConstAxiomPairAdded`).
@@ -7,7 +7,7 @@
 //! # The shape
 //!
 //! ```text
-//! (assert A)          ; base — includes a numeric equality atom
+//! (assert A)          ; base – includes a numeric equality atom
 //! (push 1)
 //! (check-sat)         ; answers sat (correctly)
 //! (pop 1)
@@ -17,14 +17,14 @@
 //!
 //! # Evidence trail (2026-08-27 session, `docs/studies/2026-08-27-v0.3.3-port.md`)
 //!
-//! * Reproduces on **pristine main** (`845c53b`) — not a port regression.
-//! * Pure-Bool shapes (no arithmetic) are **correct** — the SAT core's
+//! * Reproduces on **pristine main** (`845c53b`) – not a port regression.
+//! * Pure-Bool shapes (no arithmetic) are **correct** – the SAT core's
 //!   push/solve/pop path is fine (verified with a standalone `nixie-sat`
 //!   driver replaying the same clause/unit sequence, binary and ternary
 //!   forms: `r1=Sat r2=Unsat`).
 //! * The failing second `check` answers `sat` with **zero decisions**: the
 //!   level-0 prefix satisfies every live clause, so the refutation has to
-//!   come from theory propagation of the numeric equality atom — and none
+//!   come from theory propagation of the numeric equality atom – and none
 //!   fires.
 //!
 //! The fix (all repros below now pass):
@@ -41,7 +41,7 @@
 //!   disk-full build failure).
 //! * Second instance of the same class, found by sweeping:
 //!   `arith_const_axiom_pairs` ("already axiomatized in a prior `check`
-//!   whose clauses survived (no retracting `pop`)" — the parenthetical is
+//!   whose clauses survived (no retracting `pop`)" – the parenthetical is
 //!   false) is journalled the same way. `care_split_pairs` and
 //!   `arith_defined_terms` were already journalled.
 

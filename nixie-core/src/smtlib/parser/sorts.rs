@@ -81,10 +81,10 @@ impl<'a> Parser<'a> {
             "Real" => Ok(self.manager.sorts.real_sort),
             "String" => Ok(self.manager.sorts.string_sort()),
             // The SMT-LIB FloatingPoint theory declares four canonical
-            // format aliases as part of the theory's language —
+            // format aliases as part of the theory's language –
             // `Float16` = `(_ FloatingPoint 5 11)`, `Float32` =
             // `(_ FloatingPoint 8 24)`, `Float64` = `(_ FloatingPoint 11
-            // 53)`, `Float128` = `(_ FloatingPoint 15 113)` — and
+            // 53)`, `Float128` = `(_ FloatingPoint 15 113)` – and
             // essentially every QF_FP script declares its variables at one
             // of these names.  Previously they fell through to the generic
             // `Uninterpreted` fallback, silently building a fresh free
@@ -130,7 +130,7 @@ impl<'a> Parser<'a> {
             //
             // Because those axioms attach per *nullary declaration*, the sort
             // is accepted here and then rejected in the positions no axiom can
-            // reach — see `reject_unsupported_rounding_mode_position`.
+            // reach – see `reject_unsupported_rounding_mode_position`.
             // (Ported from upstream v0.3.3.)
             "RoundingMode" => {
                 self.manager.note_rounding_mode_used();
@@ -148,7 +148,7 @@ impl<'a> Parser<'a> {
             // built-in sort `TermManager::reglan_sort()`, which is
             // `Uninterpreted("RegLan")`. Accepting `RegLan` here would let a
             // user-declared symbol be minted at that very sort, aliasing a free
-            // constant into the regex encoding's own namespace — a regex
+            // constant into the regex encoding's own namespace – a regex
             // operand the derivative engine cannot compile and has no way to
             // recognise as foreign. This rejection is therefore load-bearing,
             // not a placeholder: it is what keeps the reserved name reserved.
@@ -158,7 +158,7 @@ impl<'a> Parser<'a> {
                 message: "sort 'RegLan' is a reserved SMT-LIB Strings theory sort name: it names \
                     the built-in encoding Nixie interns every regular-expression term at, so it \
                     cannot also name a user-declared constant or function. The regular-language \
-                    operators themselves are fully supported — build regular expressions with \
+                    operators themselves are fully supported – build regular expressions with \
                     str.to_re / re.++ / re.union / re.inter / re.* / re.range / re.none / re.all \
                     / re.allchar and test membership with str.in_re"
                     .to_string(),
@@ -354,7 +354,7 @@ impl<'a> Parser<'a> {
 
     /// Finish `(_ FiniteField <order>)` with the `_` and head name already
     /// consumed: read the order numeral and intern the field (classifying
-    /// primality once — a composite order errors here, never silently
+    /// primality once – a composite order errors here, never silently
     /// reinterprets as Z_n).
     fn finish_finite_field_sort(&mut self, binary: bool) -> Result<SortId> {
         let numeral = match self.lexer.peek() {
@@ -579,7 +579,7 @@ impl<'a> Parser<'a> {
                                 )?;
                                 Ok(self.manager.sorts.array(domain, range))
                             }
-                            // `(Set X)` — the SMT-LIB finite-sets theory's
+                            // `(Set X)` – the SMT-LIB finite-sets theory's
                             // sort constructor (CVC5 `mkSetSort`).
                             "Seq" => {
                                 let element = self.parse_sort()?;
@@ -599,7 +599,7 @@ impl<'a> Parser<'a> {
                                 )?;
                                 Ok(self.manager.sorts.set(element))
                             }
-                            // `(Bag X)` — the SMT-LIB bags draft's sort
+                            // `(Bag X)` – the SMT-LIB bags draft's sort
                             // constructor (CVC5 `mkBagSort`).
                             "Bag" => {
                                 let element = self.parse_sort()?;
@@ -688,8 +688,8 @@ impl<'a> Parser<'a> {
         Err(NixieError::ParseError {
             position: self.lexer.position(),
             message: format!(
-                "sort 'RoundingMode' is supported only in nullary declaration position — \
-                 (declare-const m RoundingMode) or (declare-fun m () RoundingMode) — not as \
+                "sort 'RoundingMode' is supported only in nullary declaration position – \
+                 (declare-const m RoundingMode) or (declare-fun m () RoundingMode) – not as \
                  {position}. The sort's five-element domain is enforced by a closure axiom \
                  attached to each declared rounding-mode constant, and there is no way to attach \
                  that axiom to the rounding modes reachable through {position}; accepting it \
@@ -894,8 +894,8 @@ mod tests {
     }
 
     /// The SMT-LIB FloatingPoint theory declares `Float16` / `Float32` /
-    /// `Float64` / `Float128` as part of the theory's language — canonical
-    /// aliases of the indexed `(_ FloatingPoint eb sb)` sorts — and
+    /// `Float64` / `Float128` as part of the theory's language – canonical
+    /// aliases of the indexed `(_ FloatingPoint eb sb)` sorts – and
     /// essentially every QF_FP script declares its variables at one of these
     /// names.  They used to fall through to the `Uninterpreted` fallback,
     /// silently mistyping those variables into a fresh free sort that no FP

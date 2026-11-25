@@ -1,10 +1,10 @@
-# Handover update: the `wisas_xs_8_13` unknown's SECOND layer is the simplex wide-row propagation (`24cb0567`) — 2026-09-15, third session
+# Handover update: the `wisas_xs_8_13` unknown's SECOND layer is the simplex wide-row propagation (`24cb0567`) – 2026-09-15, third session
 
 Supersedes the "current main has evolved / surface unknown" reading of
 [`2026-09-15-wisas-xs-8-13-unknown-regression.md`](2026-09-15-wisas-xs-8-13-unknown-regression.md).
 That handover's layer 1 (the merge-era `add`-loses-its-Vec-write) was real
 but was already fixed by `0aa996f2` ("revert: restore nixie-sat to b05d949e
-— e987b4b6 accidentally landed the B′3 bisection arms"). What keeps
+– e987b4b6 accidentally landed the B′3 bisection arms"). What keeps
 `wisas_xs_8_13` at `unknown` on today's `main` is a **second, independent
 regression in the simplex**, isolated below with clean worktree rebuilds.
 
@@ -13,8 +13,8 @@ regression in the simplex**, isolated below with clean worktree rebuilds.
 | commit | verdict (3× each, deterministic) | role |
 |---|---|---|
 | `d4b72e2c` | `unsat` | good parent (sets model synthesis) |
-| `d832b82e` | `unsat` | sets intersection-sharing fix — **exonerated** |
-| **`24cb0567`** | **`unknown`** | **feat(simplex): wide-row bound propagation (slice 6, round three) — FIRST BAD** |
+| `d832b82e` | `unsat` | sets intersection-sharing fix – **exonerated** |
+| **`24cb0567`** | **`unknown`** | **feat(simplex): wide-row bound propagation (slice 6, round three) – FIRST BAD** |
 | `83b985a6` … `main` | `unknown` | carries it to the present |
 
 `24cb0567`'s diff: +538 lines in `nixie-theories/src/arithmetic/simplex/mod.rs`,
@@ -24,11 +24,11 @@ regression in the simplex**, isolated below with clean worktree rebuilds.
 
 Its own message says: "suites green **except the pre-existing wisas pair
 (fixture-level Unknown, verified on the parent)**". The parent is `unsat`
-(clean rebuild above) — the "verified on the parent" check must have run a
+(clean rebuild above) – the "verified on the parent" check must have run a
 stale binary or a dirty tree. The same trap bit this investigation:
 
 **`precompile/d832b82e/nixie` answered `unknown` but a clean rebuild of
-`d832b82e` answers `unsat`** — a cached binary disagreed with its own commit.
+`d832b82e` answers `unsat`** – a cached binary disagreed with its own commit.
 The cached copy has been replaced with the clean rebuild. Treat any cached
 precompile binary that disagrees with its neighbors as unverified until
 rebuilt.
@@ -37,9 +37,9 @@ rebuilt.
 
 | probe | result |
 |---|---|
-| plain | `unknown` (canary silent — layer 1 is gone) |
-| `NIXIE_S6_NDIR2=1` | no verdict within 180 s (worse, not rescued — so wisas is NOT the commit-message's "chain-sat twin trades to unknown" NDIR2 trade) |
-| `NIXIE_S6_AUDIT=1` (corner-enumeration auditor) | `unknown`, auditor silent — no fabricated-corner complaint on this instance |
+| plain | `unknown` (canary silent – layer 1 is gone) |
+| `NIXIE_S6_NDIR2=1` | no verdict within 180 s (worse, not rescued – so wisas is NOT the commit-message's "chain-sat twin trades to unknown" NDIR2 trade) |
+| `NIXIE_S6_AUDIT=1` (corner-enumeration auditor) | `unknown`, auditor silent – no fabricated-corner complaint on this instance |
 
 Search signatures (fixture, release):
 
@@ -57,7 +57,7 @@ direction-1 propagation change what `ArithSolver::lp_int_bounds` /
 completeness loss), and is the `[ceil(min), floor(max)]` superset guarantee
 (`"the case-split never excludes a reachable value"`) still intact under the
 new wide-store derivations? A narrowed range would be a **false-UNSAT**
-risk, not just incompleteness — the auditor staying silent on this instance
+risk, not just incompleteness – the auditor staying silent on this instance
 is weak evidence only.
 
 ## Reproducer & artifacts
@@ -68,13 +68,13 @@ cargo nextest run -p nixie-solver --test int_case_split_determinism_regressions
 ```
 
 Clean-rebuild binaries now cached: `precompile/{d4b72e2c,d832b82e,24cb0567}/nixie`
-(`d832b82e`'s replaced). 181-binary sweep (pre-fix era, some entries stale —
+(`d832b82e`'s replaced). 181-binary sweep (pre-fix era, some entries stale –
 see the trap above): `precompile/cd544511/benchmark/wisas_verdict_sweep.txt`.
 
 ## Unrelated note from the same session
 
 `bv_odd_width_blast_differential::odd_width_identity_pairs_hold` passes in
-**445 s (release)** — it and `recfun_e2e::symbolic_argument_solves_for_the_variable`
+**445 s (release)** – it and `recfun_e2e::symbolic_argument_solves_for_the_variable`
 are slow-but-correct tests exceeding nextest's 180 s cap (verified at load ~9,
 not a hang). They need a slow-profile annotation or cap bump, not a fix.
 
@@ -91,7 +91,7 @@ not a hang). They need a slow-profile annotation or cap bump, not a fix.
 ```
 
 Expected: `sat` with `k = 3` (the recfun_e2e test
-`symbolic_argument_solves_for_the_variable` — its doc: "the certifier
+`symbolic_argument_solves_for_the_variable` – its doc: "the certifier
 computes `sum` at the rejected model's `k`, and those concrete instances
 rule that `k` out").  Measured via cached binaries, 30 s cap:
 
@@ -102,11 +102,11 @@ rule that `k` out").  Measured via cached binaries, 30 s cap:
 | **`24cb0567` → current `main`** (including `80a0cee8` pinned-D2 default-ON and the wide-driven repair) | **timeout** |
 
 The in-suite test hangs **30+ minutes standalone** (killed at the 180 s
-nextest cap) — this corrects the earlier note in this file that grouped
+nextest cap) – this corrects the earlier note in this file that grouped
 it with `odd_width_identity_pairs_hold` as "slow-but-correct": only
 odd_width is; recfun is this regression.  Same handoff question as
 wisas: what does the wide-row propagation feed the refinement/certifier
-path — here likely the model-rejection loop (concrete `sum` evaluations
+path – here likely the model-rejection loop (concrete `sum` evaluations
 that should rule out each rejected `k`) never converges.
 
 Reproducer: `/tmp/recfun.smt2` body above; any cached binary pair
@@ -115,14 +115,14 @@ Reproducer: `/tmp/recfun.smt2` body above; any cached binary pair
 ## Answer to the recfun question (2026-09-17, the simplex owner)
 
 Decoded end to end (study continuation 27, item 62): the propagation
-feeds the refinement path NOTHING wrong — the certifier, the learning,
+feeds the refinement path NOTHING wrong – the certifier, the learning,
 and the blocking all behave; its only role was trajectory reshuffling
 onto a pre-existing treadmill.  The treadmill: the unfolding's boundary
 app is SYMBOLIC (`sum (k - d)` follows `k`), so learning CONCRETE
-applications never constrains the chain — every round's model escapes to
+applications never constrains the chain – every round's model escapes to
 the truncation edge (measured `k = 7, 11, 8, 16, 32`, always the fuel
 boundary), the certifier refutes, learning lags forever.  The
-pre-24cb0567 solve certified at round 3 by proposing an interior `k=3` —
+pre-24cb0567 solve certified at round 3 by proposing an interior `k=3` –
 luck.  Fixed driver-side (sound assumption-scoped probe inside the
 pinned range; a certified model there is a genuine `sat`): the
 reproducer answers `sat (k=3)`, and the suite timeout is gone.  The
@@ -133,13 +133,13 @@ Reproducer: the script body above; any cached binary pair
 **non-termination**, not eventual-`unknown`: current HEAD killed at
 900 s with rc=124 (`timeout`), still `Processing`.
 
-## RESOLVED (2026-09-16 16:43): `05bc3654` — the boundary-escape probe
+## RESOLVED (2026-09-16 16:43): `05bc3654` – the boundary-escape probe
 
 The treadmill was decoded and fixed by the owner the same day this
 addendum was filed: the boundary application (`sum (k - d)`) is symbolic
 and follows `k`, so pinning the concrete refuted applications never
-constrains the chain — every round's model escaped to the unfolding's
-truncation edge (k = 7, 11, 8, 16, 32 — always the fuel boundary), the
+constrains the chain – every round's model escaped to the unfolding's
+truncation edge (k = 7, 11, 8, 16, 32 – always the fuel boundary), the
 pin range lagged the edge forever, and the pre-`24cb0567` solver had
 merely been *lucky* to land on an interior `k` and certify.  The landed
 sound probe (one bounded search per pinned-range bound under
@@ -147,5 +147,5 @@ assumptions) closes it.
 
 **Verified after `05bc3654`**: the reproducer solves in **0.33 s**
 (`sat`, `k = 3`), and the full `recfun_e2e` suite passes in 0.8 s.
-With this, `wisas` (CSR-mirror fix) and recfun (this) — both
-`24cb0567`-era casualties — are closed.
+With this, `wisas` (CSR-mirror fix) and recfun (this) – both
+`24cb0567`-era casualties – are closed.

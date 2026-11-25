@@ -25,7 +25,7 @@
 //!   value for an `f`-application whose defining instance was never
 //!   instantiated), so a bare `sat` is never published. Two certificates are
 //!   accepted:
-//!   - **C1, saturation** — the unfolding closed: every `f`-application
+//!   - **C1, saturation** – the unfolding closed: every `f`-application
 //!     reachable from the assertions got its instance, so no application the
 //!     assertions can talk about is left free.
 //!
@@ -34,17 +34,17 @@
 //!     that is unsatisfiable at some *unreachable* argument is not caught:
 //!     `f(n) = ite(n = 0, 0, f(n) + 1)` with only `(= (f 0) 0)` asserted
 //!     saturates at `f(0) = 0` and is reported `sat`, even though the axiom has
-//!     no model at any `n /= 0`. Z3 4.15.4 answers `sat` here too — this is the
+//!     no model at any `n /= 0`. Z3 4.15.4 answers `sat` here too – this is the
 //!     shared reading of `define-fun-rec` as a definition constraining the
 //!     applications a problem actually makes, not a standalone theory.
-//!   - **C2, model re-computation** — a ground evaluator recomputes every
+//!   - **C2, model re-computation** – a ground evaluator recomputes every
 //!     recursive application occurring in the user's assertions directly from
 //!     the definitions and finds that the model already agrees with it (see
 //!     [`eval`]).
 //! * **Everything else is `unknown`, and it is reached in finite time.** Both
-//!   budgets are finite — the fuel schedule bounds the number of instances per
+//!   budgets are finite – the fuel schedule bounds the number of instances per
 //!   round and the number of rounds, and the certifier's evaluation budget
-//!   bounds the re-computation — so a definition that does not terminate is
+//!   bounds the re-computation – so a definition that does not terminate is
 //!   answered `unknown`, **never** by hanging. An *inconsistent* definition
 //!   such as `f(x) = f(x) + 1` is still correctly `unsat`, because its single
 //!   instance is already contradictory.
@@ -56,7 +56,7 @@
 //! # Where the instances live
 //!
 //! Instances are asserted **directly on the solver**, inside a scratch scope,
-//! and never into `Context::assertions` — `(get-assertions)` must keep
+//! and never into `Context::assertions` – `(get-assertions)` must keep
 //! reporting exactly the script's own assertions, byte for byte. The scratch
 //! scope is deliberately left *open* on an accepted verdict so `(get-model)` /
 //! `(get-value ..)` read the model that the instances helped build; it is
@@ -83,7 +83,7 @@ use super::Context;
 ///
 /// It stops at 32 on purpose. Structural unfolding of a *symbolic* argument
 /// stacks one `ite` per level, and the solve cost grows exponentially with the
-/// stack — measured on `(and (>= k 0) (= (sum k) 6))` as 9 ms / 13 ms / 215 ms
+/// stack – measured on `(and (>= k 0) (= (sum k) 6))` as 9 ms / 13 ms / 215 ms
 /// / 3.6 s / 84 s for 4 / 8 / 16 / 32 / 64 instances. Beyond this point deeper
 /// unfolding is not a way to reach an answer, it is a way to reach the
 /// timeout; the refinement loop's learned ground instances are what actually
@@ -98,7 +98,7 @@ const MAX_LEARNED_APPS: usize = 256;
 
 /// Hard ceiling on the instances produced in a single unfolding round,
 /// independent of the fuel. Reaching it marks the round *truncated*, which
-/// disables the saturation certificate — a worklist drained by truncation is
+/// disables the saturation certificate – a worklist drained by truncation is
 /// not a worklist that closed.
 const MAX_INSTANCES: usize = 100_000;
 
@@ -109,7 +109,7 @@ pub(super) struct RecDef {
     name: String,
     /// `(name, sort-string)` per formal parameter, for `(get-model)` output.
     params: Vec<(String, String)>,
-    /// Each formal parameter's interned `Var`, in declaration order — the only
+    /// Each formal parameter's interned `Var`, in declaration order – the only
     /// sound substitution keys for `body` (see `RecFunDecl::formal_vars`).
     formal_vars: Vec<TermId>,
     /// The definition's right-hand side.
@@ -156,7 +156,7 @@ impl RecFunState {
 
     /// Drop every definition made inside a `push` (used by `reset-assertions`,
     /// which pops all levels but keeps top-level definitions), and forget the
-    /// scratch scope without popping it — the caller resets the solver, which
+    /// scratch scope without popping it – the caller resets the solver, which
     /// empties the scope stack outright.
     pub(super) fn retract_to_base(&mut self) {
         let base = self.scope_stack.first().copied().unwrap_or(self.defs.len());
@@ -291,7 +291,7 @@ impl Context {
     /// See this module's doc comment for the verdict contract; the loop below
     /// is a direct transcription of it, plus one refinement step. When a `sat`
     /// fails to certify, the certifier has computed the *true* value of one or
-    /// more concrete applications — `sum(4)`, `sum(3)`, … — straight from the
+    /// more concrete applications – `sum(4)`, `sum(3)`, … – straight from the
     /// definitions. Their defining instances are consequences of the axiom just
     /// like any other, so feeding them into the next round's seeds refutes
     /// exactly the model that was just rejected, without ruling out any real
@@ -312,7 +312,7 @@ impl Context {
     /// [`Context::check_with_assumptions_raw`], which does *not* reach
     /// `check_sat`. Without this entry point they would run the plain solver
     /// with every recursive application unconstrained and answer confidently
-    /// and wrongly — the same defect the parser's old hard rejection existed to
+    /// and wrongly – the same defect the parser's old hard rejection existed to
     /// prevent, reintroduced one command over.
     ///
     /// The assumptions join the roots: an application mentioned only in an
@@ -420,9 +420,9 @@ impl Context {
                             // root, decoded 2026-09-17): the symbolic
                             // boundary app (`sum (k - d)`) follows `k`, so
                             // pinning the CONCRETE applications never
-                            // constrains the chain — every round's model
+                            // constrains the chain – every round's model
                             // escapes to the unfolding's truncation edge
-                            // (measured: k = 7, 11, 8, 16, 32 — always the
+                            // (measured: k = 7, 11, 8, 16, 32 – always the
                             // fuel boundary), the certifier refutes, and the
                             // pin range lags the edge forever: the
                             // non-terminating treadmill (the pre-24cb0567
@@ -463,7 +463,7 @@ impl Context {
     /// One round's solve: assumption-guarded when the caller had assumptions,
     /// otherwise the plain check core.
     ///
-    /// Both spellings keep the gates their own non-recursive path applies —
+    /// Both spellings keep the gates their own non-recursive path applies –
     /// `check_sat_core` for the plain check, and the rounding-mode axioms that
     /// [`Context::check_with_assumptions_raw`] documents as the single funnel
     /// for assumption-guarded solves.
@@ -494,7 +494,7 @@ impl Context {
         }
 
         // A nullary definition's axiom has exactly one ground instance, and it
-        // holds whether or not the script ever mentions the symbol — so it is
+        // holds whether or not the script ever mentions the symbol – so it is
         // seeded unconditionally. Without this, `(define-fun-rec c () Int
         // (+ c 1))` would be reported `sat` for a script that never names `c`,
         // even though the definition alone is contradictory.
@@ -585,7 +585,7 @@ impl Context {
     /// This is what makes an unfolding of a ground recursion terminate.
     /// `TermManager::simplify` deliberately does not rewrite below an `Apply`
     /// node, so without this pass substituting `n := 5` into `fact(n - 1)`
-    /// yields `fact(5 - 1)`, then `fact((5 - 1) - 1)`, … — a chain of pairwise
+    /// yields `fact(5 - 1)`, then `fact((5 - 1) - 1)`, … – a chain of pairwise
     /// distinct application terms whose base-case `ite` condition never becomes
     /// syntactically decidable, so the worklist never drains and the saturation
     /// certificate can never fire. Folding the arguments turns the same chain
@@ -684,7 +684,7 @@ impl Context {
     /// The boundary-escape probe: one assumption-guarded solve with every
     /// SYMBOLIC argument of the root applications held inside the pinned
     /// range (`arg <= cap`).  Returns `Some(Sat)` only when the found model
-    /// concretely certifies against the original applications — a certified
+    /// concretely certifies against the original applications – a certified
     /// model of the assertions, assumptions or not.  Any other outcome is
     /// `None`: the caller's treadmill continues unchanged.
     fn probe_recfun_range(&mut self, root_apps: &[TermId], cap: i64) -> Option<SolverResult> {
@@ -770,7 +770,7 @@ impl Context {
     ///
     /// A name redefined in the same scope leaves the superseded `RecDef` in
     /// `defs` (it has to stay, so `pop` can restore it), so only the definition
-    /// the name currently resolves to is printed — a model listing two
+    /// the name currently resolves to is printed – a model listing two
     /// interpretations for one symbol would be nonsense.
     pub(super) fn recfun_model_lines(&self) -> Vec<String> {
         let printer = nixie_core::smtlib::Printer::new(&self.terms);

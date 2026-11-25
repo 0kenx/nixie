@@ -454,7 +454,7 @@ fn rounding_mode_sort_is_first_class_not_silently_uninterpreted() {
     // SUPPORTED: it builds a real constant at the reserved five-element sort
     // (closure + distinctness axioms are asserted by the solver). The old
     // honest-rejection test pinned the previous state; this pins the new one
-    // — the sort must NOT fall through to a fresh uninterpreted sort, which
+    // – the sort must NOT fall through to a fresh uninterpreted sort, which
     // was the original silent-wrong bug the rejection existed to prevent.
     let mut manager = TermManager::new();
     let cmds = parse_script("(declare-const m RoundingMode)", &mut manager)

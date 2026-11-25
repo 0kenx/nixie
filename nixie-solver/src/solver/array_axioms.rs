@@ -145,7 +145,7 @@ impl Solver {
         }
         // Completed without finding: every visited node is proven free by
         // this walk's exact semantics (quantifier-blocked children never
-        // descend, so a cached node certifies only what the walk checked —
+        // descend, so a cached node certifies only what the walk checked –
         // skipping it later is identical to re-walking it).
         drop(proven);
         self.array_free_memo
@@ -352,8 +352,8 @@ impl Solver {
         // constant-function array.  The axiom holds for every index, so a
         // unit per read is exact (no guard, no witness); it is what makes a
         // stored value visible when the model reads the array (Z3 rewrites
-        // this select away entirely at internalization — see
-        // `th_rewriter::mk_select`'s `is_const` folding — the unit here is
+        // this select away entirely at internalization – see
+        // `th_rewriter::mk_select`'s `is_const` folding – the unit here is
         // the lazy-lemma equivalent).  Reads of a variable EQUAL to a const
         // array chain through the eq-pair select-congruence lemmas, and
         // store-over-const bases through the read-over-write family.
@@ -617,7 +617,7 @@ struct ArrayStructure {
     /// Distinct indices read on each array operand (for select congruence).
     read_indices: FxHashMap<TermId, Vec<TermId>>,
     /// Constant-function array terms: `((as const S) v)` parses as an
-    /// `Apply` named `(as const)` (see the parser's `Head::Qualified` arm) —
+    /// `Apply` named `(as const)` (see the parser's `Head::Qualified` arm) –
     /// an opaque array term unless this module recognizes it.  Maps the
     /// const-array term to its value term.  The constant-array axiom
     /// `select(const v, i) = v` holds for EVERY index, so one unit lemma per
@@ -839,9 +839,9 @@ fn collect_array_structure_with_asserted(
                 if positive && from_input {
                     // Aliases are only meaningful for equalities the INPUT
                     // states.  The saturation walk below re-walks every
-                    // asserted lemma, and a lemma's ANTECEDENT equality —
+                    // asserted lemma, and a lemma's ANTECEDENT equality –
                     // e.g. a store-congruence premise `(= a (store a i x))`,
-                    // true in no model — recorded here as an unconditional
+                    // true in no model – recorded here as an unconditional
                     // alias makes the upward/row builders reason "a IS that
                     // store", from which they derive `x = select(a, i)` and
                     // kin: lemmas valid individually, jointly refuting
@@ -1426,11 +1426,11 @@ fn build_read_over_write(
 /// This family **bootstraps the reads**, and without it an entire class of
 /// UNSAT goals is invisible.  Every other family here is gated on indices
 /// something already reads (`read_indices`), on pairs already *separated*,
-/// or on observed `select` terms — and a store's own write index is read by
+/// or on observed `select` terms – and a store's own write index is read by
 /// nothing until this unit mints the read.  A contradiction that lives
-/// entirely in array EQUALITIES — e.g.
+/// entirely in array EQUALITIES – e.g.
 /// `(= f (store b1 1 1)) ∧ (= f g) ∧ (= g (store b2 1 2))`, UNSAT because
-/// the merged chains write 1 and 2 at the same index — then has no lever:
+/// the merged chains write 1 and 2 at the same index – then has no lever:
 /// EUF merges the arrays (the equalities are facts) but congruence closure
 /// has no selects to close over, the refinement loop asserts nothing, and
 /// the solver answers a false `sat` (found through the TLA+ two-array BMC
@@ -1444,7 +1444,7 @@ fn build_read_over_write(
 /// equality arrangement.
 ///
 /// One unit per store term, deduplicated by interned term id like every
-/// other family — bounded by the input's store terms plus the stores
+/// other family – bounded by the input's store terms plus the stores
 /// earlier rounds minted, never by pairs × indices (the store-congruence
 /// cascade shape).  A read the INPUT already makes at the store's own
 /// index is left to `build_read_over_write`, which derives the same
@@ -1496,9 +1496,9 @@ fn build_equality_read_congruence(
         // RESTRICTED to indices something already READS (input reads,
         // witness reads, or any observed read on either operand).  The
         // original write-index closure minted `select(var, store_idx)` at
-        // EVERY write of a deep chain — on the `memory`-alias family that
+        // EVERY write of a deep chain – on the `memory`-alias family that
         // is 50 fresh synthetic reads per chain per pair, each of which
-        // then paid the full flat read-over-write treatment — the
+        // then paid the full flat read-over-write treatment – the
         // measured ~5 100-instance head of the saturation cascade (see
         // docs/studies/2026-09-07-memory-alias-arrangement-gap.md).  The
         // shape this family exists for (`cvc/read8`: an ite-conditional
@@ -1794,7 +1794,7 @@ fn build_store_congruence(
     apps.sort_unstable_by_key(|t| t.raw());
     apps.dedup();
     // Emission filter (measured 2026-08-29: the unrestricted O(n^2) family
-    // cost the differential canary 12 net solves — deep `storecomm`/`pp_sf`
+    // cost the differential canary 12 net solves – deep `storecomm`/`pp_sf`
     // chains carry dozens of stores and saturated the refinement loop with
     // hundreds of pairwise implications).  A pair can matter only when the
     // formula already relates the two stores: either their bases are the
@@ -2697,7 +2697,7 @@ mod store_self_read_tests {
     }
 
     /// Two stores writing DIFFERENT values at the SAME index, equated
-    /// through a variable chain — UNSAT by extensionality, and nothing in
+    /// through a variable chain – UNSAT by extensionality, and nothing in
     /// the input selects at that index.  Before the eager axiom-1 family
     /// (`build_store_self_reads`) every instantiation family here was
     /// gated on an observed read, a separated pair, or a select term, so
@@ -2726,7 +2726,7 @@ mod store_self_read_tests {
     /// The BMC branch shape in isolation: an UNCHANGED-style alias
     /// (`x1 = x2`) simultaneously true with a branch update
     /// (`x2 = store(x1, 1, 1)`) and an init chain pinning `x1[1] = 0`.
-    /// UNSAT — the alias forces `x1[1] = 1` — and again no select exists.
+    /// UNSAT – the alias forces `x1[1] = 1` – and again no select exists.
     /// This is the exact committed-equality set the two-array pipeline
     /// model used to accept, and the decoder then had to complete the
     /// never-read point `x2[1]` against a contradictory model.
@@ -2799,8 +2799,8 @@ mod conditional_alias_tests {
     /// specification (multiprocess translations put every
     /// `pc' = [pc EXCEPT ![self] = ...]` inside the transition relation's
     /// disjunction, so *every* alias they contain is conditional): the
-    /// upward aliased read-over-write loop iterated `aliases` — which
-    /// deliberately includes conditional aliases for the guarded families —
+    /// upward aliased read-over-write loop iterated `aliases` – which
+    /// deliberately includes conditional aliases for the guarded families –
     /// and asserted the unguarded miss-case lemmas as facts, killing the
     /// satisfiable interleavings.  The gate is `asserted_aliases`.
     #[test]
@@ -2838,7 +2838,7 @@ mod conditional_alias_tests {
     /// The bug's signature in isolation: the miss-case lemma
     /// `i != j => select(var, j) = select(base, j)` read off a CONDITIONAL
     /// alias simplifies, when `i` and `j` are distinct literals, to the bare
-    /// unguarded equality `select(x1, 2) = select(x2, 2)` — false in the
+    /// unguarded equality `select(x1, 2) = select(x2, 2)` – false in the
     /// branch that stores at index 2 instead.  Z3 confirms the goal is sat;
     /// this pins that our verdict agrees.
     #[test]

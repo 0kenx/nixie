@@ -4,7 +4,7 @@
 //! the kernel is deliberately first-order. Rather than grow a lambda and an
 //! operator type, a fold is its own binder: lowering keeps the operator's body
 //! with its two parameters free and `Kera::Fold` names them, exactly the shape
-//! `\A x \in S : …` already has. Apalache does the same thing in substance —
+//! `\A x \in S : …` already has. Apalache does the same thing in substance –
 //! its rewriter receives the operator wrapped in a `LetInEx` and inlines it
 //! once per element.
 //!
@@ -12,7 +12,7 @@
 //! over-approximates in two independent ways: a candidate may not be in the
 //! set, and two candidates may denote the same value. A step therefore only
 //! takes effect when the candidate is present **and** is not a duplicate of an
-//! earlier present one — the same guard `Cardinality` uses, and the same one
+//! earlier present one – the same guard `Cardinality` uses, and the same one
 //! Apalache builds in `SetOps.dedup`. The tests below pin both halves,
 //! because either one missing is a wrong answer rather than a missing feature.
 
@@ -65,7 +65,7 @@ const ADD: &str = "Add(a, b) == a + b";
 const SUB: &str = "Sub(a, b) == a - b";
 const COUNT: &str = "Count(a, b) == a + 1";
 
-// ---- a fold over a literal set ----
+// ======== a fold over a literal set ========
 
 #[test]
 fn fold_set_sums_a_literal() {
@@ -102,7 +102,7 @@ fn fold_set_takes_a_let_bound_operator() {
     );
 }
 
-// ---- the arena's two over-approximations ----
+// ======== the arena's two over-approximations ========
 
 /// A candidate that is not in the set must not be folded. A difference keeps
 /// every candidate of its left side and guards it, so `{1, 2, 3, 4} \ {3, 4}`
@@ -138,7 +138,7 @@ fn an_absent_candidate_is_decided_by_the_solver() {
 /// Two candidates that denote the same value are **one** member. `{x, 1}` with
 /// `x = 1` is the singleton `{1}`, so counting its members gives one. Without
 /// the duplicate guard this answers two, which is a wrong answer and not a
-/// missing feature — it is the reason `SetOps.dedup` exists in Apalache.
+/// missing feature – it is the reason `SetOps.dedup` exists in Apalache.
 #[test]
 fn a_duplicate_candidate_is_folded_once() {
     holds("x", COUNT, "x = 1", "ApaFoldSet(Count, 0, {x, 1}) = 1");
@@ -171,7 +171,7 @@ fn the_duplicate_guard_follows_the_solver() {
     );
 }
 
-/// Folding a set is the same as its cardinality when the operator counts —
+/// Folding a set is the same as its cardinality when the operator counts –
 /// the two share the dedup guard, and disagreeing would mean one of them is
 /// wrong.
 #[test]
@@ -184,7 +184,7 @@ fn counting_a_fold_agrees_with_cardinality() {
     );
 }
 
-// ---- sequences ----
+// ======== sequences ========
 
 /// Subtraction is not commutative, so this pins the direction:
 /// `((100 - 1) - 2) - 3`.
@@ -214,7 +214,7 @@ fn fold_seq_left_counts_repeats() {
     );
 }
 
-// ---- an accumulator that is not a scalar ----
+// ======== an accumulator that is not a scalar ========
 
 /// Apalache's own `FoldSetFun` regression: the accumulator is a *function*,
 /// which is why the conditional step had to be pushed inside the value rather
@@ -240,7 +240,7 @@ fn the_accumulator_may_be_a_function_over_a_sequence() {
     );
 }
 
-// ---- state ----
+// ======== state ========
 
 /// A fold over a state variable's value, which is the case Apalache's
 /// `FoldSetInInit` regression covers.
@@ -249,17 +249,17 @@ fn a_fold_reads_the_state() {
     holds("x", ADD, "x \\in {1, 2}", "ApaFoldSet(Add, 0, {x, 3}) > 3");
 }
 
-// ---- the order-independence audit ----
+// ======== the order-independence audit ========
 //
 // TLA+ specifies no fold order for a set, so `ApaFoldSet` only has a value
 // when the operator's n-fold composition commutes. Before the audit, the
 // encoder folded in candidate order while the evaluator folded in sorted
 // order, and `F(a, b) == (a + 1) * (b + 1)` over `{3, 2}` answered `15` on
-// one side and `16` on the other — a replay disagreement that was surfaced as
+// one side and `16` on the other – a replay disagreement that was surfaced as
 // "possibly spurious" rather than refused. The audit declines the fold
 // outright; these tests pin both sides of that.
 
-/// The reproducer: an operator whose composition is order-dependent —
+/// The reproducer: an operator whose composition is order-dependent –
 /// `F(a, b) == (a + 1) * (b + 1)` folds `{2, 3}` to `16` in ascending order
 /// and `{3, 2}` to `15` in written order. Before the audit the encoder
 /// answered with the written order and the replay expected the sorted one.
@@ -288,7 +288,7 @@ fn a_non_ac_operator_over_a_set_declines() {
     );
 }
 
-/// Subtraction is not commutative, so a two-element set declines too — every
+/// Subtraction is not commutative, so a two-element set declines too – every
 /// order-sensitivity argument starts at two members.
 #[test]
 fn a_non_commutative_operator_declines_over_two_elements() {
@@ -329,7 +329,7 @@ fn an_accumulator_twice_in_an_add_chain_declines() {
 }
 
 /// `Max`- and `Min`-shaped conditionals are associative, commutative and
-/// idempotent — more than order-independence needs.
+/// idempotent – more than order-independence needs.
 #[test]
 fn a_max_shaped_operator_folds() {
     holds(
@@ -348,7 +348,7 @@ fn a_max_shaped_operator_folds() {
 
 /// The function-update idiom: `[f EXCEPT ![x] = f[x] + 1]`. Each element is
 /// folded once and writes only its own index, so every read of `f[x]` sees
-/// the original value — order-independent. This is `Antipatterns.tla`'s
+/// the original value – order-independent. This is `Antipatterns.tla`'s
 /// `addOneInCdm`.
 #[test]
 fn the_function_update_idiom_folds() {
@@ -378,7 +378,7 @@ fn a_function_update_reading_the_whole_accumulator_declines() {
     assert!(bmc.check(0, &mut tm).is_err());
 }
 
-/// A fold that rebuilds a set — `FoldSetSet.tla`'s shape, and `RemakeSet`
+/// A fold that rebuilds a set – `FoldSetSet.tla`'s shape, and `RemakeSet`
 /// from `Antipatterns.tla`.
 #[test]
 fn a_union_with_singletons_folds() {

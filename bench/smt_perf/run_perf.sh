@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Standing SMT-side performance table — nixie vs z3 on QF_LIA / QF_BV
+# Standing SMT-side performance table – nixie vs z3 on QF_LIA / QF_BV
 # slices, deterministic counters as the metric.
 #
 # Why this exists (docs/handovers/2026-09-18-mbqi-persistent-model.md,
@@ -8,9 +8,9 @@
 # perf reference at all.  This is that reference:
 #
 #   * fixed, deterministic corpus slices (sorted stride samples of the
-#     in-repo `smt-lib/non-incremental` extracts — same files every run),
+#     in-repo `smt-lib/non-incremental` extracts – same files every run),
 #   * a per-instance wall *cap* only (bounding the run, never compared),
-#   * deterministic conflict counters as the metric — each solver's own
+#   * deterministic conflict counters as the metric – each solver's own
 #     counters are comparable across nixie revisions (the standing use);
 #     cross-solver counter LEVELS are not comparable, solved-within-cap
 #     counts are,
@@ -19,7 +19,7 @@
 #
 # Usage:  bench/smt_perf/run_perf.sh [nixie-binary]
 # Output: results.json (scratch, gitignored) + results.<os>-<arch>.json
-#         (the tracked snapshot — commit that one, following the parity
+#         (the tracked snapshot – commit that one, following the parity
 #         suite's convention).
 #
 # Comparator: z3 4.16.0 (the parity suite's pinned baseline; the version
@@ -83,7 +83,7 @@ run_z3() {
     status="$(printf '%s\n' "$out" | grep -m1 -oE '^(sat|unsat|unknown)')" || true
     # Z3's -st prints `:sat-conflicts N` (SAT-core) and `:conflicts N`
     # (SMT-core).  The historical parser grepped only `:conflicts`, which
-    # QF_BV's bit-blasted path never prints — every z3 conflict count in
+    # QF_BV's bit-blasted path never prints – every z3 conflict count in
     # the standing snapshots' recorded `0` (the attribution studies built
     # on "z3 at 0 conflicts" partly on that artifact; see the
     # 2026-09-20 wall-watch correction).  Prefer the SAT counter, fall
@@ -197,4 +197,4 @@ ENV_RESULTS="results.$(uname -s | tr '[:upper:]' '[:lower:]' | sed 's/darwin/mac
 } > results.json
 cp results.json "$ENV_RESULTS"
 echo
-echo "snapshot: results.json (scratch) and $ENV_RESULTS (tracked — commit this one)"
+echo "snapshot: results.json (scratch) and $ENV_RESULTS (tracked – commit this one)"

@@ -4,8 +4,8 @@
 //! of the mixed-arith differential's `unknown` gap (study 2026-09-13/14,
 //! items 5–8): the defining identity `x = y·q` is nonlinear, so the linear
 //! CDCL(T) path can never decide it. The nonlinear dispatcher now encodes
-//! it exactly — a fresh quotient variable under the guarded defining clause
-//! `y = 0 ∨ y·t − x = 0` — which makes the satisfiable classes decidable
+//! it exactly – a fresh quotient variable under the guarded defining clause
+//! `y = 0 ∨ y·t − x = 0` – which makes the satisfiable classes decidable
 //! while keeping every SMT-LIB corner (the zero divisor is uninterpreted)
 //! faithful. These tests pin each class, including the two ways the
 //! encoding could have been (and once was, mid-development) wrong:
@@ -46,7 +46,7 @@ fn real_division_with_pinned_operands_is_decidable_sat() {
     assert_eq!(r, SolverResult::Sat);
 }
 
-/// The unsat twin: `5/2 ≠ 2`. The answer stays `unknown` — the NRA
+/// The unsat twin: `5/2 ≠ 2`. The answer stays `unknown` – the NRA
 /// dispatcher's historical Eq-distrust for `unsat` (now extended to the
 /// Eq-bearing defining clauses) declines the refutation, and the linear
 /// path honestly gates. It must NEVER answer `sat`: the first cut of the
@@ -69,7 +69,7 @@ fn real_division_unsat_twin_stays_honest() {
 }
 
 /// SMT-LIB semantics: `(/ x 0)` is uninterpreted, so pinning the divisor to
-/// zero and the quotient to 5 is satisfiable — the model's `t` is the
+/// zero and the quotient to 5 is satisfiable – the model's `t` is the
 /// term's arbitrary fixed value. The encoding must emit NO defining clause
 /// for a constant-zero divisor (forcing `x = 0` through the degenerate
 /// clause would be wrong).
@@ -102,7 +102,7 @@ fn open_logic_real_division_dispatches() {
 
 /// Mixed NIRA: an integer variable interacts with a real quotient. The NIA
 /// backend's integer reasoning keeps its own verdicts (`i² = 2` has no
-/// integer root) — regression that the real-division encoding did not
+/// integer root) – regression that the real-division encoding did not
 /// disturb the integer path.
 #[test]
 fn nia_integer_reasoning_unchanged_alongside_real_division() {
@@ -117,7 +117,7 @@ fn nia_integer_reasoning_unchanged_alongside_real_division() {
 }
 
 /// Open-logic routing: a bare Int NUMERAL in a Real context (`4`, `1`) is
-/// not "Int-sorted arithmetic" — counting it sent pure-Real goals like this
+/// not "Int-sorted arithmetic" – counting it sent pure-Real goals like this
 /// one to the integer backend instead of NRA.
 #[test]
 fn int_literals_do_not_route_real_goals_to_the_integer_backend() {
@@ -145,7 +145,7 @@ fn coupled_equality_sat_class_unchanged() {
 }
 
 /// A division over a free dividend and free divisor whose witness needs
-/// values the greedy sampler cannot enumerate stays `unknown` — the honest
+/// values the greedy sampler cannot enumerate stays `unknown` – the honest
 /// answer, never a guess (sampler capacity, same class as coupled products
 /// with free operands).
 #[test]

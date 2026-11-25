@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Powered A/B for an env-armed treatment (heuristic-class changes): the
 # perf gate compares two BINARIES under one env; this harness compares
-# two ENVS under one binary — the shape every `NIXIE_*` study arm needs
+# two ENVS under one binary – the shape every `NIXIE_*` study arm needs
 # (the 2026-09-21 fold-stack refusal ran on this pattern; see
 # docs/studies/2026-09-21-bve-after-fold-policy.md).
 #
 # Method (docs/BENCHMARKING.md): standing gate corpus, >=10 seeds
-# (`NIXIE_SAT_SEED`, deterministic conflict counters — never wall), the
+# (`NIXIE_SAT_SEED`, deterministic conflict counters – never wall), the
 # treatment env applied to one arm only, verdict agreement checked per
 # cell/seed (a disagreement is a soundness failure, printed loudly and
 # flagged in the table).

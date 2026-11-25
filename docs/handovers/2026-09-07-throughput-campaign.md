@@ -2,9 +2,9 @@
 
 ## Context
 
-Nixie's SAT core has **conflicts parity with cadical** (0.88× — we beat our port source) and a 1.12× conflicts gap vs kissat. The **dominant remaining deficit is throughput**: we process 3.9M propagations/sec vs cadical's 7.0M (1.8×) and kissat's 11.7M (3×). At equal conflicts, we take 1.41× the wall time.
+Nixie's SAT core has **conflicts parity with cadical** (0.88× – we beat our port source) and a 1.12× conflicts gap vs kissat. The **dominant remaining deficit is throughput**: we process 3.9M propagations/sec vs cadical's 7.0M (1.8×) and kissat's 11.7M (3×). At equal conflicts, we take 1.41× the wall time.
 
-This is pure engineering (data-structure and memory-access optimization), not heuristic tuning. No matched-null needed — the trajectories must stay bit-identical.
+This is pure engineering (data-structure and memory-access optimization), not heuristic tuning. No matched-null needed – the trajectories must stay bit-identical.
 
 ## The Measurement (6s167-opt, E-core 10, sequential)
 
@@ -30,7 +30,7 @@ The four pre-registered targets, ranked by estimated impact:
 
 **Problem**: `ClauseArena` allocates clauses in insertion order. When the watch scan reads clause data for non-blocked watchers, accesses are scattered across the arena. cadical sorts clauses by size so same-sized clauses are adjacent.
 
-**Fix**: Sort the arena by clause size at each compaction, then rewrite the `refs` table and all `ClauseRef` holders (watchers, reasons). The existing `compact_clause_arena()` in `learn.rs` already does in-place compaction — extend it to sort by size during the move.
+**Fix**: Sort the arena by clause size at each compaction, then rewrite the `refs` table and all `ClauseRef` holders (watchers, reasons). The existing `compact_clause_arena()` in `learn.rs` already does in-place compaction – extend it to sort by size during the move.
 
 **Estimated impact**: 20-40% reduction in arena cache misses. Watch-scan reads would hit adjacent memory for same-sized clauses.
 
@@ -40,7 +40,7 @@ The four pre-registered targets, ranked by estimated impact:
 
 ### Target 2: Watcher Compression (moderate win, moderate work)
 
-**Problem**: `Watcher` is 12 bytes (`clause: ClauseId` (4) + `r: ClauseRef` (4) + `blocker: Lit` (4)). A typical watch list of 5 entries = 60 bytes = 1 cache line. If compressed to 8 bytes, 5 entries = 40 bytes — still 1 cache line but with more room for prefetch.
+**Problem**: `Watcher` is 12 bytes (`clause: ClauseId` (4) + `r: ClauseRef` (4) + `blocker: Lit` (4)). A typical watch list of 5 entries = 60 bytes = 1 cache line. If compressed to 8 bytes, 5 entries = 40 bytes – still 1 cache line but with more room for prefetch.
 
 **Current layout** (`nixie-sat/src/watched.rs`):
 ```rust
@@ -51,7 +51,7 @@ pub struct Watcher {
 }
 ```
 
-**Fix**: The `clause` id and `r` slot could share encoding if slots were index-based (u32 index into a sorted arena) rather than byte-offset. Or: drop `clause` entirely from the watcher and recover it from `r` via a reverse-mapping table (this is what cadical does — the watcher only stores the reference, the id is looked up on demand).
+**Fix**: The `clause` id and `r` slot could share encoding if slots were index-based (u32 index into a sorted arena) rather than byte-offset. Or: drop `clause` entirely from the watcher and recover it from `r` via a reverse-mapping table (this is what cadical does – the watcher only stores the reference, the id is looked up on demand).
 
 **Tradeoff**: Dropping `clause` saves 4 bytes but adds an indirection when the id is needed (reason recording, clause deletion). The blocker is needed per-scan.
 
@@ -65,7 +65,7 @@ pub struct Watcher {
 
 Each pass has its own loop overhead, and the two data structures are in different memory regions.
 
-**Fix**: Merge binary edges into the watch list so a single pass handles both. This is what cadical does — binary and large clauses share the watch structure (binary watchers are a special tagged case).
+**Fix**: Merge binary edges into the watch list so a single pass handles both. This is what cadical does – binary and large clauses share the watch structure (binary watchers are a special tagged case).
 
 **Warning**: This reverses the BIG-authoritative BCP design decision (2026-09). The BIG is also used by transitive reduction, ELS equivalence detection, and the AND-gate factoring pass. Those consumers would need to work from the watch structure instead, or the BIG would need to be maintained separately.
 
@@ -90,18 +90,18 @@ Each pass has its own loop overhead, and the two data structures are in differen
 ## Verification Checklist
 
 - [ ] Conflicts bit-identical on corpus files (trajectory preservation)
-- [ ] `cargo nextest run -p nixie-sat --all-features` — all 925+ tests pass
-- [ ] `cargo clippy --all-features --all-targets -- -D warnings` — clean
-- [ ] `./bench/z3_parity/run_parity.sh` — 0 verdict mismatches
+- [ ] `cargo nextest run -p nixie-sat --all-features` – all 925+ tests pass
+- [ ] `cargo clippy --all-features --all-targets -- -D warnings` – clean
+- [ ] `./bench/z3_parity/run_parity.sh` – 0 verdict mismatches
 - [ ] Wall time improvement measured on 6s167 + 2-3 other anchors
 - [ ] No regression on solved-at-cap (run the 5-seed screen on the standard anchors)
 
 ## Key Constraints
 
-- **Trajectory identity is mandatory** for pure engineering changes — any change that alters the search path is heuristic-class and needs matched-null discipline
-- **E-cores amplify memory-bandwidth differences** — the 1.8× gap may be smaller on P-cores; the engineering targets remain valid
-- **The BIG is load-bearing** for multiple passes (transitive reduction, ELS, AND-gate factoring) — Target 3's refactor must update all consumers
-- **cadical's tick formula** (`1 + cache_lines(watch_size × watcher_bytes)`) is our accounting baseline — changing watcher size changes the tick counts and thus the restart schedule
+- **Trajectory identity is mandatory** for pure engineering changes – any change that alters the search path is heuristic-class and needs matched-null discipline
+- **E-cores amplify memory-bandwidth differences** – the 1.8× gap may be smaller on P-cores; the engineering targets remain valid
+- **The BIG is load-bearing** for multiple passes (transitive reduction, ELS, AND-gate factoring) – Target 3's refactor must update all consumers
+- **cadical's tick formula** (`1 + cache_lines(watch_size × watcher_bytes)`) is our accounting baseline – changing watcher size changes the tick counts and thus the restart schedule
 
 ## Expected Outcome
 

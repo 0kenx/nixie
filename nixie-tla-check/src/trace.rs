@@ -5,7 +5,7 @@
 //! nothing else. Two things were wrong with that, and the second is the
 //! serious one.
 //!
-//! The first is that a violation with no trace is unactionable — "`Inv` fails
+//! The first is that a violation with no trace is unactionable – "`Inv` fails
 //! after 2 steps" does not say what the states were.
 //!
 //! The second is that the claim was never checked. `AGENTS.md` is explicit: *a
@@ -82,7 +82,7 @@ impl std::fmt::Display for Trace {
 ///
 /// The two are kept apart because they mean different things. **Undecided** is
 /// the model declining to pin a value down, which happens whenever the query
-/// never asked — and where any value will do, a value may be supplied.
+/// never asked – and where any value will do, a value may be supplied.
 /// **Unsupported** is this decoder having no reading for a shape, which no
 /// choice can repair.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -97,7 +97,7 @@ pub enum DecodeError {
 
 /// Decode the value a term has in `model`, at its own sort.
 ///
-/// `domain` is the companion domain term of a function-sorted name — an SMT
+/// `domain` is the companion domain term of a function-sorted name – an SMT
 /// array is only a graph, so without it there is nothing to say which points
 /// are in the function.
 ///
@@ -181,7 +181,7 @@ fn decode_at(
             }
         }
         // A **sequence** before a record, because a sequence is a datatype
-        // too — a length and an array — and `@sl`/`@sf` are reserved so the
+        // too – a length and an array – and `@sl`/`@sf` are reserved so the
         // two cannot be confused. It decodes to a TLA+ tuple, which is what a
         // sequence is.
         SortKind::Datatype(_) if crate::sorts::seq_element(sort, tm).is_some() => {
@@ -227,8 +227,8 @@ fn decode_at(
         // the sort: `crate::sorts` prefixes a tuple component `@t` and a record
         // field `@f` precisely so the two cannot be confused.
         // A **variant** datatype (issue #17): multiple constructors, one per
-        // tag. Which one the model chose is asked of the model itself — the
-        // constructor term it evaluates to names the tag — and the payload
+        // tag. Which one the model chose is asked of the model itself – the
+        // constructor term it evaluates to names the tag – and the payload
         // is the constructor's argument (or the `@vp` selector's, for a
         // value the query never applied a selector to).
         SortKind::Datatype(_) if crate::sorts::variant_ctor_tags(sort, tm).is_some() => {
@@ -306,7 +306,7 @@ fn decode_at(
                 .ok_or_else(|| DecodeError::Unsupported("a datatype with no constructor".into()))?;
             // If the model hands back a *constructor*, read its arguments
             // positionally. That is the case whenever the value came from
-            // somewhere the model assigns no selectors for — a record sitting
+            // somewhere the model assigns no selectors for – a record sitting
             // inside a sequence, say, which is reached by reducing a `select`
             // over a `store` chain and so is a term the query never applied a
             // selector to.
@@ -406,17 +406,17 @@ fn decode_at(
                 // MODEL, not invented: `decode_at` runs the minted select
                 // through `Model::eval`, whose `select_in` walk follows the
                 // variable's assigned store chain and its aliases, evaluating
-                // the chain's indices and values under this same model — so
+                // the chain's indices and values under this same model – so
                 // the completion agrees with whatever branch update the SAT
                 // model committed (a taken `x' = store(x, i, v)` writes `v` at
                 // `i`; an UNCHANGED `x' = x` reads through to the earlier
-                // state). Completing independently of the branch — the sort's
-                // default, which is what this used to do unconditionally —
+                // state). Completing independently of the branch – the sort's
+                // default, which is what this used to do unconditionally –
                 // produced traces no disjunct of `Next` satisfied, and the
                 // replay rightly rejected them.
                 //
                 // The sort default remains the LAST resort for a point not
-                // even the chains reach (a genuinely unconstrained point —
+                // even the chains reach (a genuinely unconstrained point –
                 // the formula says nothing about `f[p]`, so *every* value
                 // there extends the model; it is the same completion the
                 // solver's own `build_model` makes for an unconstrained
@@ -439,7 +439,7 @@ fn decode_at(
         }
         SortKind::Uninterpreted(_) => {
             // Only ever compared for equality, so the name of its model value
-            // is the whole of it — and a name is what a TLA+ model value is.
+            // is the whole of it – and a name is what a TLA+ model value is.
             let v = model.eval(term, tm);
             match tm.get(v).map(|t| t.kind.clone()) {
                 Some(TermKind::Var(sym)) => Ok(Value::Str(tm.resolve_str(sym).to_string())),
@@ -491,7 +491,7 @@ fn collect_set(
                 stack.push((a, d + 1));
                 stack.push((b, d + 1));
             }
-            // An opaque set — a set-valued `VARIABLE`, most of the time.
+            // An opaque set – a set-valued `VARIABLE`, most of the time.
             // There is no model value to read, and that is not an oversight
             // in the solver: the finite-set theory is a ground *reduction*,
             // so what the query decided about a set is exactly the membership
@@ -507,13 +507,13 @@ fn collect_set(
 /// `set.member(e, s)` is a Boolean the model decides, and the reduction built
 /// one for every element the query ever asked about. Collecting the ones that
 /// came out true gives a concrete set that satisfies every membership
-/// constraint in the query — which is what makes it a witness rather than a
+/// constraint in the query – which is what makes it a witness rather than a
 /// guess.
 ///
 /// Elements nothing asked about are genuinely unconstrained, so leaving them
 /// out is *a* correct choice rather than the only one. That is safe here for a
 /// reason worth stating: the trace is replayed afterwards. If the set this
-/// picks were not good enough — a cardinality constraint it fails, say — the
+/// picks were not good enough – a cardinality constraint it fails, say – the
 /// replay rejects it and the checker answers `Unknown` rather than reporting a
 /// counterexample it cannot stand behind.
 fn membership_of(
@@ -540,8 +540,8 @@ fn membership_of(
     }
     for (atom, e) in atoms {
         // Skip the solver's own scaffolding. The finite-set reduction invents
-        // *extensionality witnesses* — `@set_ext_a_b`, a value that must be in
-        // one of two unequal sets and not the other — and the encoder invents
+        // *extensionality witnesses* – `@set_ext_a_b`, a value that must be in
+        // one of two unequal sets and not the other – and the encoder invents
         // names of its own. None of them is a TLA+ value: `@` cannot appear in
         // a TLA+ identifier, which is exactly why both reserve it. A witness
         // that the model happens to place inside a set is an artifact of the
@@ -590,12 +590,12 @@ fn encode_index(v: &Value, sort: SortId, tm: &mut TermManager) -> Result<TermId,
     }
 }
 
-/// Rebuild a decoded value as an SMT term at `sort` — the inverse of
+/// Rebuild a decoded value as an SMT term at `sort` – the inverse of
 /// [`decode`].
 ///
 /// Used to **block** a counterexample: asserting that the states are not these
 /// states is how a second, different counterexample is found. Blocking only
-/// ever *adds* constraints, so it can remove behaviours and never invent one —
+/// ever *adds* constraints, so it can remove behaviours and never invent one –
 /// which is why a partial answer here is safe, and why the shapes it cannot
 /// rebuild are simply left out of the clause rather than guessed at.
 ///
@@ -609,8 +609,8 @@ pub fn encode_value(v: &Value, sort: SortId, tm: &mut TermManager) -> Option<Ter
         (Value::Bool(b), SortKind::Bool) => Some(tm.mk_bool(*b)),
         (Value::Int(i), SortKind::Int) => Some(tm.mk_int(num_bigint::BigInt::from(*i))),
         (Value::Str(t), SortKind::String) => Some(tm.mk_string_lit(t)),
-        // A value of uninterpreted sort *is* its name — that is what an
-        // uninterpreted sort means — and the name came out of the model, so
+        // A value of uninterpreted sort *is* its name – that is what an
+        // uninterpreted sort means – and the name came out of the model, so
         // rebuilding the variable finds the very term the model named.
         (Value::Str(name), SortKind::Uninterpreted(_)) => Some(tm.mk_var(name, sort)),
         (Value::Tuple(_) | Value::Record(_), SortKind::Datatype(_)) => {
@@ -672,7 +672,7 @@ fn default_at(sort: SortId, tm: &mut TermManager, depth: usize) -> Option<Value>
 /// The graph points something already asked about, as (index, `select` term).
 ///
 /// That "something" is the query, the array theory's own lemmas (read-over
-/// -write instances, the stores' self-reads), and any earlier decode — all
+/// -write instances, the stores' self-reads), and any earlier decode – all
 /// terms the model has therefore decided. Reading them is reading the
 /// search's conclusions; gathering them is the array-theory counterpart of
 /// [`membership_of`], and for the same reason: a model determines a value

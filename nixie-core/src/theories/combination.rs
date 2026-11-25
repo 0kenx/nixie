@@ -27,7 +27,7 @@ pub trait Theory: core::fmt::Debug {
 
     /// Tell the theory that two terms are equal
     ///
-    /// Returns `true` when this was new information for the theory — both
+    /// Returns `true` when this was new information for the theory – both
     /// terms are known to it and they were not already in the same class.
     /// A theory that does not know either term returns `false`.
     fn assert_equality(&mut self, a: TermId, b: TermId) -> bool;

@@ -177,7 +177,7 @@ pub struct Solver {
     /// dispatch fragment (see `dispatch_pure_bv::term_in_blastable_fragment`).
     /// Solver-owned rather than thread-local so two solvers on one thread
     /// (two `Context`s in one Python process, say) never read each other's
-    /// TermIds — see the memo's doc there.
+    /// TermIds – see the memo's doc there.
     pub(super) blastable_memo: std::cell::RefCell<rustc_hash::FxHashSet<TermId>>,
     /// Shared "decide these first" queue for opt-in domain-first branching
     /// (`SolverConfig::enable_domain_first_branching`). Populated by
@@ -297,8 +297,8 @@ pub struct Solver {
     /// The assertion spine is covered by
     /// [`Solver::ensure_numeric_equality_splits`], which walks it at the top of
     /// every `check`.  That walk structurally cannot see an atom a *lemma*
-    /// creates — a read-over-write index guard, a store-congruence premise, an
-    /// MBQI instantiation — because no assertion contains it.  Such an atom
+    /// creates – a read-over-write index guard, a store-congruence premise, an
+    /// MBQI instantiation – because no assertion contains it.  Such an atom
     /// then reached the SAT core with no trichotomy clause, and
     /// `process_constraint`'s negative-`Eq` branch tells EUF and BV but not
     /// arithmetic, so a `false` assignment never became a strict bound: the
@@ -339,22 +339,22 @@ pub struct Solver {
     /// Assertions
     pub(super) assertions: Vec<TermId>,
     /// Nullary `define-fun` equations `(= name body)` (script order).  They
-    /// are *not* real assertions — the parser inlines every use of `name`,
+    /// are *not* real assertions – the parser inlines every use of `name`,
     /// so the equation is definitionally satisfiable and asserting it ran
     /// the full per-assert encode/blast pipeline over every chained body
     /// (quadratic on macro-heavy inputs).  [`Self::bv_preprocess_assertions`]
     /// seeds them into its working set so `solve_equations` substitutes the
-    /// definitions exactly as the historical asserted form did — keeping
+    /// definitions exactly as the historical asserted form did – keeping
     /// bodies short for the cascade (the `challenge/integerOverflow` class:
     /// an inlined `sign_extend` is a concat tree the cascade cannot fold,
-    /// the named definition substitutes in one step) — while nothing
+    /// the named definition substitutes in one step) – while nothing
     /// downstream ever encodes or blasts them.
     pub(super) define_fun_equations: Vec<TermId>,
     /// Untouched caller assertions used only by the independent certificate gate.
     pub(super) certificate_assertions: Vec<TermId>,
     /// Equality atoms over bag-sorted terms that the **reduction** minted
     /// (pair congruence, choose emptiness): persisted across asserts so the
-    /// next pass's re-survey — which re-walks the conjoined axioms — can
+    /// next pass's re-survey – which re-walks the conjoined axioms – can
     /// tell them from user-written equalities and refuse them extensionality
     /// witnesses (the pair pass states their congruence directly). Stale
     /// entries after a `pop` only ever suppress; a re-asserted equality is
@@ -362,8 +362,8 @@ pub struct Solver {
     pub(super) bag_minted_eq_atoms: FxHashSet<TermId>,
     /// Fold terms the bag reduction could not pin to an unrolled chain
     /// (order-sensitive function, opaque or symbolic-multiplicity domain,
-    /// unroll budget), with the reason. They stay free — sound for `unsat`
-    /// — and the model pass certifies any `sat` resting on them (faithful
+    /// unroll budget), with the reason. They stay free – sound for `unsat`
+    /// – and the model pass certifies any `sat` resting on them (faithful
     /// synthesis from the bag's assembled cells plus an assertion check
     /// for domain declines; an unconditional degrade for order-sensitive
     /// ones; see `extract_bag_model`). Persisted across asserts like the
@@ -374,8 +374,8 @@ pub struct Solver {
     pub(super) bag_declined_folds: FxHashMap<TermId, bag_theory::FoldDecline>,
     /// Unary `define-fun` definitions usable by `bag.map`/`bag.filter`
     /// (and binary ones by `bag.fold`): the function's interned name to
-    /// its [`BagFunDef`]. The reduction inlines the body per element —
-    /// exactly the parser's call-site substitution — so its images and
+    /// its [`BagFunDef`]. The reduction inlines the body per element –
+    /// exactly the parser's call-site substitution – so its images and
     /// the user's `(f x)` spellings are the same terms. Definitions are
     /// script-global (SMT-LIB forbids redefinition), so entries are never
     /// removed.
@@ -391,8 +391,8 @@ pub struct Solver {
     /// Unsat core (if unsat)
     pub(super) unsat_core: Option<UnsatCore>,
     /// The finite-field UNSAT certificate of the last `Unsat` (§8 of the
-    /// FF design): the checkable object — ideal-membership cofactors or a
-    /// pigeonhole count — that certified mode re-verifies before letting
+    /// FF design): the checkable object – ideal-membership cofactors or a
+    /// pigeonhole count – that certified mode re-verifies before letting
     /// an FF `unsat` through. Travels with the verdict exactly as `model`
     /// does; cleared by `invalidate_results`.
     pub(super) ff_certificate: Option<(
@@ -448,7 +448,7 @@ pub struct Solver {
     /// elim-uncnstr deferral bet (see `bv_elim_defer_eager_blast`): paid
     /// back by `bv_restore_deferred_circuits` when the dispatch declines.
     /// Routing bookkeeping only, not trailed (a stale entry after `pop` is
-    /// re-linked at the next decline — always sound, merely eager).
+    /// re-linked at the next decline – always sound, merely eager).
     pub(super) bv_elim_deferred: Vec<TermId>,
     /// Assertion count at which the stage-4 preprocessing-parity pass last
     /// ran (`usize::MAX` = never); re-runs only when new assertions arrive.
@@ -466,7 +466,7 @@ pub struct Solver {
     /// with the rewritten set as the *only* circuit source, the search's
     /// model leaves eliminated variables at their defaults, and the
     /// `model_refutes_assertions` gate would refute the ORIGINAL assertions
-    /// with them — reconstruct from these definitions before validation
+    /// with them – reconstruct from these definitions before validation
     /// (the dispatch path's `bv_reconstruct_eliminations`, same machinery).
     pub(super) deferred_eliminations: Vec<(TermId, TermId)>,
     /// Size of the encoded vocabulary (`var_to_term` + `var_to_constraint`)
@@ -568,7 +568,7 @@ pub struct Solver {
     /// Monotone counter bumped on every user-level mutation that can change
     /// the parity-lemma basis (`assert` / `assert_named` / `pop`).  The
     /// derivation in [`Solver::derive_parity_lemmas`] runs at the next
-    /// `check_core` entry after a bump — never per theory check (the
+    /// `check_core` entry after a bump – never per theory check (the
     /// measured failure mode; see
     /// `docs/studies/2026-09-06-mixed-parity-lia-equality-gap.md`).
     pub(super) parity_generation: u64,
@@ -620,7 +620,7 @@ pub struct Solver {
     /// `nelson_oppen_combine`'s arithmetic-to-EUF probe only pairs terms that
     /// are both EUF application arguments *and* arithmetic interface terms. A
     /// constant in an argument position is an application argument but not, on
-    /// its own, an interface term — so a pair like `(n, 1)` is never proposed,
+    /// its own, an interface term – so a pair like `(n, 1)` is never proposed,
     /// the entailed `n = 1` is never derived, and the congruence that rests on
     /// it never fires. Pinning the constant (a tautological `c = c` row,
     /// asserted every round because theory resets wipe encode-time state)
@@ -629,11 +629,11 @@ pub struct Solver {
     /// Two populations reach here, both from `purify_numeric_uf_args`:
     ///
     /// * constant arguments of a function the per-function gate leaves
-    ///   **un-purified** because it appears inside a quantifier — congruence
+    ///   **un-purified** because it appears inside a quantifier – congruence
     ///   then closes `f(y) = f(3)` (the `pr30#3` class);
     /// * constant **array indices** of `select`/`store`, which are pinned
     ///   rather than purified because the array theory matches indices by
-    ///   `TermId` — congruence then closes `select(A, n) = select(A, 1)`
+    ///   `TermId` – congruence then closes `select(A, n) = select(A, 1)`
     ///   (see `docs/studies/2026-09-14-array-index-entailed-equal-to-a-constant.md`).
     pub(super) interface_const_pins: FxHashMap<TermId, Rational64>,
     /// Care-graph split pairs for trailed dedup.
@@ -734,8 +734,8 @@ pub struct Solver {
     ///
     /// `set.member`, `set.subset` and `set.card` become opaque SAT atoms with
     /// nothing forcing them to agree with set semantics, so the SAT layer is
-    /// free to pick either value. Dropped constraints keep `Unsat` sound —
-    /// fewer clauses can only make a refutation harder — but a `Sat` may rest
+    /// free to pick either value. Dropped constraints keep `Unsat` sound –
+    /// fewer clauses can only make a refutation harder – but a `Sat` may rest
     /// on an assignment no set satisfies, which is a wrong answer. This flag
     /// degrades exactly that case to `Unknown`.
     pub(super) set_terms_unconstrained: bool,
@@ -743,8 +743,8 @@ pub struct Solver {
     /// Gates the per-assertion set/bag re-survey (which walks the whole
     /// assertion stack); with no such term anywhere the reductions are
     /// provably empty, so the survey is skipped. Monotonic on purpose: a
-    /// `pop` that removes the last set term keeps the slow path — never
-    /// the reverse — so the gate can only be conservative.
+    /// `pop` that removes the last set term keeps the slow path – never
+    /// the reverse – so the gate can only be conservative.
     pub(super) has_set_or_bag_terms: bool,
     /// Honesty gate (soundness) for finite fields: `true` once any FF-sorted
     /// term or a container of fields occurs in an assertion/encoding. The FF decision procedure
@@ -828,8 +828,8 @@ pub struct Solver {
     /// encodes the arithmetic terms the linear CDCL(T) path cannot
     /// axiomatize (symbolic-divisor division, nonlinear products) as exact
     /// polynomial constraints. The `arith_defs_incomplete` honesty gate
-    /// exists for the *linear* path — an undefined term there is a free
-    /// Boolean — and must not veto a verdict from the engine that decided
+    /// exists for the *linear* path – an undefined term there is a free
+    /// Boolean – and must not veto a verdict from the engine that decided
     /// exactly those terms. Cleared at every `check_core` entry.
     pub(super) nl_dispatch_answered: bool,
     /// The transcendental (delta-ICP) dispatcher answered THIS check: its
@@ -915,22 +915,22 @@ pub struct Solver {
     /// CERTIFICATE-mode numeric equality: during
     /// [`Solver::model_certifies_assertions`] the shared evaluator treats an
     /// exact value COLLISION on `=` as TRUE (the equality holds under the
-    /// assignment — a positive verification), while the refutation gates keep
+    /// assignment – a positive verification), while the refutation gates keep
     /// the collision `Undetermined` (a collision must never veto a `not (=
-    /// ..)` candidate — see `combine_eq`).  Saved/restored around the
+    /// ..)` candidate – see `combine_eq`).  Saved/restored around the
     /// certificate's evaluations; evaluation-local, never trailed.
     pub(super) eq_collision_verifies: std::cell::Cell<bool>,
     /// The certificate's δ-instantiation (`real + δ₀·delta` concretizes the
-    /// strict-bound deltas — the same trick as the dive leaf's snapshot,
+    /// strict-bound deltas – the same trick as the dive leaf's snapshot,
     /// item 90): computed once per [`Solver::model_certifies_assertions`]
     /// from [`ArithSolver::delta_instantiation_exact`]; `None` when no
-    /// positive δ₀ exists (a point that violates its own strict bounds —
+    /// positive δ₀ exists (a point that violates its own strict bounds –
     /// the certificate then reads without instantiation and the boundary
     /// comparisons soften as ever).  Evaluation-local, never trailed.
     pub(super) certify_delta0: std::cell::RefCell<Option<num_rational::BigRational>>,
 
     /// Minted CDCL-visible LIA branch atoms (`(>= form k)`, the item-96
-    /// channel — see the `LiaBranchRequest` type in the arithmetic solver).
+    /// channel – see the `LiaBranchRequest` type in the arithmetic solver).
     /// Memo: an already-minted atom is never re-minted (the term is
     /// hash-consed, so the same (form, k) request lands here twice at
     /// most).  The atoms are ordinary Boolean atoms in the SAT database,
@@ -954,7 +954,7 @@ pub struct Solver {
     /// clauses are permanent in `self.sat` until `Solver::pop` retracts them
     /// with `self.sat.pop()`, so a counter reset at `check_core` entry would
     /// let a second `check` report `Unsat` off a database still restricted by
-    /// the first one's blocking clauses — a wrong `unsat`, strictly worse than
+    /// the first one's blocking clauses – a wrong `unsat`, strictly worse than
     /// the spurious `Unknown` the whole mechanism exists to remove.  It is
     /// snapshotted in [`trail::ContextState`] (restored by `pop` in lockstep
     /// with `sat.pop()`), zeroed only by `Solver::reset`, and never touched by
@@ -964,7 +964,7 @@ pub struct Solver {
     /// [`Solver::blocking_clauses_present`].
     pub(super) model_blocking_active: usize,
     /// Blocking clauses added for `Unrepresentable` refutations (the
-    /// evaluator's width limit — not a certified-bad exclusion).
+    /// evaluator's width limit – not a certified-bad exclusion).
     /// Snapshot in `ContextState` in lockstep with
     /// `model_blocking_active`, so a `pop` retracting the clauses
     /// retracts the count.  While nonzero, the `Unsat`-after-blocking
@@ -973,7 +973,7 @@ pub struct Solver {
     /// over them is a genuine `Unsat`.
     pub(super) model_blocks_nongenuine: usize,
     /// Exact model values for the nonlinear-real variables that [`Model`]
-    /// cannot hold — the `(get-model)` side-channel for algebraic witnesses
+    /// cannot hold – the `(get-model)` side-channel for algebraic witnesses
     /// (`√2`-style values with no rational form). Populated ONLY all-or-nothing
     /// and only by a real cell decomposition's `Sat` (see `check_nlsat`);
     /// cleared on entry to every nonlinear dispatch and invalidated by
@@ -1070,7 +1070,7 @@ pub(super) const ENCODE_DEPTH_LIMIT: u32 = 512;
 /// The live encoder depth cap: [`ENCODE_DEPTH_LIMIT`] until
 /// [`set_encode_depth_limit`] raises it.  Process-wide and read at every
 /// encode, so it must be set before the first `assert`/`check` (the CLI
-/// sets it once at startup — see `nixie-cli/src/main.rs`).
+/// sets it once at startup – see `nixie-cli/src/main.rs`).
 static ENCODE_DEPTH_LIMIT_LIVE: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(ENCODE_DEPTH_LIMIT);
 
@@ -1081,7 +1081,7 @@ static ENCODE_DEPTH_LIMIT_LIVE: std::sync::atomic::AtomicU32 =
 /// recursion* within the running thread's stack: the default 512 is sized
 /// for an 8 MiB stack (~16 KiB/frame worst walker).  Callers MAY raise it
 /// only to a value that fits the stack the solving thread actually runs on
-/// — e.g. 32768 on the CLI's 1 GiB big-stack worker.  The honesty gate
+/// – e.g. 32768 on the CLI's 1 GiB big-stack worker.  The honesty gate
 /// (an input deeper than the cap answers `Unknown`, never a guess) is
 /// unchanged; a too-high value risks a stack-overflow abort instead.
 pub fn set_encode_depth_limit(limit: u32) {
@@ -1140,7 +1140,7 @@ impl Default for Solver {
 /// Structural pure-Boolean predicate for [`Solver::goal_is_pure_boolean`]:
 /// every sub-term is Bool-sorted and built from Boolean constants, Bool
 /// variables, and Boolean connectives (including Bool-sorted `=`/`ite`/
-/// `distinct` — all lowered through the same `encode_bool_node` gates, no
+/// `distinct` – all lowered through the same `encode_bool_node` gates, no
 /// theory atom among them). Anything else (UF applications, arithmetic,
 /// BV, arrays, strings, datatypes, quantifiers) rejects.
 fn term_is_pure_boolean(term: TermId, manager: &TermManager) -> bool {
@@ -1185,7 +1185,7 @@ fn term_is_pure_boolean(term: TermId, manager: &TermManager) -> bool {
 }
 
 impl Solver {
-    /// Cap on [`Self::lia_branch_rounds`] — the number of full re-solve
+    /// Cap on [`Self::lia_branch_rounds`] – the number of full re-solve
     /// rounds the LIA branch-lemma channel may spend.  Generous: each
     /// round teaches CDCL a new branching dimension (the Z3 architecture's
     /// per-final-check atom), and the ray family needs tens of dimensions,
@@ -1200,7 +1200,7 @@ impl Solver {
     /// parser inlines every use), but the unit-equality representative
     /// fold (`fold_unit_eq_reps`) still
     /// wants later assertions that carry the raw `body` DAG to fold onto the
-    /// named representative — this feeds it exactly the entry the asserted
+    /// named representative – this feeds it exactly the entry the asserted
     /// equality used to produce.
     pub fn note_define_fun_alias(&mut self, name: TermId, body: TermId, manager: &mut TermManager) {
         let eq = manager.mk_eq(name, body);
@@ -1230,13 +1230,13 @@ impl Solver {
         // Build SAT solver configuration from our config
         // Freeze-set collapse (cdclt-gates-audit enabling slice, DEFAULT ON):
         // the embedded core enables BVE + ELS, and every check entry freezes
-        // the theory-mapped variables (`var_to_constraint` keys — exactly
+        // the theory-mapped variables (`var_to_constraint` keys – exactly
         // what the theory manager replays via `on_assignment`), so those
         // passes only ever transform Boolean-structure variables the
         // theories never observe.  Enabled under the relaxed landing rule
-        // (sound by construction — frozen vars are never touched, model
+        // (sound by construction – frozen vars are never touched, model
         // reconstruction rides the existing witness machinery, and the
-        // whole-assertion validation gates every `Sat` — plus screening
+        // whole-assertion validation gates every `Sat` – plus screening
         // with no regress: solved identical, 0 verdict changes, 0 wrong vs
         // z3; see the freeze-set study).  `NIXIE_FREEZE_COLLAPSE=0` disables
         // for A/B.
@@ -1291,7 +1291,7 @@ impl Solver {
                 // Boolean folding cannot be validated against (the same
                 // reason every SMT preset keeps `enable_equiv_substitution`
                 // off). The kitten sweep's fold step is exactly that class
-                // — measured directly on 2026-09-08:
+                // – measured directly on 2026-09-08:
                 // pr30::test_bv_index_quantified_array_certifies_sat folds
                 // a Boolean-entailed complementary equivalence in a
                 // pre-theory round and the grown problem later returns a
@@ -1820,7 +1820,7 @@ impl Solver {
         // `nl_dispatch_answered`: the nonlinear dispatcher encoded the
         // very terms this gate is about (symbolic-divisor division has a
         // guarded defining clause there; products are native), under its
-        // own trust rules — the linear path's "undefined term = free
+        // own trust rules – the linear path's "undefined term = free
         // Boolean" hazard does not apply to its verdicts.
         if result == SolverResult::Sat
             && self.arith_defs_incomplete(manager)
@@ -1851,7 +1851,7 @@ impl Solver {
             // The MBQI certifier is FRAGMENT-LIMITED: a mixed Int/Real
             // goal is declined by both its engines without ever being
             // evaluated (the real engine refuses integer-sorted symbols,
-            // the integer engine reals) — a DECLINE, not a refutation.
+            // the integer engine reals) – a DECLINE, not a refutation.
             // The value-only exact certificate
             // ([`Self::model_certifies_assertions`], the pure-BV
             // dispatch's Sat contract) evaluates the ORIGINAL assertions
@@ -1859,17 +1859,17 @@ impl Solver {
             // closed on anything it cannot decide: a pass is a positive
             // verification, which is exactly what this gate exists to
             // demand of the big-const abstraction (item 96's J5-(a)
-            // class — measured: the armed search's candidates on the
+            // class – measured: the armed search's candidates on the
             // ray members carry z3-valid models the fragment decline was
             // discarding).
             && !self.model_certifies_assertions(manager)
         {
             // A REFUTED candidate (some assertion concretely FALSE under
-            // the published model — the dive-leaf divergence class, item
+            // the published model – the dive-leaf divergence class, item
             // 89's map) is blocked-and-retried like any other refuted
             // model: the block excludes only this assignment's projection,
             // and the next candidate may carry the good model.  A DECLINE
-            // (`Undecided`) is never blocked — excluding an undecided
+            // (`Undecided`) is never blocked – excluding an undecided
             // region can discard the good model.  Bounded like the BV
             // pending rounds; budget out ⇒ the honest `Unknown` this gate
             // always owned.
@@ -1932,7 +1932,7 @@ impl Solver {
     /// ([`TheoryManager::take_arrangement_splits`]), so the next search can
     /// *decide* those arrangements instead of accepting one that was never
     /// jointly checked.  The refutation rests on search-branch facts, so no
-    /// clause may be asserted — only the branching dimension is added
+    /// clause may be asserted – only the branching dimension is added
     /// (`mk_eq` + `encode_depth`, the same internalization
     /// `pre_encode_care_graph_atoms` performs up front).  Returns `true`
     /// when at least one new atom was created and the caller should re-solve.
@@ -2095,7 +2095,7 @@ impl Solver {
             }
             let eq_term = manager.mk_eq(pair.0, pair.1);
             let eq_lit = self.encode(eq_term, manager);
-            // cvc5 parity: prefer trying the merge first — a true polarity
+            // cvc5 parity: prefer trying the merge first – a true polarity
             // feeds the merge to EUF, where either congruence fires usefully
             // or the diseq side of the pair's context refutes it.
             self.sat.set_preferred_phase(eq_lit.var(), true);
@@ -2279,10 +2279,10 @@ impl Solver {
         }
         self.last_iface_repair_vocab = vocab_size;
 
-        // Candidates come from the encoded vocabulary — the terms reachable
-        // from the SAT-variable table and the encoded atom constraints — the
+        // Candidates come from the encoded vocabulary – the terms reachable
+        // from the SAT-variable table and the encoded atom constraints – the
         // same terms the theory manager's eager EUF intern registers as
-        // application arguments — so this pass can run *before* the
+        // application arguments – so this pass can run *before* the
         // `TheoryManager` constructor takes the theory borrows.
         let mut candidates: Vec<TermId> = Vec::new();
         let mut roots: Vec<TermId> = Vec::new();
@@ -2446,7 +2446,7 @@ impl Solver {
     /// Whether every assertion is built purely from Bool constants and
     /// Boolean connectives (the fast path's dispatch predicate; see the
     /// fast-path block in [`Self::check_core`]). A conservative structural
-    /// walk over the assertions as written — any theory atom, any
+    /// walk over the assertions as written – any theory atom, any
     /// non-Bool-sorted sub-term, any quantifier rejects. Evaluated fresh at
     /// every check, so later assertions re-route to the general path.
     fn goal_is_pure_boolean(&self, manager: &TermManager) -> bool {
@@ -2593,7 +2593,7 @@ impl Solver {
         // `solver/fp_fold.rs`.  Runs BEFORE `instantiate_arith_axioms`: the
         // `RealToFp` fold's guard atoms mention `div`-bearing real
         // expressions, and minting them after the ar pass would leave the
-        // terms axiom-less — the arith honesty gate and the
+        // terms axiom-less – the arith honesty gate and the
         // `arith_defs_incomplete` downgrade then turn every would-be verdict
         // into `Unknown`.
         self.fp_fold_pending = self.instantiate_fp_folds(manager);
@@ -2620,7 +2620,7 @@ impl Solver {
         // of this family walks every assertion's DAG; when the goal's
         // static features say the theory is absent (no string/fp/dt/array
         // term anywhere) the walk provably collects nothing, so the gate
-        // skips it outright — inert by construction and the difference
+        // skips it outright – inert by construction and the difference
         // between a per-check full-assertion sweep and a flag read for
         // every goal that isn't using the theory.
         let early_scan_features = {
@@ -2714,7 +2714,7 @@ impl Solver {
         }
 
         // The NIA-over-LP relaxation engine is `std`-gated, not `nlsat`-gated
-        // (upstream v0.3.3), so it runs in BOTH builds — with the feature OFF
+        // (upstream v0.3.3), so it runs in BOTH builds – with the feature OFF
         // it is the only nonlinear decider left. It declines Real-sorted
         // variables outright, so QF_NRA goals pass through untouched.
         #[cfg(feature = "std")]
@@ -2792,11 +2792,11 @@ impl Solver {
             // CDCL(T) search's EUF layer, not in this early phase), so the
             // early `Unknown` would abandon a decidable goal.  The same
             // holds for predicates with a SAME-CLASS refutation candidate
-            // (`fp.lt (fp.abs a) (fp.abs b)` under `(= a b)` — congruence
+            // (`fp.lt (fp.abs a) (fp.abs b)` under `(= a b)` – congruence
             // merges the operands in-search and the strict comparison
             // conflicts).  Fall through to the search; any `Sat` it returns
             // must first survive `try_fp_model_sat` (see the
-            // `SatResult::Sat` arm) — the free-Boolean fp atoms mean a raw
+            // `SatResult::Sat` arm) – the free-Boolean fp atoms mean a raw
             // search `Sat` proves nothing.
             if self.fp_fold_pending || self.fp_predicates_have_congruence_candidates(manager) {
                 self.fp_fold_verify = true;
@@ -2866,8 +2866,8 @@ impl Solver {
             }
             // Folded-identity delivery, take two: the rewrites are implied
             // by the originals *jointly*, so a rewrite set that is
-            // trivially contradictory — one variable pinned to two distinct
-            // constants, or a bare `false` — refutes the goal with a
+            // trivially contradictory – one variable pinned to two distinct
+            // constants, or a bare `false` – refutes the goal with a
             // level-0 conflict as soon as those units are emitted,
             // regardless of the literal-only emission gate below.
             // That gate exists for trajectory stability (verbose implied
@@ -2881,7 +2881,7 @@ impl Solver {
             // (10 s-cap timeouts vs Z3's 15 ms preprocess-time refutation,
             // `solve-eqs-elim-vars 14`, zero conflicts).  When the whole
             // set is trivially unsat the rewrites cannot reshape any
-            // trajectory — the refutation is immediate — so the gate is
+            // trajectory – the refutation is immediate – so the gate is
             // bypassed and the units emitted (the three protected goals
             // are solvable, so their sets never take this branch, and
             // their path is bit-identical).  Emission (rather than an
@@ -2893,7 +2893,7 @@ impl Solver {
                 bv_preprocess::rewrite_set_trivially_unsat(&pp.rewritten, manager).is_some();
             if trivially_unsat && std::env::var("NIXIE_PRE_TRACE").is_ok() {
                 eprintln!(
-                    "[defer] stage4 rewrite set trivially unsat — emitting the refutation units"
+                    "[defer] stage4 rewrite set trivially unsat – emitting the refutation units"
                 );
             }
             // Every rewrite the preprocessor emits is implied by the
@@ -2901,16 +2901,16 @@ impl Solver {
             // directions: the plain solve-eqs pass substitutes
             // definitions, and the ring pass isolates a variable only over
             // an ODD coefficient (a unit of Z/2^w) in an equation that is
-            // linear in it — the equation then *determines* the variable,
+            // linear in it – the equation then *determines* the variable,
             // so the substituted assertions are consequences of the
             // original set.  (The historical full gate on ring rewrites
             // rested on "ring elimination divides by non-units", which has
-            // been false since the pass was introduced — its pivots were
+            // been false since the pass was introduced – its pivots were
             // always odd-only; the false-sat the gate reacted to was the
             // *linearity* bug, fixed by the no-other-monomial check.
             // What the full un-gating cost: three 25 s-boundary goals on
-            // the 509-file re-screen regressed to `unknown` — implied but
-            // verbose clauses reshape the search trajectory — so when the
+            // the 509-file re-screen regressed to `unknown` – implied but
+            // verbose clauses reshape the search trajectory – so when the
             // ring pass participated, only its *literal* rewrites are
             // asserted (a `false` consequence refutes on the spot, which
             // is exactly the `cohencu` shape; everything else keeps the
@@ -2950,7 +2950,7 @@ impl Solver {
         } else if defer_active {
             // The stage-4 gate refused (fragment broke, no-parity set, or the
             // preprocess cache is current): the deferred assertions must not
-            // stay unencoded — raw emission restores assert-time semantics.
+            // stay unencoded – raw emission restores assert-time semantics.
             self.flush_deferred_bv_asserts_raw(manager);
         }
 
@@ -3008,7 +3008,7 @@ impl Solver {
         // Theory-aware decision hint: prioritize finite-domain value atoms.
         // An enumeration leaf is an `Eq` whose one side is a variable, so a
         // goal with no equality anywhere (the graph corpus: pure clauses)
-        // cannot produce a single bump — skip the full per-assertion
+        // cannot produce a single bump – skip the full per-assertion
         // subterm walk. Inert: `num_eqs` counts equalities of every sort.
         if goal_has_eqs {
             self.bump_finite_domain_enumerations(manager);
@@ -3054,7 +3054,7 @@ impl Solver {
         // `is_in_diff_logic(st)` check): a QF_IDL input whose arith atoms are
         // all difference-shaped, integer-sorted, quantifier- and UF-free with
         // no `ite` results runs the dense DL core as the ONLY arithmetic
-        // engine — atoms are not duplicated into the simplex tableau.  The
+        // engine – atoms are not duplicated into the simplex tableau.  The
         // first atom the DL engines reject breaks purity at runtime and
         // replays into the simplex (see `TheoryManager::break_dl_purity`),
         // so this is a routing hint, not a soundness assumption.  Undeclared
@@ -3101,7 +3101,7 @@ impl Solver {
 
         // Sparse difference engine route: the declared DL logics the dense
         // integer core does not cover (QF_RDL's reals, QF_UFIDL's UF
-        // combination), plus QF_IDL itself — where it serves as a
+        // combination), plus QF_IDL itself – where it serves as a
         // conflict-lemma layer AFTER the pure dense route degraded (an
         // over-budget vocabulary broke purity and replayed into the
         // simplex; Z3's `theory_diff_logic` role in a combination).
@@ -3119,7 +3119,7 @@ impl Solver {
         // Pure-DL completeness: an arithmetic disequality the encoder's
         // structural trichotomy walk missed (an `Eq` under `xor`/`=>`-antecedent
         // or otherwise outside `add_arith_diseq_split`'s descent) reaches the
-        // difference engine unrepresented — the closure can then only build
+        // difference engine unrepresented – the closure can then only build
         // models that violate it, and the honest answer degrades to Unknown.
         // Ensure every numeric equality in the assertions carries its
         // trichotomy clause so a false `Eq` always forces a strict split the
@@ -3130,9 +3130,9 @@ impl Solver {
             self.ensure_numeric_equality_splits(manager);
         }
 
-        // Pure-Boolean fast path: nothing theory-shaped was encoded — no
+        // Pure-Boolean fast path: nothing theory-shaped was encoded – no
         // SAT var maps to a theory constraint, no BV/arith/array/datatype/
-        // float/string terms exist, no quantifier rounds are pending — so
+        // float/string terms exist, no quantifier rounds are pending – so
         // the `TheoryManager` the general path constructs below would be
         // pure per-backtrack glue (measured ~11 % of a certified run on a
         // propositional re-encode: EUF `pop`/congruence bookkeeping on a
@@ -3144,7 +3144,7 @@ impl Solver {
         // path on the next check. With no constrained vars the theory
         // callbacks provably never fire (`on_assignment` early-returns for
         // unconstrained vars; EUF/arith/BV have no atoms to replay), so
-        // detaching them cannot change the verdict — only the per-conflict
+        // detaching them cannot change the verdict – only the per-conflict
         // overhead. Model building (`build_model`) and unsat cores read the
         // same SAT model/database the general path would. Blocking clauses
         // (a search restriction, not lemmas) keep `check_sat_only`'s
@@ -3170,7 +3170,7 @@ impl Solver {
                     // Blocks whose refutations were all GENUINE exclude
                     // only assignments that provably violate the
                     // assertions (the projection covers every variable
-                    // the refutation read — see `model_refutation_kind`),
+                    // the refutation read – see `model_refutation_kind`),
                     // so an `Unsat` over assertions+blocks is an `Unsat`
                     // of the assertions themselves.  The blanket
                     // downgrade (upstream #40) applied this rule to
@@ -3198,11 +3198,11 @@ impl Solver {
         // before the constructor takes the theory borrows.  The candidate
         // arguments come from the encoded vocabulary (`term_to_var`), the
         // same terms the constructor's eager EUF intern is about to register
-        // as application arguments — so compound linear arguments get their
+        // as application arguments – so compound linear arguments get their
         // definitional arithmetic rows before the first search misses the
         // congruence they enable.  With no uninterpreted function anywhere
         // in the goal there are no application arguments to repair, so the
-        // vocabulary walk is provably empty — skip it (a full
+        // vocabulary walk is provably empty – skip it (a full
         // var-table walk per check otherwise, on every UF-free goal).
         let goal_has_uf = self
             .last_features
@@ -3254,7 +3254,7 @@ impl Solver {
         // the completed-structure assertion gate (see
         // `MBQIIntegration::ground_assertions_hold`): the persistent
         // structure is an interpretation candidate whose quantifier story
-        // the nested checker certifies — its *ground* story must be
+        // the nested checker certifies – its *ground* story must be
         // checked just as explicitly before `Satisfied` may print `sat`
         // (the completed-vs-asserted divergence class the sixteenth
         // follow-up decoded).
@@ -3268,8 +3268,8 @@ impl Solver {
         );
         // Consecutive MBQI rounds that produced nothing (no instantiation,
         // no certification).  The bail below fires on a *streak* rather
-        // than a total: productive rounds — ones whose nested-check
-        // counterexamples became forcing instances — are what close
+        // than a total: productive rounds – ones whose nested-check
+        // counterexamples became forcing instances – are what close
         // definitional-axiom models (the set-family diagonal pins land
         // around rounds 8-12), while a re-checked goal's unproductive
         // rounds are pure cost.  A streak bound lets convergence run and
@@ -3294,7 +3294,7 @@ impl Solver {
         // small finite domain needs its `(or (= t lo) .. (= t hi))` lemma
         // before CDCL can branch on the arrangement); gating it on
         // `Instant::elapsed()` made the *verdict* a function of machine load
-        // — measured on QF_UFLIA/wisas/xs_8_13.smt2: identical invocations of
+        // – measured on QF_UFLIA/wisas/xs_8_13.smt2: identical invocations of
         // the same binary flipped 7×`sat` / 1×`unsat`, and forcing the two
         // arms gave 5×`sat` (budget 0) vs 5×`unsat` (budget ∞).  A skipped
         // closing round is a potentially-wrong `sat`, which per AGENTS.md is
@@ -3315,7 +3315,7 @@ impl Solver {
             }
 
             // Freeze-set collapse: freeze every theory-mapped variable
-            // before the (possibly first) solve — its pre-search passes and
+            // before the (possibly first) solve – its pre-search passes and
             // the inprocessing schedule then skip these, transforming only
             // Boolean-structure vars.  Idempotent set insertion covers atoms
             // asserted since the previous check.
@@ -3361,7 +3361,7 @@ impl Solver {
                 SatResult::Unsat => {
                     // Soundness gate: a model-blocking clause (see
                     // `model_blocking`) is a restriction of the search space,
-                    // not a consequence of the assertions — the gate that
+                    // not a consequence of the assertions – the gate that
                     // triggered it fires on the *evaluator's* width limit as
                     // well as on a genuine violation.  "No model outside the
                     // excluded region" is therefore not `unsat`, and there is
@@ -3399,14 +3399,14 @@ impl Solver {
                     if resource_exhausted {
                         // Item 96's CDCL-visible branch channel: when the
                         // exhaustion is a PURE arith abstention (the theory's
-                        // internal search gave up — the branch-walk ray —
+                        // internal search gave up – the branch-walk ray –
                         // nothing was suppressed), the theory may have
                         // requested branch atoms.  Minting them and
                         // re-solving teaches CDCL the branching dimension
                         // the internal B&B lacks (Z3's architecture);
                         // every OTHER exhaustion cause (dropped conflicts,
                         // errors, the deadline) must keep poisoning `Sat`
-                        // for the instance's life — the rebase below would
+                        // for the instance's life – the rebase below would
                         // clear the sticky flags, so those causes skip the
                         // channel and concede `Unknown` as before.
                         let may_branch_round = theory_manager.abstention_exhausted()
@@ -3464,8 +3464,8 @@ impl Solver {
                     // FP fold fall-through (see the FP honesty gate in
                     // `check_core`): the search ran with fp atoms as free
                     // Booleans, so its `Sat` is only a candidate.  Accept it
-                    // exclusively through a verified concrete model — the
-                    // same bit-exact witness the early path uses — and keep
+                    // exclusively through a verified concrete model – the
+                    // same bit-exact witness the early path uses – and keep
                     // the honest `Unknown` otherwise.  Runs before the
                     // refinement loops so every round's `Sat` is gated.
                     if self.fp_fold_verify
@@ -3519,12 +3519,12 @@ impl Solver {
                     // Distinct-semantics guard clauses: for a live
                     // injective-`distinct` spec, every encoded
                     // `(= t_i t_j)` atom between two of its arguments is
-                    // falsified by `¬result ∨ ¬(t_i = t_j)` — a VALID
+                    // falsified by `¬result ∨ ¬(t_i = t_j)` – a VALID
                     // clause (distinct true ⟹ pairwise distinct).  With
                     // the asserted top-level distinct, `result` is a
                     // level-0 unit, so ordinary unit propagation falsifies
                     // every existing guard atom at the START of the next
-                    // descent — exactly the atoms the conflict census
+                    // descent – exactly the atoms the conflict census
                     // found CDCL learning one conflict at a time (the RoW
                     // guard equalities `eq(v,v)`: 23 k of 58 k classified
                     // theory lemmas on memory-alias-s0-large; see
@@ -3787,7 +3787,7 @@ impl Solver {
                             // definitions (without this, the refutes gate
                             // below compares an unreconstructed model
                             // against the original assertions and blocks
-                            // into `Unknown` — the first deferred `sat`).
+                            // into `Unknown` – the first deferred `sat`).
                             let elims = std::mem::take(&mut self.deferred_eliminations);
                             // `build_model` completed the eliminated
                             // variables with sort defaults (they carry no
@@ -3807,10 +3807,10 @@ impl Solver {
                         // used to sit right here and bail out.
                         //
                         // Both repairs exist precisely to fix a candidate
-                        // model that does not hold up — the case-split lemmas
+                        // model that does not hold up – the case-split lemmas
                         // force the search to branch on a value the LP was
                         // free to collide, the array lemmas retract a
-                        // `select` the candidate got wrong — so bailing out
+                        // `select` the candidate got wrong – so bailing out
                         // first made them unreachable for the very models
                         // they were written for.  Every gate they sit behind
                         // is unchanged; only the order is.
@@ -3954,7 +3954,7 @@ impl Solver {
                         // (see `pre_encode_care_graph_atoms`) so CDCL branches on
                         // the shared-term arrangement during the single search;
                         // no post-Sat restart is needed here.
-                        // Final congruence honesty gate — the
+                        // Final congruence honesty gate – the
                         // trajectory-independent closure of the non-convex
                         // Nelson-Oppen gap.  The arrangement round's coverage
                         // (caps, pair enumeration, model grouping) is a
@@ -3966,7 +3966,7 @@ impl Solver {
                         // gap itself: a model where one function's arguments
                         // map to equal values but results differ cannot be
                         // extended to a real interpretation, so the honest
-                        // verdict is `Unknown` — placed AFTER the refinement
+                        // verdict is `Unknown` – placed AFTER the refinement
                         // chain (int case split, arrangement splits, array
                         // axioms) so the productive lemma paths get every
                         // candidate first; a pre-placement starved them and
@@ -4048,7 +4048,7 @@ impl Solver {
                                 return SolverResult::Unknown;
                             }
                         }
-                        // Lazy congruence-gap repair — runs ONLY on a
+                        // Lazy congruence-gap repair – runs ONLY on a
                         // candidate the refutation gate already ACCEPTED
                         // (model_refutes passed): on goals the blocking path
                         // decides productively (`wisas/xs_8_13`), firing
@@ -4238,12 +4238,12 @@ impl Solver {
 
                     let mbqi_result = self.mbqi.check_with_model(&model_assignments, manager);
                     // A/B work unit (the rbt-class MBQI phase is otherwise
-                    // unreachable at fixed conflict/decision budgets —
+                    // unreachable at fixed conflict/decision budgets –
                     // scan #2's measurement dead-end): an explicitly armed
                     // round limit ends the solve with an honest Unknown the
                     // moment MBQI reports it exhausted.  The default
                     // `max_rounds` cap (unset flag) keeps the historical
-                    // soft semantics — MBQI goes inert, search continues.
+                    // soft semantics – MBQI goes inert, search continues.
                     if matches!(mbqi_result, MBQIResult::Unknown)
                         && self.mbqi.hard_stop_when_exhausted()
                         && self.mbqi.round_limit_reached()
@@ -4260,8 +4260,8 @@ impl Solver {
                     // Constructor/hint tables own these quantifiers'
                     // defining role this round: suspend their E-matching
                     // (a trigger match at a compound term mints the next
-                    // compound level — the chase the tables exist to
-                    // kill — while the table plus its semantic-domain
+                    // compound level – the chase the tables exist to
+                    // kill – while the table plus its semantic-domain
                     // pins already cover every relevant tuple).
                     for &q in self.mbqi.active_table_quantifiers() {
                         self.ematch_engine.suspend_quantifier(q);
@@ -4269,7 +4269,7 @@ impl Solver {
                     // Model-repair blocking clauses (Z3's
                     // `add_blocking_clause` analogue): each clause excludes
                     // one value arrangement that demonstrably fails a
-                    // quantifier — the duplicate falsifier's supporting
+                    // quantifier – the duplicate falsifier's supporting
                     // commitments, which the evaluation consumed through
                     // ground-model pins only (see
                     // `MinedFalsifier::fully_pinned`).  Emitting the clause
@@ -4280,7 +4280,7 @@ impl Solver {
                     // Soundness: the falsification is a function of the
                     // recorded commitments alone, so any model agreeing
                     // with all of them also fails the (asserted) quantifier
-                    // — the clause excludes only non-solutions.  A
+                    // – the clause excludes only non-solutions.  A
                     // commitment whose atom the ground solver never
                     // internalized drops the *whole* clause (skipping it
                     // instead would strengthen the clause into a claim the
@@ -4674,7 +4674,7 @@ impl Solver {
 
                     // A productive round resets the bail streak.
                     // (`total_instantiations` is the monotone counter the
-                    // MBQI engine maintains — using it instead of matching
+                    // MBQI engine maintains – using it instead of matching
                     // the moved `mbqi_result` avoids the partial-move.)
                     let produced_any = self.mbqi.stats().total_instantiations > insts_before;
                     if produced_any {
@@ -4726,7 +4726,7 @@ impl Solver {
                     // *linear* arithmetic term that appears only as a UF
                     // argument (the `(f3 f4 (+ f6 (- f5 f6)))` shape the
                     // e-matching/MBQI lemmas mint freely) is invisible to the
-                    // arithmetic solver unless something purifies it — and
+                    // arithmetic solver unless something purifies it – and
                     // `purify_numeric_uf_args` deliberately skips functions
                     // under quantifiers.  Without an arith variable, the
                     // Nelson-Oppen model-equal probe can never pair it with
@@ -4734,7 +4734,7 @@ impl Solver {
                     // `f(.. x ..) = f(.. y ..)` never fires, and a refutable
                     // ground combination is accepted round after round (the
                     // UFLRA FFT false-loop class).  Internalize each such
-                    // argument with its *definitional* row — a tautology that
+                    // argument with its *definitional* row – a tautology that
                     // only names the fresh variable, constraining nothing.
                     // (Same no-UF skip as the base-scope site: with no
                     // uninterpreted functions the repair walk is provably
@@ -5183,7 +5183,7 @@ impl Solver {
     }
 
     /// Whether unified-path assertions defer their blast to the next check
-    /// (`NIXIE_BV_DEFER_BLAST=1`; default off — experimental).
+    /// (`NIXIE_BV_DEFER_BLAST=1`; default off – experimental).
     pub(super) fn bv_defer_blast_enabled() -> bool {
         // Memoized: consulted per assertion; env reads are linear scans.
         #[cfg(feature = "std")]
@@ -5215,7 +5215,7 @@ impl Solver {
 
     /// Mark the deferral for raw flush at the next manager-touching point:
     /// `push` has no manager argument, and the raw emission must happen at
-    /// the base scope — the next `assert` (which flushes before encoding)
+    /// the base scope – the next `assert` (which flushes before encoding)
     /// or `check` (which flushes before anything else) does it.  A pop that
     /// returns to the base scope also re-arms it via the same flag.
     pub(super) fn defer_flush_raw(&mut self) {
@@ -5533,7 +5533,7 @@ impl Solver {
             self.dt_axioms_incomplete = state.dt_axioms_incomplete;
             // The set gate is raised by an assertion whose set constraints
             // this reduction does not cover. Retract the assertion and the
-            // gap goes with it, so the flag has to come back down — it was
+            // gap goes with it, so the flag has to come back down – it was
             // snapshotted on `push` and, until now, never restored, which
             // left every later `Sat` in the outer scope reading `Unknown`.
             // Conservative rather than wrong, but it made a `push`/`pop` pair
@@ -5733,7 +5733,7 @@ impl Solver {
 }
 
 /// Whether freeze-set collapse is enabled: **default on** under the relaxed
-/// landing rule (sound by construction + screening with no regress — see
+/// landing rule (sound by construction + screening with no regress – see
 /// `docs/studies/2026-08-freeze-set-collapse.md`); `NIXIE_FREEZE_COLLAPSE=0`
 /// disables it for A/B.
 pub(crate) fn freeze_collapse_enabled() -> bool {

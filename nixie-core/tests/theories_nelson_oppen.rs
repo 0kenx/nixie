@@ -3,8 +3,8 @@
 //! These drive [`TheoryCombiner`] with real theory objects and check that a
 //! fact deduced inside one theory reaches the other one, which is the whole
 //! point of the combination: the datatype theory learns `x = #x01` from
-//! injectivity, and the bit-vector theory — which is where `x = #x00` was
-//! asserted — is the one that turns the pair into a conflict.
+//! injectivity, and the bit-vector theory – which is where `x = #x00` was
+//! asserted – is the one that turns the pair into a conflict.
 
 use nixie_core::ast::{TermId, TermManager};
 use nixie_core::sort::{DataTypeConstructor, SortId};

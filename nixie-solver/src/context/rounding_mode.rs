@@ -2,7 +2,7 @@
 //!
 //! `nixie_core::sort::SortKind::RoundingMode` gives rounding modes a sort of
 //! their own, and `TermManager::mk_rounding_mode` gives the five IEEE 754
-//! modes five nullary terms at that sort — but *neither* says anything about
+//! modes five nullary terms at that sort – but *neither* says anything about
 //! how many elements the sort has. To the EUF core a rounding mode is just an
 //! uninterpreted constant, and an uninterpreted sort is infinite.
 //!
@@ -15,7 +15,7 @@
 //!    theoretically: the parser compiles `(fp.add m x y)` into a five-way
 //!    `ite` whose final, unguarded branch is `RTZ` (see
 //!    `Parser::expand_symbolic_rm`), so a sixth value would be *evaluated as*
-//!    `RTZ` while still comparing distinct from all five — and
+//!    `RTZ` while still comparing distinct from all five – and
 //!    `(distinct m1 m2 m3 m4 m5 m6)` would answer `sat`.
 //!
 //! 2. **Distinctness**, once per solve whenever any rounding mode is in play:
@@ -48,7 +48,7 @@ impl Context {
     /// Assert the closure axiom pinning `sym` to one of the five real modes.
     ///
     /// Called from [`Context::declare_const`](super::Context::declare_const)
-    /// for every constant declared at the `RoundingMode` sort — which is the
+    /// for every constant declared at the `RoundingMode` sort – which is the
     /// only position the parser accepts the sort in, precisely because this
     /// axiom needs a single symbol to attach to.
     pub(super) fn assert_rounding_mode_closure(&mut self, sym: TermId) {
@@ -74,7 +74,7 @@ impl Context {
     /// respect to `push`/`pop`. The axiom is a *fact*, not a user assertion:
     /// re-stating it is logically idempotent (the term is hash-consed, so it is
     /// the identical `TermId` every time), and re-stating it after a `pop` that
-    /// retracted an earlier copy is exactly the behaviour wanted — a flag would
+    /// retracted an earlier copy is exactly the behaviour wanted – a flag would
     /// have to be un-set by that `pop` to stay correct, which is strictly more
     /// machinery for the same result. The price is a duplicate clause per
     /// `check-sat` in a script that both uses rounding modes and re-checks

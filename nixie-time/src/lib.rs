@@ -26,8 +26,8 @@
 //!
 //! # What it does
 //!
-//! * **On every target with a working clock** — which is every target except
-//!   `wasm32-unknown-unknown` — [`Instant`], [`SystemTime`], [`SystemTimeError`]
+//! * **On every target with a working clock** – which is every target except
+//!   `wasm32-unknown-unknown` – [`Instant`], [`SystemTime`], [`SystemTimeError`]
 //!   and [`UNIX_EPOCH`] are *re-exports of the `std::time` originals*. They are
 //!   the same types, not wrappers: timing behaviour, precision and public API
 //!   are bit-identical to using `std::time` directly. `wasm32-wasip1` and
@@ -37,7 +37,7 @@
 //!   reads t = 0, `elapsed()` is always [`Duration::ZERO`], `SystemTime::now()`
 //!   is always [`UNIX_EPOCH`]. Nothing traps and nothing allocates.
 //!
-//! # Consequences of the frozen clock — read this before relying on a timeout
+//! # Consequences of the frozen clock – read this before relying on a timeout
 //!
 //! On `wasm32-unknown-unknown`:
 //!
@@ -51,7 +51,7 @@
 //! * Every duration a solver reports (statistics, per-theory timings, the
 //!   `time_us` counters in conflict analysis) reads **0**. Measure around the
 //!   wasm call from JavaScript instead.
-//! * Time-based *heuristic* valves degrade to "always affordable" — which is
+//! * Time-based *heuristic* valves degrade to "always affordable" – which is
 //!   exactly the branch Nixie's own `#[cfg(not(feature = "std"))]` code already
 //!   takes. No loop in the workspace uses a clock as its only exit; every one
 //!   of them also has a structural bound (iteration cap, finite worklist), so
@@ -163,7 +163,7 @@ mod frozen {
             Self(Duration::ZERO)
         }
 
-        /// Always [`Duration::ZERO`] — no time can pass on a frozen clock.
+        /// Always [`Duration::ZERO`] – no time can pass on a frozen clock.
         #[must_use]
         pub const fn elapsed(&self) -> Duration {
             Duration::ZERO
@@ -188,7 +188,7 @@ mod frozen {
 
         /// Deadline construction. Returns `Some`, so a caller's
         /// `deadline = now().checked_add(budget)` is `Some(budget)` and the
-        /// `now() >= deadline` test stays `false` for every non-zero budget —
+        /// `now() >= deadline` test stays `false` for every non-zero budget –
         /// i.e. the timeout simply never fires (see the crate docs).
         #[must_use]
         pub const fn checked_add(&self, duration: Duration) -> Option<Self> {
@@ -245,12 +245,12 @@ mod frozen {
     /// Drop-in for `std::time::SystemTime`. Nixie only uses `SystemTime` to
     /// stamp unique temporary paths in test helpers; on a frozen clock those
     /// stamps are constant, so they would collide if such a helper were ever
-    /// compiled and run for wasm (it never is — those helpers also need
+    /// compiled and run for wasm (it never is – those helpers also need
     /// `std::fs` and `std::env::temp_dir`).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct SystemTime(Duration);
 
-    /// The Unix epoch — and, on a frozen clock, also "now".
+    /// The Unix epoch – and, on a frozen clock, also "now".
     pub const UNIX_EPOCH: SystemTime = SystemTime(Duration::ZERO);
 
     impl SystemTime {
@@ -345,7 +345,7 @@ mod tests {
 
     /// Holds on both branches: a deadline built from `now()` is always in the
     /// future, so `now() >= deadline` is false right after construction. On
-    /// the frozen clock it stays false forever — which is exactly why
+    /// the frozen clock it stays false forever – which is exactly why
     /// `:timeout` is documented as a no-op there.
     #[test]
     fn a_fresh_deadline_has_not_expired() {

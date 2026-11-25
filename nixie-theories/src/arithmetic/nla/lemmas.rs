@@ -15,8 +15,8 @@
 //! consequence *of its premises*, and asserting the conclusion outside the
 //! branch where the premises hold would be plain unsound. Each [`Lemma`]
 //! therefore carries a [`LemmaScope`] and the tags of the bounds it leaned on;
-//! only [`LemmaScope::Global`] lemmas — the square tangent
-//! `v = x² ⟹ v ≥ 2ax − a²`, valid for every `a` and every `x` — may be added
+//! only [`LemmaScope::Global`] lemmas – the square tangent
+//! `v = x² ⟹ v ≥ 2ax − a²`, valid for every `a` and every `x` – may be added
 //! to the root.
 //!
 //! Callers are expected to supply premises they have actually established from
@@ -134,12 +134,12 @@ fn one() -> Rational64 {
     Rational64::new_raw(1, 1)
 }
 
-// --- basics -----------------------------------------------------------------
+// ======== basics ========
 
 /// Sign of a product: `sx(x) ∧ sy(y) ⟹ v > 0` when the signs agree and
 /// `v < 0` when they differ, for `v = x * y`.
 ///
-/// Both premises are strict, so the conclusion is strict too — that is the
+/// Both premises are strict, so the conclusion is strict too – that is the
 /// whole value of the lemma, since a non-strict `v >= 0` is already implied by
 /// the McCormick envelope over non-negative boxes.
 pub(crate) fn sign(v: VarId, sx: Sign, sy: Sign, premises: &[u32]) -> Option<Lemma> {
@@ -167,7 +167,7 @@ pub(crate) fn sign(v: VarId, sx: Sign, sy: Sign, premises: &[u32]) -> Option<Lem
 /// factors that do not exist.
 ///
 /// `result` is the established sign of `v`: `Pos` emits `v > 0`, `Neg` emits
-/// `v < 0`. Strict either way, which is the point — the premises are strict.
+/// `v < 0`. Strict either way, which is the point – the premises are strict.
 pub(crate) fn product_sign(v: VarId, result: Sign, premises: &[u32]) -> Option<Lemma> {
     let kind = match result {
         Sign::Pos => LinAtomKind::Gt,
@@ -239,7 +239,7 @@ pub(crate) fn proportion(
     ))
 }
 
-// --- order and monotonicity -------------------------------------------------
+// ======== order and monotonicity ========
 //
 // These two relate *pairs* of monics that share a factor, which is a different
 // shape of premise from everything above: the engine must first establish an
@@ -289,7 +289,7 @@ pub(crate) fn monotonicity(prod_ac: VarId, prod_bd: VarId, premises: &[u32]) -> 
     ))
 }
 
-// --- tangents ---------------------------------------------------------------
+// ======== tangents ========
 
 /// The bilinear tangent plane at `(a, b)` for `v = x * y`.
 ///
@@ -301,8 +301,8 @@ pub(crate) fn monotonicity(prod_ac: VarId, prod_bd: VarId, premises: &[u32]) -> 
 /// Currently unused: the engine relaxes a bilinear term with the four
 /// [`mccormick`] envelopes, which over a finite box are strictly tighter (they
 /// are the convex and concave hulls). This constructor is what a *boxless*
-/// bilinear term would need — the caller establishes the sign of
-/// `(x-a)(y-b)` itself instead of reading a box — and is kept for that case.
+/// bilinear term would need – the caller establishes the sign of
+/// `(x-a)(y-b)` itself instead of reading a box – and is kept for that case.
 #[allow(dead_code)]
 pub(crate) fn tangent(
     v: VarId,

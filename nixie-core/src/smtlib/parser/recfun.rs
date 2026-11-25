@@ -4,12 +4,12 @@
 //!
 //! A `define-fun` is a *macro*: the parser records its body and substitutes it
 //! at every call site ([`Parser::expand_defined_fun`]). Doing that for a
-//! recursive definition would not terminate — `f`'s body mentions `f`, so each
+//! recursive definition would not terminate – `f`'s body mentions `f`, so each
 //! expansion produces a fresh call site to expand.
 //!
 //! So a recursive definition is handled the other way round. The function is
-//! registered as an ordinary *declared* symbol — in [`Parser::functions`] when
-//! it takes arguments, in [`Parser::constants`] when it is nullary — **before
+//! registered as an ordinary *declared* symbol – in [`Parser::functions`] when
+//! it takes arguments, in [`Parser::constants`] when it is nullary – **before
 //! its body is read**. That single ordering trick is what makes the whole
 //! feature work:
 //!
@@ -19,7 +19,7 @@
 //! * every later call site builds the *same* node, so the solver sees one
 //!   uninterpreted symbol it can constrain;
 //! * nothing is ever inserted into [`Parser::bindings`] or
-//!   [`Parser::function_defs`], the two inlining paths — an inlined recursive
+//!   [`Parser::function_defs`], the two inlining paths – an inlined recursive
 //!   body would loop forever.
 //!
 //! For `define-funs-rec` the same ordering is applied group-wide: *all*
@@ -46,7 +46,7 @@ struct RecSignature {
     /// `params`. Kept so the body pass can mint each parameter's `Var` with the
     /// sort the signature actually declared, rather than re-resolving the
     /// stringified sort (which cannot round-trip a compound sort such as
-    /// `(Array Int Int)` — see the same note on `define-fun` in `commands.rs`).
+    /// `(Array Int Int)` – see the same note on `define-fun` in `commands.rs`).
     param_sort_ids: Vec<SortId>,
     /// The declared return sort, stringified.
     ret_sort: String,
@@ -69,10 +69,10 @@ impl Parser<'_> {
     /// with the opening paren and the command name already consumed.
     ///
     /// Every signature is registered before any body is read, so a body may
-    /// call any function of the group — including one declared after it. That
+    /// call any function of the group – including one declared after it. That
     /// is the whole point of the two-list syntax.
     pub(super) fn parse_define_funs_rec(&mut self) -> Result<Vec<RecFunDecl>> {
-        // ---- pass 1: the signature list -------------------------------
+        // ======== pass 1: the signature list ========
         self.expect_lparen()?;
         let mut signatures = Vec::new();
         loop {
@@ -92,7 +92,7 @@ impl Parser<'_> {
             });
         }
 
-        // ---- pass 2: the body list ------------------------------------
+        // ======== pass 2: the body list ========
         self.expect_lparen()?;
         let mut decls = Vec::with_capacity(signatures.len());
         for signature in signatures {
@@ -133,7 +133,7 @@ impl Parser<'_> {
     /// reason spelled out in this module's doc comment: it is what lets the
     /// body's own recursive calls resolve. An arity-0 recursive function is
     /// legal SMT-LIB (`(define-fun-rec c () Int (+ c 1))`), and goes into
-    /// `constants` so that its self-reference resolves as a `Var` — the solver
+    /// `constants` so that its self-reference resolves as a `Var` – the solver
     /// then saturates it at a single instance.
     fn parse_rec_signature(&mut self) -> Result<RecSignature> {
         let name = self.expect_symbol()?;

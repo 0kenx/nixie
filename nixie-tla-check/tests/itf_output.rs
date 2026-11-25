@@ -2,7 +2,7 @@
 //!
 //! ITF is Apalache's ADR-015 JSON counterexample format, and it is the
 //! interface downstream tools already speak: `itf-rs` parses it, the VSCode
-//! trace viewer renders it, and `tla-connect` — model-based testing for Rust —
+//! trace viewer renders it, and `tla-connect` – model-based testing for Rust –
 //! collects `*.itf.json` from a checker and replays each trace against a
 //! `Driver`. These pin the shape, because a consumer will parse it without
 //! asking us anything.
@@ -70,7 +70,7 @@ fn every_integer_is_a_bigint() {
 }
 
 /// A `CONSTANT` is an ITF **param**, not a var, and ADR-015 says it belongs to
-/// the initial state — so it is written once, into state 0.
+/// the initial state – so it is written once, into state 0.
 #[test]
 fn a_constant_is_a_param_of_the_initial_state() {
     let t = itf(

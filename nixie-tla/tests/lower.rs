@@ -132,7 +132,7 @@ fn join(xs: &[std::rc::Rc<Kera>], sep: &str) -> String {
     xs.iter().map(|x| show(x)).collect::<Vec<_>>().join(sep)
 }
 
-// ---- basics ---------------------------------------------------------------
+// ======== basics ========
 
 #[test]
 fn literals_and_names() {
@@ -191,7 +191,7 @@ fn set_operations_survive_lowering() {
     ));
 }
 
-// ---- desugaring -----------------------------------------------------------
+// ======== desugaring ========
 
 #[test]
 fn case_becomes_nested_ite() {
@@ -268,7 +268,7 @@ fn multi_variable_function_constructor_uses_a_product() {
     assert!(s.contains("[1]") && s.contains("[2]"), "projected: {s}");
 }
 
-// ---- inlining -------------------------------------------------------------
+// ======== inlining ========
 
 #[test]
 fn definitions_are_inlined() {
@@ -336,7 +336,7 @@ fn function_definitions_expand_at_use_sites() {
     );
 }
 
-// ---- rejections -----------------------------------------------------------
+// ======== rejections ========
 
 #[test]
 fn spec_structure_is_rejected_by_name() {
@@ -409,7 +409,7 @@ fn deep_input_does_not_overflow_the_stack() {
 }
 
 /// A built-in operator symbol passed as an operator argument (issue #19):
-/// `FooBar(7, +)` — the symbol keeps its exact meaning through the infix
+/// `FooBar(7, +)` – the symbol keeps its exact meaning through the infix
 /// table, and only unambiguously-binary symbols are accepted, so unary
 /// minus cannot arrive here as a mis-typed `-`.
 #[test]
@@ -496,8 +496,8 @@ A == I!Double(21)
 
 /// An unresolvable `INSTANCE` target is reported by name, never silently
 /// dropped (issue #19: "a missing INSTANCE target is an error"). The
-/// lowerer records it in `missing_instances()` — which `Bmc::prepare`
-/// turns into a hard error — and a use of the instance fails by name
+/// lowerer records it in `missing_instances()` – which `Bmc::prepare`
+/// turns into a hard error – and a use of the instance fails by name
 /// rather than resolving to something else.
 #[test]
 fn a_missing_instance_target_is_an_error() {
@@ -524,7 +524,7 @@ A == I!F(1)
 }
 
 /// A recursive operator's depth-limit hit is a **recursion** diagnostic
-/// (issue #19), not a depth one — Apalache dropped recursive operators, and
+/// (issue #19), not a depth one – Apalache dropped recursive operators, and
 /// the message says what to do instead.
 #[test]
 #[should_panic(expected = "recursive operator")]
@@ -547,7 +547,7 @@ A == F(10)
 
 /// A user-defined operator symbol passed as an operator argument, and a
 /// parameter spelled as an operator symbol applied infix in the body
-/// (issue #43): `Foo(a, _--_) == a -- 0` with `a ++ b == a + b` defined —
+/// (issue #43): `Foo(a, _--_) == a -- 0` with `a ++ b == a + b` defined –
 /// `Foo(7, ++)` must inline the user's `++`, `Foo(7, +)` the built-in `+`.
 #[test]
 fn a_user_defined_operator_symbol_binds_as_an_argument() {
@@ -580,7 +580,7 @@ C == Foo(7, LAMBDA x, y: x * y)
     // `Foo(7, LAMBDA x, y: x * y)`: the LAMBDA body, `7 * 0`.
     let c = low.lower_named(module, "C").expect("C lowers");
     assert!(contains_arith(&c, ArithOp::Mul), "C is a mul: {:?}", c);
-    // And none of them leaves an opaque `--` behind — the bug was exactly
+    // And none of them leaves an opaque `--` behind – the bug was exactly
     // that `--` fell through to an opaque node the encoder had to decline.
     for t in [&a, &b, &c] {
         assert!(!contains_opaque(t, "--"), "no opaque `--` in {t:?}");
@@ -588,7 +588,7 @@ C == Foo(7, LAMBDA x, y: x * y)
 }
 
 /// An operator-symbol parameter shadows a module-level definition of the
-/// same spelling — the same rule named parameters already follow.
+/// same spelling – the same rule named parameters already follow.
 #[test]
 fn an_operator_symbol_parameter_shadows_a_module_level_symbol() {
     let src = r#"

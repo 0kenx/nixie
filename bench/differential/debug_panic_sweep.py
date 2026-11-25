@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run a corpus through the DEBUG nixie binary (overflow-checks on): every
 panic is an unchecked fixed-width arithmetic site that silently wraps in
-release — a wrong-verdict hazard, in ANY theory, not just arithmetic.
+release – a wrong-verdict hazard, in ANY theory, not just arithmetic.
 
 The oracle that made the 2026-09-14 arithmetic hunt mechanical: the debug
 profile turns every wrap into a loud abort with a backtrace naming the
@@ -12,7 +12,7 @@ site. Sweep whatever corpus you have (glob patterns as arguments):
 
 Baseline (2026-09-14, main 931e318f): 490 files across the parity corpus,
 the 270-instance pinned differential sample and the extended-theories
-corpus — zero panics (the two nonzero exits there are honest logic-
+corpus – zero panics (the two nonzero exits there are honest logic-
 contract rejections, not crashes)."""
 import subprocess, sys, glob, collections, os
 

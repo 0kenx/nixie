@@ -6,13 +6,13 @@
 //! `docs/studies/2026-08-arithmetic-negated-atoms-false-sat.md`):
 //!
 //! 1. **Constant-function arrays**: `((as const S) v)` parses as a qualified
-//!    `Apply` — an opaque array term unless recognized.  The axiom
+//!    `Apply` – an opaque array term unless recognized.  The axiom
 //!    `select((as const S) v, i) = v` holds for every index; one unit per
 //!    observed read makes the stored value visible.  Without it even the
 //!    fully ground `(select ((as const (Array Int Int)) 162) 7)` was left
 //!    free and wrong verdicts followed.
 //! 2. **select-over-select** (read-modify-write): `select(select(A, j), i)`
-//!    where `A`'s store chain stores at `j` — the Ultimate/UltimateAutomizer
+//!    where `A`'s store chain stores at `j` – the Ultimate/UltimateAutomizer
 //!    heap-update shape (`store(mem, base, store(select(mem, base), off,
 //!    v))`).  The array operand of the outer read is itself a read; it is
 //!    resolved through A's (aliased) store chain so the outer read twins to
@@ -116,7 +116,7 @@ fn read_modify_write_heap_update() {
     assert_eq!(run_script(script), SolverResult::Unsat);
 }
 
-/// RMW at a DIFFERENT offset leaves the untouched offset's read free (SAT —
+/// RMW at a DIFFERENT offset leaves the untouched offset's read free (SAT –
 /// the value at `off2` comes from the base heap, unconstrained here).
 #[test]
 fn read_modify_write_other_offset_stays_sat() {

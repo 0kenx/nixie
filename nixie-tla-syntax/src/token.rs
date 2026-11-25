@@ -4,8 +4,8 @@ use crate::span::Span;
 
 /// A reserved word.
 ///
-/// The five prefix operators that are spelled as words — `DOMAIN`, `SUBSET`,
-/// `UNION`, `ENABLED`, `UNCHANGED` — are deliberately **not** here. The lexer
+/// The five prefix operators that are spelled as words – `DOMAIN`, `SUBSET`,
+/// `UNION`, `ENABLED`, `UNCHANGED` – are deliberately **not** here. The lexer
 /// emits them as [`TokenKind::Sym`] so that [`crate::op::prefix_info`] can be
 /// keyed uniformly by spelling, rather than forcing the parser to translate
 /// between two representations of the same concept.
@@ -40,9 +40,9 @@ pub enum Keyword {
     Except,
     Lambda,
     Recursive,
-    /// `WF_` — always followed by a subscript expression.
+    /// `WF_` – always followed by a subscript expression.
     WeakFairness,
-    /// `SF_` — always followed by a subscript expression.
+    /// `SF_` – always followed by a subscript expression.
     StrongFairness,
     // Proof-language keywords. Accepted by the lexer so that a proof body can
     // be skipped with balanced structure rather than mis-lexed; milestone 1
@@ -255,8 +255,8 @@ impl Token {
 
 /// A comment retained by the lexer.
 ///
-/// Comments are **not** discarded, because `@type:` annotations — the input to
-/// the Snowcat type system — live inside them. Dropping them at lex time would
+/// Comments are **not** discarded, because `@type:` annotations – the input to
+/// the Snowcat type system – live inside them. Dropping them at lex time would
 /// cost the type system its input, which is an easy and expensive mistake.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Comment {

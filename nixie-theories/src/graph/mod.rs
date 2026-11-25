@@ -3,7 +3,7 @@
 //! This module provides **symbolic graph constraints over a fixed finite
 //! vertex universe**: each graph is a set of Boolean edge terms, and
 //! reachability and acyclicity are reified as Boolean atoms whose value the
-//! solver must determine. This is an *integrated* capability — the
+//! solver must determine. This is an *integrated* capability – the
 //! constraints run inside the CDCL(T) search through
 //! [`crate::user_propagator`], unlike the standalone
 //! [`crate::special_relations::SpecialRelationSolver`], which is a
@@ -40,8 +40,8 @@
 //!   decreasing.
 //! - A path in the forced graph proves `reach(u,v)`; its explanation is the
 //!   path's edge literals (all true). The refutation of `reach(u,v)` is a
-//!   cut of the possible graph — every false edge into the
-//!   *backward-reachable* set of `v` (MonoSAT's `buildNonReachReason`) —
+//!   cut of the possible graph – every false edge into the
+//!   *backward-reachable* set of `v` (MonoSAT's `buildNonReachReason`) –
 //!   explained by those edges' negated literals (all currently true). The
 //!   cut is taken over the backward closure because a forward-closure cut
 //!   is not a valid learned clause: it can justify `¬reach(u,u)` with an
@@ -58,13 +58,13 @@
 //!   assignments.
 //! - The propagator is **incremental**: fixations arrive as O(1) events
 //!   (`on_fixed`), the forced view (true edges) grows rows and merges
-//!   memoized BFS trees, and the possible view is *epoch-static* — the
+//!   memoized BFS trees, and the possible view is *epoch-static* – the
 //!   all-edges CSRs are built once per backtrack epoch and traversed
 //!   skipping currently-false edges, with backward-closure and cycle memos
 //!   kept exactly valid by witness-checked dirty-marking and localized
 //!   repair (`ViewCache`; the scheme is documented in `docs/GRAPH.md`).
 //!   A backtrack ends the epoch: the next run re-reads the fixations from
-//!   the manager, so no deletion handling is ever wrong — the re-read is
+//!   the manager, so no deletion handling is ever wrong – the re-read is
 //!   the cost of a pop.
 //!
 //! # Proof and certification boundary
@@ -219,7 +219,7 @@ impl GraphSpec {
 /// Flat CSR adjacency over one view: `offsets[v]..offsets[v+1]` indexes
 /// into `neighbours` (the adjacent vertex) and `edges` (the edge index),
 /// with each row's entries in edge declaration order. Rebuilt in place
-/// (buffers are reused across rebuilds — no per-edge allocations).
+/// (buffers are reused across rebuilds – no per-edge allocations).
 #[derive(Default)]
 struct Csr {
     offsets: Vec<u32>,
@@ -236,7 +236,7 @@ impl Csr {
     /// [`bfs_skip_false`]). Within an epoch fixations only accumulate
     /// (the manager rejects re-fixation without a pop, and every pop ends
     /// the epoch), so a CSR built once per epoch answers every later
-    /// query in that epoch — there is nothing to rebuild.
+    /// query in that epoch – there is nothing to rebuild.
     fn rebuild_all(&mut self, spec: &GraphSpec, incoming: bool) {
         self.offsets.clear();
         self.offsets.resize(spec.vertices + 1, 0);
@@ -343,7 +343,7 @@ fn bfs_rows(adj: &[Vec<(u32, u32)>], vertices: usize, source: VertexId) -> Bfs {
 }
 
 /// BFS from `source` over `adj`, skipping edges whose current value is
-/// `False` — i.e. over the exact possible (non-false) view at the time of
+/// `False` – i.e. over the exact possible (non-false) view at the time of
 /// the call. Traversal order is identical to a BFS over a CSR built with
 /// only the non-false edges (rows keep declaration order; skipping false
 /// entries preserves the relative order of the rest), so discovery order,
@@ -415,7 +415,7 @@ impl Bfs {
 
     /// Edge indices of the witnessed `source ->+ target` walk in the
     /// **forced** view (the certificate counterpart of [`Self::path_atoms`];
-    /// indices, not atoms, so no deduplication — a walk repeats an edge
+    /// indices, not atoms, so no deduplication – a walk repeats an edge
     /// only under a shared guard, which is exactly what it witnessed).
     fn path_witness_edges(
         &self,
@@ -456,7 +456,7 @@ impl Bfs {
 
     /// Edge atoms of the witnessed path `source ->+ target` in the **forced**
     /// view (every emitted edge is currently true), deduplicated in path
-    /// order — a shared guard naming several path edges appears once (a
+    /// order – a shared guard naming several path edges appears once (a
     /// conjunction does not gain strength from repetition). Returns `None`
     /// if the path invariant does not hold; callers treat that as fail-closed.
     fn path_atoms(
@@ -555,7 +555,7 @@ pub fn trace_bump(_kind: TraceKind) {}
 /// `witness` is the BFS parent edge of each member from the closure's
 /// construction: for every `v ∈ seen \ {target}` it names one out-edge of
 /// `v` that begins a genuine, simple path to the target through *current*
-/// non-false edges — while the closure survives, no disabled edge has ever
+/// non-false edges – while the closure survives, no disabled edge has ever
 /// matched a member's witness (a match drops the whole memo), so every
 /// witness path stays valid. This makes "does disabling edge `e` shrink
 /// this closure?" an O(1) check for the dominant case: `e = (a→b)` can
@@ -569,7 +569,7 @@ struct Backward {
     witness: Vec<Option<u32>>,
     /// Lazily materialized complement of `seen` as a packed membership
     /// bitmap (the cut witness), shared by every `Cut` rule this memo
-    /// emits while it survives — building it per emission cost an
+    /// emits while it survives – building it per emission cost an
     /// O(vertices) scan per consequence.
     closed: Option<Arc<[u64]>>,
 }
@@ -624,7 +624,7 @@ fn forward_ge1_set(
 /// through `v` would have to leave `closed ∪ {v}`, and every premise-
 /// compatible such edge is false).
 /// A topological order of the subgraph of non-false edges (Kahn's
-/// algorithm; `None` when that subgraph is cyclic — the caller then does
+/// algorithm; `None` when that subgraph is cyclic – the caller then does
 /// not have an acyclicity witness).
 fn nonfalse_topo_order(
     spec: &GraphSpec,
@@ -753,13 +753,13 @@ impl Backward {
 
     /// Re-attach member `a` after its witness edge died: scan `a`'s other
     /// out-edges (declaration order) for a surviving edge into a closure
-    /// member whose own witness path does not pass through `a` — the
+    /// member whose own witness path does not pass through `a` – the
     /// cycle-grounding condition, checked by walking the candidate's
     /// witness chain toward the target (the chains form a tree rooted at
     /// the target, bounded by its depth). On success `a`'s new witness
     /// path is a genuine, simple, all-surviving path, so the closure set
     /// is provably unchanged and no recompute is owed. Returns false when
-    /// no candidate qualifies (a genuine shrink — the caller drops the
+    /// no candidate qualifies (a genuine shrink – the caller drops the
     /// memo and the next query rebuilds it exactly).
     ///
     /// This is the Italiano-style localized repair that keeps dense graphs
@@ -834,14 +834,14 @@ impl Backward {
         self.sees(u)
     }
 
-    /// The **cut witness**: the complement of the backward closure — the
+    /// The **cut witness**: the complement of the backward closure – the
     /// set of vertices that cannot reach the target through non-refuted
     /// edges. It contains the source, excludes the target, and every
     /// premise-refuted crossing edge is exactly an edge of the cut.
     /// Carried as a packed membership bitmap and materialized once per
     /// memo lifetime (the emission rate of cut rules over one closure
     /// made per-emission O(vertices) collection measurable): the packing
-    /// walks `seen` once — no member scan, no per-check fill on the
+    /// walks `seen` once – no member scan, no per-check fill on the
     /// certificate side.
     fn cut_bits(&mut self) -> Arc<[u64]> {
         if let Some(bits) = &self.closed {
@@ -867,10 +867,10 @@ impl Backward {
     /// Signed reasons that the source cannot reach the target through
     /// possible edges: **every false edge into the backward closure** of
     /// the target (MonoSAT's cut; non-false edges into the closure are the
-    /// closure's own possible edges and are not part of the cut), deduped —
+    /// closure's own possible edges and are not part of the cut), deduped –
     /// a shared guard naming several cut edges contributes one negation.
     /// The implication these reasons justify is valid for *arbitrary* graphs,
-    /// not only completions of the current state — which is what learned
+    /// not only completions of the current state – which is what learned
     /// clauses require: any path (for a self-pair, any cycle) from the
     /// source to the target whose edges into the closure are not among
     /// these reasons consists entirely of possible edges, which would place
@@ -882,7 +882,7 @@ impl Backward {
     /// Edge-index order is load-bearing: the emitted sequence feeds the
     /// learned clause, so a faster reordering would perturb the search
     /// trajectory. (Iterating a per-epoch false-edge list sorted back to
-    /// index order per emission was measured slower than this scan — the
+    /// index order per emission was measured slower than this scan – the
     /// sort costs more than the non-false edges it skips.)
     fn cut_negations(&self, spec: &GraphSpec, values: &[EdgeValue]) -> Vec<TermId> {
         let mut reasons = Vec::new();
@@ -964,7 +964,7 @@ impl ViewCache {
             // simple: no other member's path can use e, whose tail is a;
             // and if b ∉ C_t the edge contributed no path at all). Given
             // b ∈ C_t, the closure is provably **unchanged** exactly when
-            // a still reaches t without e — and a's witness edge (see
+            // a still reaches t without e – and a's witness edge (see
             // [`Backward`]) certifies that in O(1) whenever it is not e
             // itself: the witness path is built of surviving edges and
             // begins with that edge, so it never touches e. Only a
@@ -975,7 +975,7 @@ impl ViewCache {
             //
             // Only *live* memos are visited (see `backward_live`): the
             // slot array spans every vertex, and scanning all of them per
-            // false event was O(vertices) per event — the dominant cost
+            // false event was O(vertices) per event – the dominant cost
             // of FSM-scale product graphs.
             let mut live = core::mem::take(&mut self.backward_live);
             let mut kept = 0;
@@ -1068,7 +1068,7 @@ struct ViewCache {
     /// when an added edge extends a source's reachable set. A backtrack
     /// (`UserPropagator::pop`) clears `forced_valid`: the next run re-reads
     /// everything from the manager. While valid, the derived state is
-    /// exactly a function of the manager's current fixations — the same
+    /// exactly a function of the manager's current fixations – the same
     /// fixations the full read would observe.
     forced_valid: bool,
     /// Per-edge assignment state derived from events.
@@ -1078,7 +1078,7 @@ struct ViewCache {
     forced_rows: Vec<Vec<(u32, u32)>>,
     /// Forced-view BFS by source vertex (maintained by merges).
     forced_searches: Vec<Option<Bfs>>,
-    /// Sources whose `forced_searches` slot is `Some` — event handling
+    /// Sources whose `forced_searches` slot is `Some` – event handling
     /// visits memos through this list, never by scanning the slot array
     /// (an empty slot is the common case at FSM product scale, where the
     /// array spans every (state, position) vertex).
@@ -1088,13 +1088,13 @@ struct ViewCache {
     forced_cycle: Option<Option<Vec<u32>>>,
     /// **Epoch-static possible view.** `possible_dirty` marks the CSRs
     /// as not yet built; the first needing run builds the all-edges CSRs
-    /// **once ever** — their contents are value-independent (every edge
-    /// of the declaration), so a backtrack epoch has nothing to rebuild —
+    /// **once ever** – their contents are value-independent (every edge
+    /// of the declaration), so a backtrack epoch has nothing to rebuild –
     /// and clears the possible-side memos. False-edge events never rebuild
     /// anything: queries run as skip-false traversals over the static CSR,
     /// and each memo is dropped precisely when a disabled edge can affect
     /// it (see [`ViewCache::apply_edge_event`]), so every answer a query
-    /// returns is **exact** for the current fixation state — the contract
+    /// returns is **exact** for the current fixation state – the contract
     /// the exhaustive oracles pin (eager conflict detection and determined
     /// propagation, not just eventual detection). The all-fixed gate at
     /// the end of [`GraphModel::run_graph`] re-verifies the `Sat`
@@ -1109,7 +1109,7 @@ struct ViewCache {
     /// only when it matches a member's witness (O(1) check); untouched
     /// memos stay exactly valid.
     backward_searches: Vec<Option<Backward>>,
-    /// Targets whose `backward_searches` slot is `Some` — the event-time
+    /// Targets whose `backward_searches` slot is `Some` – the event-time
     /// witness check visits exactly these (see `forced_live`).
     backward_live: Vec<u32>,
     /// `find_cycle` over the possible view; recomputed exactly after a
@@ -1130,7 +1130,7 @@ fn find_cycle(adj: &Csr, vertices: usize) -> Option<Vec<u32>> {
 }
 
 /// Iterative DFS cycle search as [`find_cycle`], skipping edges for which
-/// `skip` holds — used over the epoch-static all-edges CSR to search the
+/// `skip` holds – used over the epoch-static all-edges CSR to search the
 /// exact possible (non-false) view without materializing it. Cycle choice
 /// is bit-identical to a search over the filtered CSR.
 fn find_cycle_filter(
@@ -1196,7 +1196,7 @@ fn find_cycle_filter(
 }
 
 /// A consequence over one graph's literals, carrying that graph's
-/// certificate — statement identity plus the structural witness the
+/// certificate – statement identity plus the structural witness the
 /// emitter's own search produced (a path walk, the closed set of a cut,
 /// a cycle, or the all-refuted form). Checking is linear in the witness.
 /// The statement Arc is cloned before any mutable cache borrow.
@@ -1235,9 +1235,9 @@ fn next_model_uid() -> u64 {
 /// declared before `into_propagator`/`register_graph`. Atoms minted by
 /// `new_edge`/`reach`/`acyclic` carry a per-model unique salt, so several
 /// models over one term manager stay disjoint; user-supplied edge terms may
-/// deliberately be shared — the same term can name any number of edges
+/// deliberately be shared – the same term can name any number of edges
 /// (parallel edges, product-unfolding positions, distinct graphs), every
-/// one present exactly when the term is true — so a shared guard keeps one
+/// one present exactly when the term is true – so a shared guard keeps one
 /// meaning everywhere it appears.
 pub struct GraphModel {
     uid: u64,
@@ -1331,14 +1331,14 @@ impl GraphModel {
         // The graph grew: extend the per-vertex tables by one row. The
         // contract requires every vertex before `into_propagator`, so the
         // cache is still pristine here and one appended row is exactly
-        // what `ViewCache::sized` at the new size would rebuild — without
+        // what `ViewCache::sized` at the new size would rebuild – without
         // the O(vertices) re-allocation per added vertex (O(V^2)
         // construction for large universes). A cache that somehow carries
         // derived state falls back to the full re-size.
         if g.0 < self.caches.len() {
             let cache = &mut self.caches[g.0];
             // O(1) pristine test through the live lists (an O(vertices)
-            // slot sweep here made vertex addition quadratic — the
+            // slot sweep here made vertex addition quadratic – the
             // dominant registration cost of large product graphs).
             let pristine = !cache.forced_valid
                 && cache.pending.is_empty()
@@ -1364,8 +1364,8 @@ impl GraphModel {
     /// Add edge `from -> to` with an existing Boolean term as its presence
     /// atom. The term must have Boolean sort, must not be a Boolean
     /// constant, and must not name a graph atom (reach/acyclic) in this
-    /// model. The **same term may name several edges** — across parallel
-    /// edges, graphs, or any other multiplicity — with one meaning: every
+    /// model. The **same term may name several edges** – across parallel
+    /// edges, graphs, or any other multiplicity – with one meaning: every
     /// edge it names is present exactly when the term is true (this is the
     /// aliasing the FSM product construction relies on). Returns the atom
     /// for convenience.
@@ -1631,7 +1631,7 @@ impl GraphModel {
                     // The queued consequence carries the same signed reasons
                     // so search-time conflicts become ordinary clauses. The
                     // conflict's witness was stashed by the returning site;
-                    // a missing one is a broken invariant — fail closed.
+                    // a missing one is a broken invariant – fail closed.
                     let Some(rule) = self.conflict_rules.get(g).cloned().flatten() else {
                         if std::env::var("NIXIE_GRAPH_CERT_DEBUG").is_ok() {
                             eprintln!("RUN FALLBACK graph {g}");
@@ -1680,7 +1680,7 @@ impl GraphModel {
             if !cache.forced_valid {
                 // Full re-read path (first run, or after a backtrack).
                 // Memoized trees and closures of the previous epoch are
-                // dropped through the live lists — O(live memos), not a
+                // dropped through the live lists – O(live memos), not a
                 // sweep of the per-vertex slot arrays.
                 for &s in &cache.forced_live {
                     cache.forced_searches[s as usize] = None;
@@ -2006,7 +2006,7 @@ impl GraphModel {
         // answer above is exact by construction (precise dirty-marking, see
         // [`ViewCache`]); this gate independently re-verifies the atoms a
         // `Sat` certificate depends on, so a memo-dirty-marking defect can
-        // never hand back a wrong model — it would surface here as a
+        // never hand back a wrong model – it would surface here as a
         // conflict instead. With all edges fixed the possible view *is*
         // the forced view, so the re-verification is exact and cheap.
         if all_fixed && values.iter().all(|v| *v != EdgeValue::Unknown) {
@@ -2125,11 +2125,11 @@ impl UserPropagator for GraphModel {
 
     /// Theory-directed decision (MonoSAT's `-decide-theories` channel):
     /// propose one undecided reach atom. Reads the arm from
-    /// `NIXIE_GRAPH_DECIDE` — unset (the default) disables the hook
+    /// `NIXIE_GRAPH_DECIDE` – unset (the default) disables the hook
     /// entirely; `1` proposes the *first* undecided reach atom (the
     /// treatment: deciding reachability early drives either a witnessed
     /// path or a cut refutation instead of waiting for the Boolean search
-    /// to stumble into it); `2` proposes the *last* undecided one — the
+    /// to stumble into it); `2` proposes the *last* undecided one – the
     /// matched null: identical code path, candidate set, suggestion
     /// frequency and exhaustion timing, with only the semantic content
     /// (which atom) scrambled. Both arms always propose `true`, so the

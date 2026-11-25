@@ -7,6 +7,6 @@ circuit, hwmcc, GP; plus the s38584/x9/Carry/6s299 set used in the study).
 Stored xz-compressed; run_gate.sh decompresses into .cache/ (gitignored).
 
 Provenance: satcomp2025/main_2025 (benchmark-database.de, track=main_2025,
-downloaded 2026-09-15 — see satcomp2025/main_2025/PROVENANCE.md in the
+downloaded 2026-09-15 – see satcomp2025/main_2025/PROVENANCE.md in the
 primary checkout).  Selection recorded in
 docs/studies/2026-09-15-env-probe-regression.md.

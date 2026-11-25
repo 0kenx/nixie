@@ -71,7 +71,7 @@ pub(super) enum ModelRefutation {
     /// assertions, so an `Unsat` over such blocks is a genuine `Unsat`.
     Genuine,
     /// The evaluator could not check (its own fixed-width limit): the
-    /// block is exploratory — an `Unsat` over it stays `Unknown`.
+    /// block is exploratory – an `Unsat` over it stays `Unknown`.
     Unrepresentable,
 }
 
@@ -201,7 +201,7 @@ enum EagerKind {
     },
     /// `=` under the CERTIFICATE: an exact value collision VERIFIES the
     /// equality (it holds under the assignment); distinct values falsify
-    /// it.  The certificate's positive direction — the refutation gates'
+    /// it.  The certificate's positive direction – the refutation gates'
     /// [`EagerKind::Eq`] keeps collisions `Undetermined`.
     EqCertify,
     /// A STRICT comparison under the CERTIFICATE: at real-part equality a
@@ -464,7 +464,7 @@ impl Frame {
             } => {
                 let product = *product;
                 // Classify the operand: exact (beyond width), narrow, or
-                // unusable (a Bool/Undetermined — demote as before).
+                // unusable (a Bool/Undetermined – demote as before).
                 let operand: EvalVal = match result {
                     EvalOutcome::Value(v) => v,
                     other => return Some(other.demote()),
@@ -489,7 +489,7 @@ impl Frame {
                 // narrow, and comparisons on it are decisive either way
                 // (the checked-narrow-only fold used to report
                 // `Unrepresentable` here, which the gate treats as a
-                // nongenuine block — degrading boundary-valued models).
+                // nongenuine block – degrading boundary-valued models).
                 if acc_big.is_some() || big_op.is_some() {
                     let cur = acc_big.clone().unwrap_or_else(|| widen(acc));
                     let op = big_op.unwrap_or_else(|| {
@@ -669,7 +669,7 @@ impl Frame {
 /// "equal-valued" that are not (or split a genuinely equal pair),
 /// feeding the congruence-blocker a wrong candidate.  The
 /// checked-then-exact discipline mirrors `combine_eager`: overflow
-/// is not unverifiable — the exact value is computable.
+/// is not unverifiable – the exact value is computable.
 #[derive(Clone, Debug)]
 enum LinVal {
     Narrow(num_rational::Rational64),
@@ -729,7 +729,7 @@ impl LinVal {
 }
 
 impl PartialEq for LinVal {
-    /// Exact comparison — a narrow/wide pair compares through the
+    /// Exact comparison – a narrow/wide pair compares through the
     /// big view (width differences must never decide equality).
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -763,7 +763,7 @@ fn eval_linear(
         TermKind::RealConst(r) => Some(LinVal::from_narrow(*r)),
         // `arith.value` reads the (exact-aware) tableau value;
         // beyond-width witnesses come back absent here, which the
-        // caller treats as "cannot pair" — fail-open, never a
+        // caller treats as "cannot pair" – fail-open, never a
         // fabricated candidate.
         TermKind::Var(_) => arith.value(term).map(LinVal::from_narrow),
         TermKind::Add(args) => {
@@ -821,7 +821,7 @@ fn combine_eager(kind: EagerKind, values: &[EvalVal]) -> EvalOutcome {
             Some(d) => EvalOutcome::number(d),
             // Beyond width is not unverifiable: the exact difference is
             // computable, and comparisons on it stay decisive (the
-            // `(- x > i64::MAX)` at `x = i64::MIN` class — the honest
+            // `(- x > i64::MAX)` at `x = i64::MIN` class – the honest
             // model used to be blocked as nongenuine and the goal degraded
             // to `unknown`).
             None => match sub_big(&EvalVal::Num(*x), &EvalVal::Num(*y)) {
@@ -855,7 +855,7 @@ fn combine_eager(kind: EagerKind, values: &[EvalVal]) -> EvalOutcome {
         (EagerKind::CmpStrictCertify { less }, [x, y]) => match (x.to_big(), y.to_big()) {
             (Some(a), Some(b)) if a == b => {
                 // Equality with all-concrete operands: `a > a` is FALSE.
-                // With any live read, the delta may have been dropped —
+                // With any live read, the delta may have been dropped –
                 // ambiguous (the caller checks the provenance flag via the
                 // `evaluator` closure below; the frame machine exposes it
                 // through `EvalOutcome::UNDETERMINED`).
@@ -887,7 +887,7 @@ fn combine_eager(kind: EagerKind, values: &[EvalVal]) -> EvalOutcome {
         },
         (EagerKind::IntDiv, [x, y]) => combine_int_div_mod(x, y, false),
         (EagerKind::IntMod, [x, y]) => combine_int_div_mod(x, y, true),
-        // ---- bit-vectors ------------------------------------------------
+        // ======== bit-vectors ========
         // No arithmetic is written here: `model_eval_bv` adapts to
         // `nixie_core::ast::bv_fold`, the workspace's single definition of the
         // SMT-LIB folding rules.
@@ -934,14 +934,14 @@ fn combine_eager(kind: EagerKind, values: &[EvalVal]) -> EvalOutcome {
 ///
 /// EXACT at any width (the operands are widened to `BigInt` before the
 /// division; a quotient that fits `Rational64` is published narrow only via
-/// `number_big`'s callers — here the value stays exact-big, which every
+/// `number_big`'s callers – here the value stays exact-big, which every
 /// comparison and the model printer handle).  Fail-closed classes, each
 /// [`EvalOutcome::UNDETERMINED`] (never a guess, never a fabricated
 /// refutation):
 /// * a non-integer operand value (a well-sorted Int term under an integral
 ///   model never produces one; a fractional read is a broken model the
 ///   gate must not launder);
-/// * a zero divisor (SMT-LIB leaves `div`/`mod` by zero UNINTERPRETED —
+/// * a zero divisor (SMT-LIB leaves `div`/`mod` by zero UNINTERPRETED –
 ///   there is no semantics to evaluate).
 fn combine_int_div_mod(a: &EvalVal, b: &EvalVal, want_mod: bool) -> EvalOutcome {
     use num_integer::Integer;
@@ -984,7 +984,7 @@ fn combine_int_div_mod(a: &EvalVal, b: &EvalVal, want_mod: bool) -> EvalOutcome 
 /// `Undetermined` also keeps a negated equality (`distinct` / `not (= ..)`)
 /// inconclusive there instead of a false violation.
 /// Combine `=` under the CERTIFICATE (see [`EagerKind::EqCertify`]): the
-/// equality is fully decidable both ways between EXACT reads — a collision
+/// equality is fully decidable both ways between EXACT reads – a collision
 /// holds under the assignment (positive verification), distinct values
 /// falsify it (the candidate is refused).  Big/narrow mixes compare exactly.
 /// Booleans decide as ever.
@@ -1122,15 +1122,15 @@ impl Solver {
     /// model-blocking verdict rule: a `Genuine` refutation is one whose
     /// evaluation produced a concrete `false` from ASSIGNED model values
     /// (the settled-atom arm reads the SAT core's committed polarity, the
-    /// value arm reads only terms the model pins — `Undetermined` fails
+    /// value arm reads only terms the model pins – `Undetermined` fails
     /// open), so the projection of the blocked assignment onto term
     /// variables covers every variable the refutation depended on, and
     /// every assignment the block excludes provably violates the
     /// assertions.  An `Unrepresentable` outcome (the evaluator's own
-    /// fixed-width limit — e.g. arithmetic past `i64` in a comparison the
+    /// fixed-width limit – e.g. arithmetic past `i64` in a comparison the
     /// model would have to check) is NOT a genuine refutation: the blocked
     /// candidate may have been perfectly fine, and a clause added for it
-    /// is a search restriction, never a consequence — an `Unsat` over
+    /// is a search restriction, never a consequence – an `Unsat` over
     /// such blocks stays `Unknown` (upstream #40's rule, now scoped to
     /// exactly the unsound half).
     pub(super) fn model_refutation_kind(&self, manager: &TermManager) -> ModelRefutation {
@@ -1152,7 +1152,7 @@ impl Solver {
             // `f(x)`'s value to the EUF/model side and `$p`'s to the
             // arithmetic side, and reading the two artifacts back and
             // comparing them reports the very artifact mismatch the
-            // definition exists to paper over — the gate then refuted
+            // definition exists to paper over – the gate then refuted
             // perfectly good candidates in a loop (found while landing the
             // A1 trichotomy, whose trajectory change made every candidate
             // of the `sum(k) = 6` refinement loop hit it, starving the
@@ -1173,14 +1173,14 @@ impl Solver {
         }
         // Congruence-gap half: two applications of one function whose
         // ARGUMENTS carry equal model values but whose own model values
-        // diverge cannot coexist in a real interpretation — a function has
+        // diverge cannot coexist in a real interpretation – a function has
         // one value per argument tuple.  The search's EUF merges only
         // follow COMMITTED equalities, so arguments that collide only at
         // model level (never a decided atom) leave the applications
         // unmerged, each purifying to its own arithmetic variable, and the
         // tableau free-rides the difference (`wisas/xs_22_42`: the chain
-        // binds `s_count(4) = 1` while `a16`'s `s_count(fmt1-2-fmt0)` —
-        // the same function point at `fmt1 = 6, fmt0 = 0` — reads 11).
+        // binds `s_count(4) = 1` while `a16`'s `s_count(fmt1-2-fmt0)` –
+        // the same function point at `fmt1 = 6, fmt0 = 0` – reads 11).
         // Refuting such a model and blocking its projection is the same
         // pete-gate treatment the arrangement regressions converged under.
         if self.refuted_negated_equality(manager).is_some() {
@@ -1217,9 +1217,9 @@ impl Solver {
 
     /// The certificate's TRI-STATE: [`CertStatus::Pass`] (every assertion
     /// verified true under the published model), [`CertStatus::Refuted`]
-    /// (some assertion concretely FALSE — the candidate violates its own
+    /// (some assertion concretely FALSE – the candidate violates its own
     /// assertions; the J5 gate may block-and-retry it),
-    /// [`CertStatus::Undecided`] (a conjunct the evaluator cannot decide —
+    /// [`CertStatus::Undecided`] (a conjunct the evaluator cannot decide –
     /// the honest decline, never blocked).
     pub(super) fn model_certificate_status(&self, manager: &TermManager) -> CertStatus {
         let Some(model) = self.model.as_ref() else {
@@ -1228,7 +1228,7 @@ impl Solver {
         // CERTIFICATE mode: an exact `=` collision verifies (see
         // [`EagerKind::EqCertify`]) and the strict-bound deltas are
         // CONCRETIZED through a single δ₀ instantiation
-        // ([`Solver::certify_delta0`] — the dive leaf's trick, item 90,
+        // ([`Solver::certify_delta0`] – the dive leaf's trick, item 90,
         // applied to the certificate's reads).  Both restored before
         // returning: evaluation-local by contract.
         let saved = self.eq_collision_verifies.get();
@@ -1247,7 +1247,7 @@ impl Solver {
         // conjuncts reset `CERTIFY_LIVE_READ` per conjunct, and a memo
         // shared across that reset could let one conjunct's live-read
         // provenance leak into (or be hidden from) another's shared
-        // subterm — see the 2026-11-19 study addendum.  Each conjunct
+        // subterm – see the 2026-11-19 study addendum.  Each conjunct
         // evaluates with its own per-walk memo.
         for &assertion in &self.assertions {
             conjuncts.clear();
@@ -1278,7 +1278,7 @@ impl Solver {
     /// Whether the current model gives two same-function applications
     /// equal-valued arguments but divergent results.  Argument values fold
     /// from the tableau (`ArithSolver::value`, plus a linear walk for
-    /// expressions that were never asserted — the numarg abstraction means
+    /// expressions that were never asserted – the numarg abstraction means
     /// most arguments arrive as `__nixie_numarg_N` proxy vars, whose
     /// defining equalities give them values); application values read
     /// `ArithSolver::value` directly (integer-sorted applications inside
@@ -1348,7 +1348,7 @@ impl Solver {
                     // Equal-valued arguments with divergent application
                     // values: the pair must be DECIDED (a merge forces the
                     // congruence conflict; a separation changes the argument
-                    // model) — blocking the projection cannot invent either.
+                    // model) – blocking the projection cannot invent either.
                     if let (Some(va), Some(vb)) = (self.arith.value(ta), self.arith.value(tb))
                         && va != vb
                         && let (Some(tx0), Some(ty0)) =
@@ -1364,7 +1364,7 @@ impl Solver {
     }
 
     /// Lazy congruence-gap repair: assert the colliding argument pair as a
-    /// care-split atom (the core must decide it either way — a `true`
+    /// care-split atom (the core must decide it either way – a `true`
     /// commitment merges the applications in congruence closure and
     /// conflicts the divergent values downstream; a `false` commitment
     /// separates the arguments in the tableau) and report `true` so the
@@ -1397,7 +1397,7 @@ impl Solver {
             // a strict bound (the negative-Eq processing tells EUF and BV,
             // not arith), the tableau keeps the two sides' values equal,
             // and the collision half blocks every candidate until its
-            // budget dies — the exact starvation that failed the audit.
+            // budget dies – the exact starvation that failed the audit.
             self.emit_collision_trichotomy(pair.0, pair.1, manager);
             self.trail.push(super::trail::TrailOp::CareSplitAdded {
                 a: pair.0,
@@ -1431,7 +1431,7 @@ impl Solver {
             _ => vec![assertion],
         };
         // Short-circuit free: evaluate conjuncts that need evaluation
-        // individually — the `And`'s result is the conjunction of the
+        // individually – the `And`'s result is the conjunction of the
         // outcomes, and an already-`true` settled atom contributes `true`.
         let mut saw_false = false;
         let mut saw_unrepresentable = false;
@@ -1501,8 +1501,8 @@ impl Solver {
     ///
     /// # Why `combine_eq` cannot do this itself
     ///
-    /// [`combine_eq`] answers `Undetermined` — deliberately, and it must keep
-    /// doing so — when two numeric operands are equal.  Its input is a pair of
+    /// [`combine_eq`] answers `Undetermined` – deliberately, and it must keep
+    /// doing so – when two numeric operands are equal.  Its input is a pair of
     /// *values* and nothing else, and a *collision* in the LP model is not by
     /// itself evidence of anything: the tableau enforces a disequality by case
     /// splitting, not by pinning distinct witnesses, so two variables that were
@@ -1510,7 +1510,7 @@ impl Solver {
     /// Returning `Bool(true)` there would turn every satisfiable `distinct`
     /// into a spurious `Unknown`.
     ///
-    /// The missing information is not in the values — it is the **trail
+    /// The missing information is not in the values – it is the **trail
     /// polarity**.  If the core committed `(= a b)` to *false* and the model it
     /// then produced makes `a` and `b` equal, the assignment and the model
     /// contradict each other outright.  That is a definite refutation, not a
@@ -1524,7 +1524,7 @@ impl Solver {
     /// # Conservatism
     ///
     /// Both sides must evaluate to a *definite* number.  A term the tableau
-    /// does not constrain reads back `Undetermined` and is skipped — so a
+    /// does not constrain reads back `Undetermined` and is skipped – so a
     /// variable `build_model` merely defaulted can never trigger this.  Only
     /// atoms the core actually assigned `False` are considered; `LBool::Undef`
     /// and `True` are ignored.
@@ -1542,8 +1542,8 @@ impl Solver {
         // Array-bearing stacks are out of scope for the collision half: their
         // reads live in a value graph this fork re-derives incompletely (the
         // purification proxies of `select` results carry no `Select` node to
-        // filter on), and the store-store congruence conflict — equal writes
-        // at equal indices force equal chains — never propagates, so the
+        // filter on), and the store-store congruence conflict – equal writes
+        // at equal indices force equal chains – never propagates, so the
         // blocking loop cannot converge on store-commutativity shapes and
         // dies at its budget with an honest but avoidable `Unknown`.  Both
         // are the tracked next items (array value-graph re-derivation;
@@ -1566,7 +1566,7 @@ impl Solver {
             // additionally excluded for now: their collision repair needs
             // the array value-graph re-derivation (reads must follow the
             // store chains' semantics), and on store-commutativity shapes
-            // the blocking loop cannot converge either — the store-store
+            // the blocking loop cannot converge either – the store-store
             // congruence conflict (equal writes at equal indices force equal
             // chains) never propagates, so the core re-proposes the same
             // vacuous candidate until the block budget dies.  Both are the
@@ -1579,7 +1579,7 @@ impl Solver {
             // equal derived sizes is a genuine "the search must separate the
             // trees" signal the blocking loop can act on.
             // Scope: the collision half fires only on sides whose collisions
-            // the model repairs demonstrably retire — plain numeric vars and
+            // the model repairs demonstrably retire – plain numeric vars and
             // compound arithmetic.  Excluded, each for a root-caused reason
             // (see the study): array reads (`Select`) and their purification
             // proxies (array value-graph; store-store congruence now
@@ -1593,7 +1593,7 @@ impl Solver {
             // `size_a != size_b` as a free Boolean (no axiom forces it), and
             // on a structurally forced goal the blocking loop cannot
             // converge (dt_05: 38 block rounds, measured).  The derivation
-            // still improves the model — real sizes in `(get-value)`
+            // still improves the model – real sizes in `(get-value)`
             // instead of tableau defaults.
             let side_ok = |t: TermId| {
                 manager.get(t).is_some_and(|n| {
@@ -1838,7 +1838,7 @@ impl Solver {
         let outcome = match self.arith.value(term) {
             Some(n) => EvalOutcome::number(n),
             // A value beyond `Rational64` width (an honest
-            // boundary model — `x = i64::MIN`, a wide published
+            // boundary model – `x = i64::MIN`, a wide published
             // witness) still has its EXACT value: evaluate it
             // exactly rather than inconclusively, so the gate can
             // certify (or refute) boundary-valued candidates.
@@ -1917,7 +1917,7 @@ impl Solver {
                     // `separate_committed_disequalities`, selector
                     // re-derivation) publish the separated constants there,
                     // while the tableau holds only the unconstrained default
-                    // (0) for them — reading the tableau first made every
+                    // (0) for them – reading the tableau first made every
                     // proxy collide and starved those repairs.  USER
                     // variables stay tableau-first: their model entries are
                     // derived FROM the tableau, and preferring them on
@@ -1936,11 +1936,11 @@ impl Solver {
                         }
                     }
                     // CERTIFICATE mode, USER variables included: read the
-                    // value the model PUBLISHES first — the certificate's
+                    // value the model PUBLISHES first – the certificate's
                     // contract is to verify the model that will be printed,
                     // and the live tableau can diverge from it (the popped
                     // post-search state vs the snapshot the builder
-                    // published — i504's class).  The published entry is a
+                    // published – i504's class).  The published entry is a
                     // constant tree (compound spellings like
                     // `(* 1.0 55340232221128654948)` included): evaluate it
                     // exactly through this same evaluator; fall through to
@@ -2037,7 +2037,7 @@ impl Solver {
             // The finite-set predicates: decided by the shared set evaluator
             // against the built model (`set_model`).  `Undetermined` is the
             // honest answer whenever the model does not pin the operands,
-            // which is exactly the pre-synthesis behavior — the gate fails
+            // which is exactly the pre-synthesis behavior – the gate fails
             // open, never guesses.
             TermKind::SetMember(element, set) => {
                 let mut view = super::set_model::SetView::new(model, manager);
@@ -2063,14 +2063,14 @@ impl Solver {
             // `set.choose(s)` as an ELEMENT: the choose term is an element
             // like any other; its value is the model entry (synthesis pins
             // one for member-true chooses). Without an entry the gate
-            // cannot decide — undetermined, never a guess.
+            // cannot decide – undetermined, never a guess.
             TermKind::SetChoose(_) => match model.get(term).map(|v| parse_value_term(v, manager)) {
                 Some(parsed) if !matches!(parsed, EvalOutcome::UNDETERMINED) => {
                     Opened::Done(parsed)
                 }
                 _ => Opened::Done(EvalOutcome::UNDETERMINED),
             },
-            // `bag.choose(b)` as an ELEMENT: the same contract — the model
+            // `bag.choose(b)` as an ELEMENT: the same contract – the model
             // entry the bag pass pins (a cell of the bag with the counted
             // multiplicity, or a fresh value for the absent case), or
             // undetermined.
@@ -2081,7 +2081,7 @@ impl Solver {
                 _ => Opened::Done(EvalOutcome::UNDETERMINED),
             },
             // `bag.map`/`bag.filter` compounds: the model entry the bag pass
-            // assembles from the counts, or undetermined — never a guess.
+            // assembles from the counts, or undetermined – never a guess.
             TermKind::BagMap { .. } | TermKind::BagFilter { .. } => {
                 match model.get(term).map(|v| parse_value_term(v, manager)) {
                     Some(parsed) if !matches!(parsed, EvalOutcome::UNDETERMINED) => {
@@ -2092,7 +2092,7 @@ impl Solver {
             }
             // `bag.fold f t b`: the model entry its defining equation (the
             // unrolled application chain, an ordinary arithmetic/string
-            // term) or the purification proxy pins — or undetermined, for
+            // term) or the purification proxy pins – or undetermined, for
             // a fold the reduction declined (whose `Sat` already degraded
             // to `Unknown`).
             TermKind::BagFold { .. } => {
@@ -2194,7 +2194,7 @@ impl Solver {
             // SMT-LIB integer div/mod: exact Euclidean evaluation with
             // fail-closed zero-divisor and non-integral operands (see
             // `combine_int_div_mod`).  Without these arms the terms fell to
-            // the opaque-leaf catch-all — a div/mod term is never in the
+            // the opaque-leaf catch-all – a div/mod term is never in the
             // model assignments, so every assertion mentioning one evaluated
             // `Undetermined` and the certificate failed closed on the whole
             // div/mod class (item 96's J5-(b2) residual).
@@ -2329,7 +2329,7 @@ mod tests {
     /// the *recursive* evaluator this driver replaced.  The pin was
     /// misconceived twice over: the driver's native usage is **constant** in
     /// the term's depth (see the module doc), and the small thread's real
-    /// load is the closure's own frame — `outcome` + `gate_refuses` inlined
+    /// load is the closure's own frame – `outcome` + `gate_refuses` inlined
     /// together in the release profile exceed 128 KiB *at any depth*
     /// (verified: the closure overflowed 128 KiB with a 64-level chain), so
     /// the old constant was testing release codegen luck, not the evaluator.
@@ -2474,7 +2474,7 @@ mod tests {
     /// and reported `true`, hiding the violation; in debug it aborted with
     /// `attempt to add with overflow` before answering anything at all.  The
     /// exact channel evaluates the sum to `NumBig(2^63)` and the comparison
-    /// DECIDES it — the refusal is now semantic, not a width concession.
+    /// DECIDES it – the refusal is now semantic, not a width concession.
     #[test]
     fn overflowing_addition_never_hides_a_violated_assertion() {
         let mut manager = TermManager::new();
@@ -2497,7 +2497,7 @@ mod tests {
     /// `2^62 + 2^62`, `2^63 · 2` and `-2^63 - 1` EXACTLY.  Its old bare
     /// `Rational64` folds wrapped here (`2^62 + 2^62 → i64::MIN`), so the
     /// congruence blocker could pair (or split) applications on fabricated
-    /// values — the last unchecked narrow-accumulation site in the
+    /// values – the last unchecked narrow-accumulation site in the
     /// evaluator's periphery (the handoff's item, closed by the
     /// checked-then-exact `LinVal` channel mirroring `combine_eager`).
     #[test]
@@ -2508,7 +2508,7 @@ mod tests {
         let mut manager = TermManager::new();
         let arith = nixie_theories::arithmetic::ArithSolver::new(true);
 
-        // `2^62 + 2^62` — the addition that used to wrap.
+        // `2^62 + 2^62` – the addition that used to wrap.
         let half = manager.mk_int(1i64 << 62);
         let sum = unfolded(
             TermKind::Add(SmallVec::from_iter([half, half])),
@@ -2517,7 +2517,7 @@ mod tests {
         let want = LinVal::Wide(BigRational::from(BigInt::from(1i64) << 63));
         assert_eq!(eval_linear(sum, &arith, &manager, 0).as_ref(), Some(&want));
 
-        // `(2^62 + 2^62) · 2` — exact multiplication past every width.
+        // `(2^62 + 2^62) · 2` – exact multiplication past every width.
         let two = manager.mk_int(2);
         let prod = unfolded(TermKind::Mul(SmallVec::from_iter([sum, two])), &mut manager);
         let want2 = LinVal::Wide(BigRational::from(BigInt::from(1i64) << 64));
@@ -2526,7 +2526,7 @@ mod tests {
             Some(&want2)
         );
 
-        // `-(2^63) - 1` — negation of the wrapped corner, then an exact
+        // `-(2^63) - 1` – negation of the wrapped corner, then an exact
         // subtraction; the narrow `-i64::MIN` used to wrap back to itself.
         let one = manager.mk_int(1);
         let neg = unfolded(TermKind::Neg(sum), &mut manager);
@@ -2564,11 +2564,11 @@ mod tests {
     /// The same overflow under an assertion the model **satisfies**.
     ///
     /// `(>= (+ 2^62 2^62) 0)` is true, and the EXACT channel now evaluates
-    /// it — the gate can vouch for the model on `2^63`-scale arithmetic.
-    /// (The width-limited channel refused here by design — precision, not
-    /// soundness — and the caller answered `Unknown` for a formula it could
+    /// it – the gate can vouch for the model on `2^63`-scale arithmetic.
+    /// (The width-limited channel refused here by design – precision, not
+    /// soundness – and the caller answered `Unknown` for a formula it could
     /// have called `Sat`; the exact evaluation retires that precision loss.
-    /// Unchecked — before the checked era — this wrapped the other way and
+    /// Unchecked – before the checked era – this wrapped the other way and
     /// refuted the model on garbage.)
     #[test]
     fn overflowing_addition_now_vouches_for_a_satisfied_model() {
@@ -2585,11 +2585,11 @@ mod tests {
     }
 
     /// Every arithmetic operator the evaluator folds leaves the fixed-width
-    /// channel when the result does not fit — and the exact continuation
+    /// channel when the result does not fit – and the exact continuation
     /// CARRIES the value instead of conceding: the outcome is the exact
     /// value (`NumBig`), never a wrapped number, and comparisons on it stay
     /// decisive.  (The pre-exact channel reported `Unrepresentable`, which
-    /// the gate treated as a nongenuine block — retiring that concession is
+    /// the gate treated as a nongenuine block – retiring that concession is
     /// what lets boundary-valued models certify; the WRAPPED behaviour
     /// before the checked era is what this file's header documents.)
     #[test]
@@ -2794,8 +2794,8 @@ mod tests {
     /// same answer the recursive version gave – rather than aborting the
     /// process on the way there.
     ///
-    /// The depth stays far past `ENCODE_DEPTH_LIMIT` (512) — twelve times
-    /// over — so the budget, not the stack, is what answers.
+    /// The depth stays far past `ENCODE_DEPTH_LIMIT` (512) – twelve times
+    /// over – so the budget, not the stack, is what answers.
     #[test]
     fn assertion_past_the_depth_budget_stays_inconclusive() {
         const DEPTH: usize = 6_250;
@@ -2817,7 +2817,7 @@ mod tests {
         assert!(!refused);
     }
 
-    // ---- item 96's J5-(b2): div/mod evaluation + certificate equality ----
+    // ======== item 96's J5-(b2): div/mod evaluation + certificate equality ========
 
     fn num_big(n: i64) -> EvalVal {
         EvalVal::NumBig(Box::new(num_rational::BigRational::from(
@@ -2905,7 +2905,7 @@ mod tests {
             EvalOutcome::Value(EvalVal::Bool(true))
         );
         // A LIVE read may have dropped a positive delta: equality stays
-        // ambiguous (the soften) — the provenance flag governs.
+        // ambiguous (the soften) – the provenance flag governs.
         CERTIFY_LIVE_READ.with(|f| f.set(true));
         let nn = EvalVal::Num(num_rational::Rational64::from_integer(4));
         assert_eq!(
@@ -2922,7 +2922,7 @@ mod tests {
     fn certificate_equality_decides_both_ways() {
         use EvalOutcome::Value;
         // An exact collision VERIFIES (the equality holds under the
-        // assignment); distinct values falsify — narrow and big both.
+        // assignment); distinct values falsify – narrow and big both.
         assert_eq!(
             combine_eq_certify(&EvalVal::Bool(true), &EvalVal::Bool(true)),
             Value(EvalVal::Bool(true))

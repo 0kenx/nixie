@@ -45,7 +45,7 @@ pub enum ArrayAxiom {
         ///
         /// `None` asks for the quantified axiom. `Some(w)` asks for its
         /// Skolemization, which is only sound when `w` is a *witness chosen
-        /// for this pair* — the index at which the two arrays differ if they
+        /// for this pair* – the index at which the two arrays differ if they
         /// differ at all, i.e. a fresh constant. An arbitrary existing index
         /// is not a witness, and the Skolemized form is false for one.
         /// [`ArrayTheory::generate_extensionality`] records `None`.
@@ -227,7 +227,7 @@ impl ArrayTheory {
     /// This creates the SMT formula corresponding to the axiom.
     ///
     /// Returns `None` for an [`ArrayAxiom::Extensionality`] with no witness
-    /// whose arrays' domain sort cannot be read from `manager` — the
+    /// whose arrays' domain sort cannot be read from `manager` – the
     /// quantified form needs it to bind the index.
     pub fn axiom_to_term(&self, axiom: &ArrayAxiom, manager: &mut TermManager) -> Option<TermId> {
         Some(match axiom {

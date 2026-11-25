@@ -2,18 +2,18 @@
 //!
 //! The reference translator works on raw token vectors, substituting by
 //! token string and parenthesising by token count. This port already has a
-//! real expression AST — the same one the whole front end uses — so it
+//! real expression AST – the same one the whole front end uses – so it
 //! substitutes structurally instead: shadowing-aware for free names, and
 //! with precedence handled by the printer rather than by counting tokens.
 //!
 //! Three substitutions exist, all from `PcalTLAGen` and `PcalFixIDs`:
 //!
-//! * **macro expansion** — `SubstituteInStmtSeq`, replacing a parameter by
+//! * **macro expansion** – `SubstituteInStmtSeq`, replacing a parameter by
 //!   an argument expression, parenthesised when it is not atomic;
-//! * **self-subscripting and priming** — `AddSubscriptsToExpr`, turning a
+//! * **self-subscripting and priming** – `AddSubscriptsToExpr`, turning a
 //!   process-local variable `v` into `v[self]` (or `v'` when the step has
 //!   already assigned it, `v'[self]` when both);
-//! * **renaming** — `PcalFixIDs.FixExpr`, rewriting a variable to its
+//! * **renaming** – `PcalFixIDs.FixExpr`, rewriting a variable to its
 //!   disambiguated name.
 //!
 //! All three descend through binders and stop at shadowed names, which the
@@ -28,7 +28,7 @@ use crate::op;
 use crate::span::Span;
 use std::collections::HashSet;
 
-/// The variables assigned so far in the step being translated — the
+/// The variables assigned so far in the step being translated – the
 /// reference's `Changed` object, reduced to the query the generator makes of
 /// it ("has this variable been assigned yet?").
 pub type Changed = HashSet<String>;
@@ -567,7 +567,7 @@ pub fn subst_free(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
 }
 
 /// Rewrite process-local variable reads and already-assigned variable reads
-/// in one pass — `AddSubscriptsToExpr`.
+/// in one pass – `AddSubscriptsToExpr`.
 ///
 /// * `sub` is the `self` expression (or the single-process id); `None` in a
 ///   uniprocess algorithm.
@@ -633,7 +633,7 @@ pub fn self_and_prime(
     })
 }
 
-/// Rename variables per the disambiguated symbol table — `FixExpr`. Only
+/// Rename variables per the disambiguated symbol table – `FixExpr`. Only
 /// free occurrences are renamed; binders shadow as usual.
 #[must_use]
 pub fn rename_vars(expr: &Expr, map: &dyn Fn(&str) -> Option<String>) -> Expr {
@@ -659,7 +659,7 @@ pub fn rename_vars(expr: &Expr, map: &dyn Fn(&str) -> Option<String>) -> Expr {
     })
 }
 
-// ---- rendering -----------------------------------------------------------
+// ======== rendering ========
 
 /// Render an expression back to TLA+ source, precedence-faithfully.
 #[must_use]
@@ -1255,7 +1255,7 @@ pub fn decl_param_names(decls: &[OpDecl]) -> Vec<String> {
     decls.iter().map(|d| d.name.name.clone()).collect()
 }
 
-/// Whether the word is a PlusCal statement keyword — the set
+/// Whether the word is a PlusCal statement keyword – the set
 /// `Tokenize.IsDelimiter` uses, plus the declaration words.
 #[must_use]
 pub fn is_pcal_keyword(word: &str) -> bool {

@@ -322,7 +322,7 @@ impl GroebnerPreprocessor {
         let gb = match rx.recv_timeout(timeout) {
             Ok(Some(result)) => result,
             // Timeout or iteration-cap refusal: either way there is no
-            // trustworthy basis to preprocess with — skip (the honest
+            // trustworthy basis to preprocess with – skip (the honest
             // `None` the cap now returns, never a silent non-basis).
             Ok(None) | Err(_) => return None, // skip prep (thread keeps running)
         };

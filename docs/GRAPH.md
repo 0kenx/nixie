@@ -37,12 +37,12 @@ extended one vertex at a time with `add_vertex` (opaque `VertexId` handles,
 local to their graph; `VertexId::new` addresses them by index). A model may
 hold several independent graphs.
 
-An **edge** is a Boolean term — either a fresh variable from `new_edge`, or
+An **edge** is a Boolean term – either a fresh variable from `new_edge`, or
 any non-constant Boolean term of your own via `add_edge` (a conjunction, an
 arithmetic equality, ...). The edge is present in the graph exactly when its
 term is true in the model. Parallel edges (several terms for one ordered
 pair) and self-loops are allowed; the same term can name **any number of
-edges** — parallel, across graphs, across a product unfolding — and every
+edges** – parallel, across graphs, across a product unfolding – and every
 edge it names is present exactly when the term is true (shared-guard
 aliasing; this is what the FSM product construction
 (`docs/FSM.md`) relies on), with justifications deduplicated. Atoms minted
@@ -50,17 +50,17 @@ by `new_edge`/`reach`/`acyclic` carry a per-model salt, so several models
 over one term manager never silently share atoms through name interning;
 passing the *same* user term to two models deliberately aliases those
 edges. A term and its negation may both name edges (one SAT variable,
-opposite phases — both are routed).
+opposite phases – both are routed).
 
 `reach(g, u, v)` reifies **reachability**: it is true iff some directed path
 of **length ≥ 1** over present edges leads from `u` to `v`. **Zero-length
-paths do not count** — unlike MonoSAT's `reach`, which counts the empty path
+paths do not count** – unlike MonoSAT's `reach`, which counts the empty path
 and therefore holds trivially for `u = v`. The strict reading is the more
 expressive primitive:
 
 - `reach(g, u, u)` is true exactly when `u` lies on a directed cycle
   (a self-loop suffices), and it is unsatisfiable together with `acyclic(g)`.
-- Reflexive reachability is `(u = v) ∨ reach(g,u,v)` — a disjunction callers
+- Reflexive reachability is `(u = v) ∨ reach(g,u,v)` – a disjunction callers
   build themselves when they want the MonoSAT convention.
 
 `acyclic(g)` reifies **acyclicity**: true iff the present-edge subgraph
@@ -83,8 +83,8 @@ atoms, reach atoms, acyclicity atoms). `check_sat_only` cannot bypass the
 constraints.
 
 Every propagation and conflict is explained over **signed edge assignments**:
-a `Consequence` whose justification is a list of edge literals — the edge
-atom for a true edge, its negation for a false one — plus, for conflicts, the
+a `Consequence` whose justification is a list of edge literals – the edge
+atom for a true edge, its negation for a false one – plus, for conflicts, the
 offending graph atom's literal. The solver learns ordinary clauses:
 
 | Fact | Explanation (MonoSAT correspondence) |
@@ -99,14 +99,14 @@ shortcut is unsound: the cut must be taken over the **backward** closure of
 the target (vertices that can reach `v` through possible edges), and it must
 include *every* false edge into that set. A forward-closure cut can justify
 `¬reach(u,u)` with an empty justification, which becomes a permanent unit
-clause and can then wrongly refute graphs that re-enable those edges — a
+clause and can then wrongly refute graphs that re-enable those edges – a
 false `unsat`. The exhaustive oracle tests caught exactly this during
 development; the shipped form is validated against all completions.
 
 The propagator is **stateless**: every event re-derives the forced graph
 (edges true) and the possible graph (edges not false) from the current fixed
 values, so search `push`/`pop` needs no trail and cannot leak scope state.
-The cost is a full recomputation per watched-atom event — O(V·E) per event in
+The cost is a full recomputation per watched-atom event – O(V·E) per event in
 the worst case. This first integration targets tens of vertices and hundreds
 of edges; it makes no throughput claim relative to MonoSAT, whose incremental
 dynamic-graph algorithms (Ramalingam–Reps reachability, dynamic max-flow
@@ -140,14 +140,14 @@ default decisions are complete for this fragment.
 - **Zero-length paths** are excluded from `reach`; see above.
 - **Performance**: both views are maintained incrementally from edge
   events (O(1) per event): the forced view grows rows and merges memoized
-  BFS trees on true additions; the possible view is **epoch-static** —
+  BFS trees on true additions; the possible view is **epoch-static** –
   the all-edges CSRs are built once per backtrack epoch and every query
   traverses them skipping currently-false edges, so nothing is ever
   rebuilt on events. Backward closures and possible-cycle memos are kept
   exactly valid by **witness-checked** dirty-marking: each closure member
   carries its BFS witness edge (the first edge of a genuine, simple,
   surviving path to the target), and a disabled edge `(a→b)` endangers
-  a closure memo only when it is exactly `a`'s witness edge — an O(1)
+  a closure memo only when it is exactly `a`'s witness edge – an O(1)
   check. A dying witness is then **repaired locally**: `a` re-attaches
   through any surviving out-edge into a closure member whose witness
   chain avoids `a` (the cycle-grounding walk), keeping the memo exactly
@@ -156,10 +156,10 @@ default decisions are complete for this fragment.
   on it. An all-fixed exactness gate re-verifies the `Sat` certificate
   as defense in depth. Measured against MonoSAT on deterministic
   instruction counts (pinned `perf stat -e instructions:u`, ±0.001%
-  stable — see the 2026-09-22 study): **geomean 0.65×, totals 0.69×,
+  stable – see the 2026-09-22 study): **geomean 0.65×, totals 0.69×,
   worst instance 2.03×** on the n∈{25..150} corpus (28/37 instances
   individually below MonoSAT), and **geomean 1.01× / totals 1.01× at
-  n∈{200,300,500}** — parity across the measured scale range (the
+  n∈{200,300,500}** – parity across the measured scale range (the
   pre-repair gap reopened superlinearly: 1.84× at n=500 from
   closure-rebuild churn, eliminated by the localized repair). Search
   counters are bit-identical to the pre-change propagator on every
@@ -169,7 +169,7 @@ default decisions are complete for this fragment.
   prints propagator maintenance counters under `STATS=1` for scaling
   diagnosis.
 - **Watch terms**: several watch terms may share one SAT variable (a term
-  and its negation — e.g. graph edges `x` and `¬x`, or FSM guards `g` and
+  and its negation – e.g. graph edges `x` and `¬x`, or FSM guards `g` and
   `¬g`). The per-variable watch index keeps **every** entry and decodes
   each variable assignment into its own term's fixation, so nothing is
   silently dropped; justification-truth lookups decode through any entry
@@ -181,7 +181,7 @@ default decisions are complete for this fragment.
   retained by the solver at registration. Checking is **linear in the
   witness structure** the emitter's own search produced (a path walk, a
   cut's successor-closed vertex set, an explicit cycle, a topological
-  order) — no closure recomputation on this hot path, which runs per
+  order) – no closure recomputation on this hot path, which runs per
   emitted consequence inside the CDCL loop. Recompute-based checking
   (explicit length-≥1 closures / Kahn acyclicity / cycle DFS over the
   statement, a different algorithm from the propagator's incremental
@@ -197,7 +197,7 @@ default decisions are complete for this fragment.
   (`GraphLemma` records in the CP proof envelope, version 2). Registering
   the propagator through raw `register_user_propagator` (bypassing
   `register_graph`) retains no statements, so its certificate-carrying
-  consequences fail closed to `Unknown` — the same contract CP enforces
+  consequences fail closed to `Unknown` – the same contract CP enforces
   when bypassing `register_cp`. Unsat cores, when available, are relative
   to the permanently installed graph constraints.
 
@@ -232,18 +232,18 @@ solver.assert(mk_not(internet_reaches_db), &mut tm); // db never internet-expose
 solver.push();
 solver.assert(internet_reaches_app, &mut tm);
 // Unsat: admitting the internet to the app tier transitively exposes the
-// database — exactly the transitivity a firewall review must catch.
+// database – exactly the transitivity a firewall review must catch.
 ```
 
 The dependency overlay (a second graph in the same model) declares
 `app→db`, `dmz→app` and the reverse `db→dmz` dependency; asserting the first
 two plus `acyclic(deps)` is satisfiable, and additionally asserting `db→dmz`
-makes the overlay cyclic — unsatisfiable. Together the two graphs check a
+makes the overlay cyclic – unsatisfiable. Together the two graphs check a
 segmentation policy *and* a deployment-order constraint in one query.
 
 ## Test and audit basis
 
-- `nixie-theories/src/graph/tests.rs` — propagator-level exhaustive oracles:
+- `nixie-theories/src/graph/tests.rs` – propagator-level exhaustive oracles:
   every partial edge/atom state of each case graph is replayed through
   `UserPropagatorManager`, and every emitted consequence/conflict is checked
   against **all** concrete graphs (not just completions of the current
@@ -252,7 +252,7 @@ segmentation policy *and* a deployment-order constraint in one query.
   disconnected vertices, empty graphs, complete assignments in every atom
   polarity, scoped replay, non-Boolean fixation fail-closed, multi-graph
   independence, malformed construction, and the zero-length-path rule.
-- `nixie-solver/tests/graph_constraints.rs` — end-to-end: all `2^(n²)`
+- `nixie-solver/tests/graph_constraints.rs` – end-to-end: all `2^(n²)`
   digraphs for n ≤ 3 with model re-validation against a closure oracle;
   exhaustive single-atom-flip unsat (both polarities); exhaustive acyclic
   classification (n ≤ 3) plus a sampled n = 4 run; brute-forced

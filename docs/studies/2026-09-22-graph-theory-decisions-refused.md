@@ -1,9 +1,9 @@
-# Study: theory-directed decisions for graph constraints — the primitive measured and refused (negative)
+# Study: theory-directed decisions for graph constraints – the primitive measured and refused (negative)
 
 **Date:** 2026-09-22
 **Base:** `fa30412c` (main)
 **Verdict:** **NEGATIVE, recorded.** The last untaken lever from the graph
-handoff — MonoSAT's `-decide-theories` — is measured on our workloads as a
+handoff – MonoSAT's `-decide-theories` – is measured on our workloads as a
 regression in its natural form and content-free elsewhere. The (default-inert)
 wiring lands so the question never has to be re-litigated: `NIXIE_GRAPH_DECIDE`
 selects the arms. MonoSAT itself ships `-decide-theories` **off by default**
@@ -15,14 +15,14 @@ for.
 - `TheoryCallback::suggest_decision() -> Option<Lit>` (default `None`): a
   theory-proposed decision, consulted once per branch before the SAT heuristic
   picks freely; assigned proposals are skipped, and any proposal is a legal
-  decision — soundness never depends on the channel.
+  decision – soundness never depends on the channel.
 - `UserCallback` implements it through `UserPropagatorManager::get_decision()`
   (the previously-unwired trait method), mapping the proposed term through the
   watch/literal table.
 - `GraphModel::decide()` proposes one undecided reach atom, refreshed by the
   per-run atom scan. Arms via `NIXIE_GRAPH_DECIDE` (OnceLock-memoized):
   `0`/unset = off (default), `1` = first-undecided, **true** (the treatment);
-  `2` = last-undecided, true (the matched null — same code path, candidate
+  `2` = last-undecided, true (the matched null – same code path, candidate
   set, frequency, exhaustion timing; the selection content scrambled);
   `3`/`4` = the same pair with **false** polarity (MonoSAT's
   `-decide-theories-reverse` counterpart).
@@ -54,15 +54,15 @@ Crafted-only decisions geomean vs baseline:
   0 → 17–83 on the propagation-solved instances): eagerly demanding paths
   before the Boolean search has shaped the edge assignment forces conflicts
   the baseline never takes.
-- **Treatment/null = 1.600/1.462 ≈ 1.09** — the residual over the scrambled
+- **Treatment/null = 1.600/1.462 ≈ 1.09** – the residual over the scrambled
   null is inside the neutrality band and rides a regression: there is no
   separable selection-content effect.
-- The treatment and null are **bit-identical on 25/26 and 24/26 pairs** —
+- The treatment and null are **bit-identical on 25/26 and 24/26 pairs** –
   with few reach atoms, first-vs-last rarely even differs. The one divergence
-  (`craft_n30_s1`: 83/1363 vs 19/385 — 4.4×) is pure CDCL chaos from an
+  (`craft_n30_s1`: 83/1363 vs 19/385 – 4.4×) is pure CDCL chaos from an
   order perturbation, a live demonstration of §1 of `docs/BENCHMARKING.md`.
 - False-polarity arms are a wash (0.98×) with two real single-instance wins
-  (`craft_n30_s2`: 13→1 conflicts) balanced by losses — noise-level, and
+  (`craft_n30_s2`: 13→1 conflicts) balanced by losses – noise-level, and
   treatment==null there too.
 
 Full per-instance matrix (conflicts/decisions):
@@ -91,7 +91,7 @@ its atom-proposing form is now measured: the natural polarity is strongly
 negative, the reverse polarity is noise, and the selection content carries
 no separable signal. What remains unexplored is only *structurally richer*
 proposals (e.g. frontier edges chosen from the maintained views, with a
-same-pool scrambled null) — a different hypothesis, listed as a follow-up,
+same-pool scrambled null) – a different hypothesis, listed as a follow-up,
 not a re-run of this one.
 
 ## Verification for the wiring (all arms off by default)

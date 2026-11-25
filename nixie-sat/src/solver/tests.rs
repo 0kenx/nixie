@@ -182,7 +182,7 @@ fn test_luby_sequence() {
 
 /// Regression (`b90f3807`): the phase-array copies are length-EQUALITY
 /// (`copy_from_slice`), and the slack growth policy legitimately leaves
-/// `phase` LONGER than `num_vars` — the pre-fix code resized only one
+/// `phase` LONGER than `num_vars` – the pre-fix code resized only one
 /// side of the copy and panicked on the mismatch (observed on BBB-32
 /// the moment the slack landed).  Every copy site must take the min
 /// length and keep the slack intact.
@@ -1093,7 +1093,7 @@ fn theory_lazy_switch_flips_at_the_configured_count() {
     assert!(solver.theory_lazy_reasons_enabled());
 }
 
-// ===== cadical-faithful rephase / target-phase machinery ====================
+// ======== cadical-faithful rephase / target-phase machinery ========
 //
 // These tests pin the parts of the port that matter for search behaviour:
 // `no_conflict_until` tracking, `update_target_and_best` from *every*
@@ -1372,7 +1372,7 @@ fn sat_caching_toggles_and_records_prefix() {
 /// `c1 = x1 x2 x3 x4`, `c2 = x1 x2 x3 ¬x4`, `c3 = ¬x1 x2 x3 x4`:
 /// occurrences are `x1:2 ¬x1:1 x2:3 x3:3 x4:2 ¬x4:1`, so each clause's
 /// minimum-occurrence literal contributes its two polarity list sizes
-/// (3 + 3 + 3 = 9 pair checks) — the exact scan the round would perform.
+/// (3 + 3 + 3 = 9 pair checks) – the exact scan the round would perform.
 #[test]
 fn presearch_ssr_projection_hand_count() {
     let mut solver = Solver::with_config(SolverConfig {
@@ -1571,8 +1571,8 @@ fn rephase_incremental_push_pop_stays_consistent() {
 }
 
 /// Pins the `inprocess()` soundness defect CLOSED.  `config_presets`' module
-/// doc historically cited exactly this shape — pigeonhole(7,6) with
-/// `inprocessing_interval: 1` — as returning `Sat` on an UNSAT instance
+/// doc historically cited exactly this shape – pigeonhole(7,6) with
+/// `inprocessing_interval: 1` – as returning `Sat` on an UNSAT instance
 /// ("hanging unit at a propagation fixpoint" from missing watch rebuilds),
 /// and every preset shipped inprocessing off because of it.  The intervening
 /// clause-management fixes (retire reason fixups + binary-edge purge, DRAT
@@ -1609,7 +1609,7 @@ fn pigeonhole_inprocessing_interval_1_stays_unsat() {
 /// Pins the 2026-09-05 one-shot-latch fix CLOSED: the conflict-scheduled
 /// ELS slot used to set `did_equiv_subst` *before* calling
 /// `substitute_equivalent_literals`, whose first line is exactly that
-/// one-shot guard — so whenever `enable_equiv_substitution` was set the
+/// one-shot guard – so whenever `enable_equiv_substitution` was set the
 /// scheduled pass (and the gate-congruence augmentation it hosts)
 /// silently no-op'd (`58df118`..2026-09-05; the `0ed8543` "BVE + ELS
 /// default-on" measurement had therefore measured BVE alone).  With the
@@ -1653,15 +1653,15 @@ fn scheduled_els_executes_when_enabled() {
     assert_eq!(solver.solve(), SolverResult::Unsat);
     assert!(
         solver.stats().substitutions > 0,
-        "scheduled ELS folded no equivalences — the one-shot latch regression is back"
+        "scheduled ELS folded no equivalences – the one-shot latch regression is back"
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // BIG-authoritative BCP (2026-09): binaries live in the binary implication
 // graph only; the watch lists carry length >= 3 clauses and a phantom tick
 // count. See studies/2026-09-big-authoritative-bcp.md.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn big_authoritative_binaries_have_no_watch_entries() {
@@ -1766,7 +1766,7 @@ fn big_authoritative_phantom_tick_parity_counters() {
     // DIMACS x_k is Var::new(k-1); ¬x2 = Lit::neg(Var::new(1)).
     let neg1 = Lit::neg(Var::new(0));
     let neg2 = Lit::neg(Var::new(1));
-    // Old scheme: one watch entry per clause direction — under ¬x2 the
+    // Old scheme: one watch entry per clause direction – under ¬x2 the
     // clauses (1∨2) and (2∨4) each held an entry (2); under ¬x1 only (1∨2)
     // (the clause (¬1∨3) keys under x1 and ¬x3, not ¬x1).
     assert_eq!(solver.watches.phantom_len(neg2), 2);
@@ -1815,18 +1815,18 @@ fn els_presearch_folds_before_search() {
     assert_eq!(solver.solve(), SolverResult::Unsat);
     assert!(
         solver.stats().substitutions > 0,
-        "no equivalences folded before search — els_presearch wiring is broken"
+        "no equivalences folded before search – els_presearch wiring is broken"
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Quotient-chain factoring (2026-09-05, solver/factor.rs; full chain port
-// 2026-09-07) — soundness pins.
-// ---------------------------------------------------------------------------
+// 2026-09-07) – soundness pins.
+// ========  ========
 
 /// Build `(f ∨ q_i)` and `(q_i ∨ g)` for i = 1..k on fresh vars and run
 /// one factoring pass; returns (introduced, solver).  With the full chain
-/// port, one introduction covers the pair `(f, g)` — the chain links both
+/// port, one introduction covers the pair `(f, g)` – the chain links both
 /// pivots in a single 2-link quotient (the first slice's compounding
 /// rounds are subsumed).
 fn factoring_fixture(k: usize) -> (usize, Solver) {
@@ -1861,7 +1861,7 @@ fn factor_fires_on_shared_implication_binaries() {
     );
 }
 
-/// A 3-pivot chain: `(x_i ∨ q_j)` for i = 1..3, j = 1..3 — nine binaries
+/// A 3-pivot chain: `(x_i ∨ q_j)` for i = 1..3, j = 1..3 – nine binaries
 /// factored into 3 dividers + 3 quotients (reduction 9 − 6 = 3 at the
 /// 3-link cut, the best prefix).
 #[test]
@@ -1887,13 +1887,13 @@ fn factor_chain_three_pivots() {
 /// i = 1..3, plus per-literal helper binaries `(x_i ∨ u_i)`, `(x_i ∨ v_i)`,
 /// `(a ∨ w1..2)`, `(b ∨ w3..4)`, `(c ∨ w5..6)` with unique partners.  The
 /// helpers only satisfy kissat's candidate filter (round 0: every literal
-/// of a large clause needs `≥ 2` **binary** occurrences — the occurrence
+/// of a large clause needs `≥ 2` **binary** occurrences – the occurrence
 /// index is designed for binary-rich neighborhoods, not pure-large
 /// formulas); their unique partners make no binary chain reachable
 /// (deg ≤ 1 everywhere, or shared-tail pairs of exactly 2 → reduction 0).
 ///
 /// The chain pivots on the `x_i` (each has occ 2): `x_1 → x_2 → x_3` with
-/// n = 2 matched tails — dividers `(t ∨ x_i)` ×3, quotients
+/// n = 2 matched tails – dividers `(t ∨ x_i)` ×3, quotients
 /// `(¬t ∨ a ∨ b)`, `(¬t ∨ a ∨ c)`, all six originals deleted
 /// (reduction 2·3 − 2 − 3 = 1 at the 3-link cut).
 #[test]
@@ -1932,7 +1932,7 @@ fn factor_chain_large_clauses() {
     assert_eq!(s.solve(), SolverResult::Sat);
 
     // UNSAT pin: `¬a ∧ ¬b ∧ ¬c` falsifies every tail, forcing all `x_i`
-    // through the six originals; `¬x_1` then contradicts — the quotient
+    // through the six originals; `¬x_1` then contradicts – the quotient
     // chain must preserve that.
     let mut s2 = Solver::new();
     let xs = build(&mut s2);
@@ -2029,7 +2029,7 @@ fn factor_differential_random_binaries() {
 
 /// The witness-polarity regression (2026-09-05): with the witness read as
 /// `(¬g ∨ q)` instead of `(q ∨ g)`, the model `f = T, g = F, q_1 = F`
-/// satisfies every original and witness but has NO `x` extension — the
+/// satisfies every original and witness but has NO `x` extension – the
 /// rewrite flips satisfiable formulas to UNSAT (caught on the corpus A/B
 /// as 18 sat→unsat flips before anything landed).  This fixture builds
 /// that exact shape and requires the verdict to stay `Sat` with factoring
@@ -2054,9 +2054,9 @@ fn factor_witness_polarity_regression() {
     }
     // Make it satisfiable with q_1 free to be false only when f holds:
     // units pin `g = F`; `f` and the `q_i` are then forced by the
-    // witnesses only through `q_i` — the model `f=T, q_i=T` satisfies
+    // witnesses only through `q_i` – the model `f=T, q_i=T` satisfies
     // everything.  `q_1 = F, f = T` satisfies the QUOTIENTS but not the
-    // witnesses — the direction a wrong rewrite would flip.
+    // witnesses – the direction a wrong rewrite would flip.
     for s in [&mut base, &mut factored] {
         s.add_clause([Lit::neg(g)]);
     }
@@ -2064,18 +2064,18 @@ fn factor_witness_polarity_regression() {
     let introduced = factored.factor_presearch();
     // The witnesses `(¬g ∨ q_i)` legitimately match with candidate
     // `¬g` (the adjacency entry `¬q → ¬g` IS the clause `(q ∨ ¬g)`), so
-    // factoring may fire — but must preserve the verdict either way.
+    // factoring may fire – but must preserve the verdict either way.
     let got = factored.solve();
     assert_eq!(
         got,
         SolverResult::Sat,
-        "factoring flipped the verdict (introduced={introduced}) — witness polarity regressed"
+        "factoring flipped the verdict (introduced={introduced}) – witness polarity regressed"
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // XOR (parity) extraction + GF(2) solve (2026-09-05, solver/xor.rs).
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Strict detection: a full parity class is an XOR constraint; an
 /// implication pair (mixed parities) and duplicated clauses are not.
@@ -2088,10 +2088,10 @@ fn xor_detection_is_strict() {
     // XOR(a,b) = 0: (a ∨ b) ∧ (¬a ∨ ¬b).
     s.add_clause([Lit::pos(a), Lit::pos(b)]);
     s.add_clause([Lit::neg(a), Lit::neg(b)]);
-    // Mixed pair over (a,c): (a ∨ c) ∧ (¬a ∨ c) — implies c, NOT an XOR.
+    // Mixed pair over (a,c): (a ∨ c) ∧ (¬a ∨ c) – implies c, NOT an XOR.
     s.add_clause([Lit::pos(a), Lit::pos(c)]);
     s.add_clause([Lit::neg(a), Lit::pos(c)]);
-    // Duplicate clause over (b,c) — not a complete class.
+    // Duplicate clause over (b,c) – not a complete class.
     s.add_clause([Lit::pos(b), Lit::pos(c)]);
     s.add_clause([Lit::pos(b), Lit::pos(c)]);
     let cs = s.detect_xor_constraints();
@@ -2176,7 +2176,7 @@ fn xor_phase_seed_gives_model_descent() {
     let vs: Vec<_> = (0..8).map(|_| s.new_var()).collect();
     // Three complete parity classes: a 3-var odd-negation class (⊕=0),
     // a 2-var even-negation class (⊕=1), a 2-var odd-negation class
-    // (⊕=0) — the system pins x0..=x4.
+    // (⊕=0) – the system pins x0..=x4.
     let mut cls3 = |neg: &[usize]| {
         s.add_clause((0..3).map(|i| {
             if neg.contains(&i) {
@@ -2260,7 +2260,7 @@ fn xor_probe_forces_pinned_units() {
 
 /// Mid-search XOR propagation must fire where CNF-UP cannot: a parity
 /// chain `a ⊕ b ⊕ c = 1`, `c ⊕ d ⊕ e = 1` whose interior variable `c` is
-/// only determined once `a` and `b` are assigned — unit propagation over
+/// only determined once `a` and `b` are assigned – unit propagation over
 /// the CNF classes cannot derive it (parity needs counting).  With the
 /// integration on, deciding `a` and `b` cascades `c` through the matrix
 /// with a materialized reason.
@@ -2334,7 +2334,7 @@ fn xor_search_propagates_parity_midsearch() {
         crate::literal::LBool::True,
         "a=b=true forces c=true under odd parity (1 xor 1 xor c = c = 1)"
     );
-    // And the cascade continues into the second row: c=true ⇒ d⊕e=0 — not
+    // And the cascade continues into the second row: c=true ⇒ d⊕e=0 – not
     // single-var yet (two free), so stop here.
     s.backtrack(0);
     // Rollback restored the matrix: re-folding the same decisions must
@@ -2447,7 +2447,7 @@ fn xor_search_differential_random() {
 /// semantics (`solver/mod.rs`): a `Vec<Vec<(Lit, ClauseId)>>` shaped exactly
 /// like the historical per-literal lists. Every randomized op sequence below
 /// is applied to both, and the per-literal sequences must match after every
-/// step — this is the BIG-side twin of `round_occs_matches_vec_semantics`
+/// step – this is the BIG-side twin of `round_occs_matches_vec_semantics`
 /// (the eliminator CSR's guard) and pins the same contract the walk's
 /// by-id merge and propagation's scan order depend on.
 #[test]
@@ -2465,7 +2465,7 @@ fn binary_graph_matches_vec_semantics() {
         let mut model: Vec<Vec<(Lit, ClauseId)>> = vec![Vec::new(); vars * 2];
 
         // Phase A: full rebuild via the two-phase builder (count, layout,
-        // fill) — must reproduce the same per-literal order as pushing the
+        // fill) – must reproduce the same per-literal order as pushing the
         // same edges into the reference.
         let mut built: Vec<(Lit, Lit, ClauseId)> = Vec::new();
         for _ in 0..vars * 2 {
@@ -2492,7 +2492,7 @@ fn binary_graph_matches_vec_semantics() {
         // Phase B: interleaved incremental adds, order-preserving
         // deletions, and mid-content variable growth (the `new_var`
         // mid-search shape: new codes' spans must stay empty and start
-        // past every existing span — a 0-fill here would alias code 0's
+        // past every existing span – a 0-fill here would alias code 0's
         // span, misreading its edges as the new code's).
         // Clause ids are unique per (trigger, clause) in the real solver
         // (one edge per binary per trigger); the randomized model needs the
@@ -2611,7 +2611,7 @@ fn deferred_big_materializes_incremental_attach() {
 
 /// `BinaryImplicationGraph::compact_dead` must drop exactly the dead
 /// edges and keep every live one, preserving per-code order and lengths
-/// (the factor pass's batched analogue of kissat's eager watch removal —
+/// (the factor pass's batched analogue of kissat's eager watch removal –
 /// a corrupt compaction silently empties the implication graph and the
 /// BCP itself, see the factor-port debugging notes).
 #[test]
@@ -2620,7 +2620,7 @@ fn big_compact_dead_drops_exactly_dead_edges() {
     // Build via the two-phase API: codes 0..6 (3 vars).
     let mut g = BinaryImplicationGraph::new(3);
     g.build_reset(3);
-    // Edges: 0→1 (c1), 0→2 (c2), 1→2 (c3), 3→4 (c4), 5→4 (c5) — the
+    // Edges: 0→1 (c1), 0→2 (c2), 1→2 (c3), 3→4 (c4), 5→4 (c5) – the
     // two-phase API: count every edge, lay out, then fill.
     let c = |i: u32| crate::clause::ClauseId::new(i);
     g.build_count(Lit::from_code(0));
@@ -2674,7 +2674,7 @@ fn big_compact_dead_drops_exactly_dead_edges() {
 /// The env knobs are process-wide; tests arm the pass through the
 /// thread-local overrides (see `crate::test_knobs`). Formulas avoid
 /// unit-determined chains (UP alone fixes every variable, leaving
-/// nothing for the sweep to do — the pass correctly skips those) and
+/// nothing for the sweep to do – the pass correctly skips those) and
 /// disable lucky pre-solving (which would answer before the sweep).
 mod sweep_tests {
     use super::*;
@@ -2749,7 +2749,7 @@ mod sweep_tests {
 
     /// Backbone extraction: (a∨b∨c)(a∨b∨¬c)(a∨¬b∨c)(a∨¬b∨¬c) entails a
     /// without any unit propagating it at level 0. The sweep's backbone
-    /// test must derive the unit — or, when kitten's own env solve
+    /// test must derive the unit – or, when kitten's own env solve
     /// already learned it at level 0 (phase-dependent, deterministic),
     /// skip it as fixed (kissat `sweep_fixed_backbone`); either way the
     /// verdict and the model must be right.
@@ -2810,7 +2810,7 @@ mod sweep_tests {
     }
 
     /// The matched null (scrambled ranking) must produce the same
-    /// verdict and the same *machinery* (kitten solves fire) — the
+    /// verdict and the same *machinery* (kitten solves fire) – the
     /// null-fires check the handover mandates before trusting any
     /// treatment/null ratio.
     #[test]
@@ -2984,7 +2984,7 @@ fn big_overfilling_a_span_cannot_overwrite_its_neighbor() {
     assert_eq!(graph.iter().collect::<Vec<_>>(), before);
 }
 
-// ===========================================================================
+// ========  ========
 // Elimination-reintroduction soundness (2026-09-14/15, the Rodin
 // invalid-model root cause). CDCL(T) refinement loops add original clauses
 // between `solve_with_theory` rounds; destructive eliminations whose model
@@ -2993,7 +2993,7 @@ fn big_overfilling_a_span_cannot_overwrite_its_neighbor() {
 // (`void_elimination_promises`), and every grown elimination map must keep
 // new variables at identity. One regression per defect layer, so an outer
 // fix cannot hide an inner one.
-// ===========================================================================
+// ========  ========
 
 /// Checks a total model against a list of original clauses (DIMACS).
 fn assert_model_satisfies(solver: &Solver, clauses: &[&[i32]], ctx: &str) {
@@ -3016,7 +3016,7 @@ fn assert_model_satisfies(solver: &Solver, clauses: &[&[i32]], ctx: &str) {
     }
 }
 
-/// Layer 1 — the pure-literal pin. A pure-positive variable is eliminated
+/// Layer 1 – the pure-literal pin. A pure-positive variable is eliminated
 /// (clauses deleted, reconstruction pin recorded); the refinement loop then
 /// reintroduces the opposite polarity. The pin alone is no longer a sound
 /// reconstruction: pinning `x` true falsifies the reintroduced clause, while
@@ -3109,7 +3109,7 @@ fn pure_literal_pin_survives_own_polarity_mention() {
     assert_model_satisfies(&solver, &cs, "pin own-polarity");
 }
 
-/// Layer 3 — the ELS substitution map's grown tail. Variables created after
+/// Layer 3 – the ELS substitution map's grown tail. Variables created after
 /// the first substitution round must start at identity in
 /// `equiv_substitution`; the old uniform resize fill marked every one of
 /// them as folded into the fill's variable, fabricating equivalence
@@ -3136,7 +3136,7 @@ fn equiv_substitution_grown_tail_stays_identity() {
     // constantly): a *victim* constrained by ordinary clauses, and a fresh
     // equivalence pair so the second round actually composes (it early-outs
     // when nothing moves, and the compose step is where the map grows).
-    let x2 = solver.new_var(); // var 2 — the victim
+    let x2 = solver.new_var(); // var 2 – the victim
     let _x3 = solver.new_var(); // var 3
     let _x4 = solver.new_var(); // var 4
     let _x5 = solver.new_var(); // var 5
@@ -3161,7 +3161,7 @@ fn equiv_substitution_grown_tail_stays_identity() {
     );
 
     // The fabricated-obligation symptom: x2 is forced true by (x2 ∨ x5) ∧
-    // ¬x5, and the model must keep it — a false value is a fabricated
+    // ¬x5, and the model must keep it – a false value is a fabricated
     // equivalence obligation toggling x2 onto the fill variable's value.
     solver.add_clause_dimacs(&[-1]); // pin x0's class false for determinism
     let mut theory = NullTheory;

@@ -57,7 +57,7 @@ pub struct CompletedModel {
     /// Macro definitions: function -> its defining body, whose free
     /// variables are exactly the macro's bound variables (in declaration
     /// order).  A function completed as its macro is interpreted by
-    /// beta-reducing the body at the application's arguments — the
+    /// beta-reducing the body at the application's arguments – the
     /// definitional axiom's intended semantics (Z3's quasi-macro
     /// completion).  Without this, a `seteq(s1,s2) = (s1 = s2)` axiom
     /// needs a per-element reflexive pin and the seeding chases compound
@@ -77,40 +77,40 @@ pub struct CompletedModel {
     /// definition (quantifier term -> functions it defines).  Certifying
     /// that quantifier against the completed model also certifies its
     /// definition, so the satisfaction path can emit the defining
-    /// instances at universe tuples (`SatisfiedWithPins`) — pinning the
+    /// instances at universe tuples (`SatisfiedWithPins`) – pinning the
     /// function at compound elements the enumerative seeder's exhausted
     /// budget can no longer reach.
     pub macro_sources: FxHashMap<TermId, Vec<Spur>>,
     /// Computed constructor entries (see `constructor_tables`): the
-    /// entry-table search's output — interpretation choices at *unpinned*
+    /// entry-table search's output – interpretation choices at *unpinned*
     /// tuples, consulted after the ground entries and before the `else`.
     /// A separate table (not merged into `function_interps`) keeps the
     /// "ground pins never overridden" invariant structural and lets the
     /// diagnostics distinguish a harvested pin from a completion choice.
     pub computed_entries: FxHashMap<Spur, Vec<FunctionEntry>>,
     /// Defining quantifier -> constructors it defines (the quasi-macro
-    /// sources; the constructor twin of `macro_sources` — driving the
+    /// sources; the constructor twin of `macro_sources` – driving the
     /// `SatisfiedWithPins` defining instances for `union`-shaped axioms).
     pub constructor_sources: FxHashMap<TermId, Vec<Spur>>,
     /// The frozen table domains installed by this completion (sort ->
-    /// domain) — the structure's own domain for the tabled sorts; the
+    /// domain) – the structure's own domain for the tabled sorts; the
     /// nested check's Skolem restriction reads it (see
     /// `ModelChecker::aux_refute`).
     pub table_domains: FxHashMap<SortId, Vec<TermId>>,
     /// (defining quantifier, bound-var index) -> the semantic domain: the
     /// raw ground universe of that bound variable's sort with constructor
     /// compounds collapsed through the computed tables (one representative
-    /// per semantic point — `semantic_value_of`).  Only constructor
+    /// per semantic point – `semantic_value_of`).  Only constructor
     /// argument axes of defining axioms get one: raw non-compound elements
     /// are never merged anywhere (the merge-forcing instances must keep
     /// seeing every ground pair).
     pub semantic_domains: FxHashMap<(TermId, usize), Vec<TermId>>,
     /// The readback's assertion-mentioned compound/representative pairs
     /// (stamped by the integration after each completion; NOT structure
-    /// state — never merged, never version-relevant): the falsifier
+    /// state – never merged, never version-relevant): the falsifier
     /// mining's literal-binding channel.  A pair `(compound, value)`
     /// lets `value_to_term` map the value to the literal compound, so a
-    /// falsifier mined at the value binds the *compound* — the instance
+    /// falsifier mined at the value binds the *compound* – the instance
     /// at the literal tuple is the refutation side's ticket through
     /// asserted equalities (`a = difference(union(a b), b)`) that the
     /// semantic-domain collapse would otherwise erase from every
@@ -118,11 +118,11 @@ pub struct CompletedModel {
     pub compound_values: Vec<(TermId, TermId)>,
     /// Whether the assertion gate's materialization has armed the
     /// literal-binding channel (the goal's asserted-equality semantics
-    /// are load-bearing — a persistent violation fired the pin
+    /// are load-bearing – a persistent violation fired the pin
     /// adoption).  The odometer's compound points join only then: on
     /// goals whose equalities the row algebra honors alone, the
     /// compound-tuple instances are semantically redundant but
-    /// syntactically fresh keys — the productive-spin shape (measured
+    /// syntactically fresh keys – the productive-spin shape (measured
     /// on set9/set19: `sat` -> `unknown`).
     pub literal_channel_armed: bool,
     /// The structure version (see `ModelCompleter`): a *monotone* number
@@ -177,13 +177,13 @@ impl CompletedModel {
     /// The sort's universe restricted to **ground** elements: no `Var`
     /// nodes and no free variables anywhere inside.
     ///
-    /// The harvested universe contains bound-variable artifact terms —
+    /// The harvested universe contains bound-variable artifact terms –
     /// entry args and assignment values keyed by terms named like bound
     /// variables (the encoder internalizes quantified bodies with their
     /// binders as constants).  Such an "element" is not a domain element,
     /// and every consumer that reasons "X is in the universe ⇒ X is a
-    /// domain element" — the finite-sort Skolem restriction, falsifier
-    /// mining, defining-pin tuples — must go through this filter:
+    /// domain element" – the finite-sort Skolem restriction, falsifier
+    /// mining, defining-pin tuples – must go through this filter:
     /// instantiating with an artifact emits a lemma about a stray global
     /// constant (`?s1 := ?s2` junk bindings), and evaluating at one
     /// fabricates facts about a point no model contains.
@@ -234,7 +234,7 @@ impl CompletedModel {
     /// Normalize a domain element through the computed constructor tables
     /// (semantic value normalization): a constructor application
     /// `f(t1..tn)` with a computed entry at the (recursively normalized)
-    /// arguments reads the entry's result — the row-canonical element —
+    /// arguments reads the entry's result – the row-canonical element –
     /// so `union(b, union(b,b))` collapses to `b`'s representative and the
     /// enumerative engines stop enumerating compounds next to the points
     /// they already denote.  Non-constructor terms are returned
@@ -244,8 +244,8 @@ impl CompletedModel {
     ///
     /// Explicit-stack walk over the constructor spine (AGENTS.md rule):
     /// nesting depth is bounded by the term's argument depth, not the
-    /// native call stack.  Entry results are *not* re-entered — the
-    /// nesting lives in the arguments, which the stack walks — so the
+    /// native call stack.  Entry results are *not* re-entered – the
+    /// nesting lives in the arguments, which the stack walks – so the
     /// machine terminates on any DAG.
     pub fn semantic_value_of(&self, term: TermId, manager: &mut TermManager) -> TermId {
         if self.computed_entries.is_empty() {
@@ -366,7 +366,7 @@ impl CompletedModel {
     /// Precompute every sort's ground universe (see [`Self::ground_universe`]):
     /// the ground filter walks every element's free variables, and the
     /// consumers (`choose_else`, the mining sets, the Skolem restriction,
-    /// the defining pins) reach it per function, per quantifier, per round —
+    /// the defining pins) reach it per function, per quantifier, per round –
     /// far too hot to recompute per call.  Call once, after the last
     /// mutation of `universes` (the completion's step 9 does).
     pub fn freeze_ground_universes(
@@ -407,7 +407,7 @@ impl CompletedModel {
     /// name: such an entry is an encoding artifact (the encoder
     /// internalizes quantified bodies with their binders as constants,
     /// and the ground model's assignment rows for those applications are
-    /// harvested as *wildcard* entries — `[x, y] -> v` matches every
+    /// harvested as *wildcard* entries – `[x, y] -> v` matches every
     /// application and poisons the completion: it survived the falsifier
     /// substitution in the 2026-09-14 false-`sat` and fabricated chain
     /// conditions).  Call after `freeze_ground_universes` sets the names.
@@ -506,12 +506,12 @@ impl CompletedModel {
         // For each needed sort, build a universe from ground terms in the
         // model.  Every element must be a *ground term of its own sort*:
         // the assignment harvest can carry encoder binder constants (the
-        // internalized axiom bodies' `?s1`/`?s2` constants — free
+        // internalized axiom bodies' `?s1`/`?s2` constants – free
         // variables, not domain elements) and cross-sorted values (a
         // term of this sort whose value is of another).  Either leaking
         // into the universe poisons every consumer: the sort default
         // (every unpinned function's else), the candidate lists, the
-        // counterexample sampler — a symbolic `else` makes the completed
+        // counterexample sampler – a symbolic `else` makes the completed
         // model stop folding to constants entirely (the set-family
         // "no relevant falsifier" stall: `difference`'s else read as the
         // free variable `?s2`).
@@ -777,7 +777,7 @@ pub struct ModelCompleter {
     /// mints (each axiom-2 witness Skolem, every compound), so without a
     /// freeze the completed structure never stabilizes long enough to
     /// certify.  The frozen domain is the completed structure's own
-    /// domain — a legitimate interpretation choice under finite-model
+    /// domain – a legitimate interpretation choice under finite-model
     /// semantics, verified by the nested checks exactly like any other;
     /// later rounds recompute the *tables* over the frozen domain, so the
     /// structure only moves when the ground pins inside it move.
@@ -786,16 +786,16 @@ pub struct ModelCompleter {
     /// (see `constructor_tables::mint_fresh_row_element`).  A mint round
     /// is model *movement*: the completed structure grew, so the round
     /// must not count as barren for the escalation triggers (thawing the
-    /// axis domains while the structure grows explodes the row space —
+    /// axis domains while the structure grows explodes the row space –
     /// the set9 divergence: 17-wide rows, 32-element cap reached).
     pub(crate) last_round_fresh_mints: usize,
 
-    /// **The persistent structure** (z3's proto-model-as-search-object —
+    /// **The persistent structure** (z3's proto-model-as-search-object –
     /// see `docs/studies/2026-09-14-model-finder-constructor-tables.md`,
     /// the 2026-09-18 rewrite).  Once a goal's constructor tables exist,
     /// the completed model stops being rebuilt per round from
     /// `partial_model`: the structure survives across rounds and each
-    /// round only *applies* the ground solver's effects — fresh ground
+    /// round only *applies* the ground solver's effects – fresh ground
     /// pins at unclaimed points, and explicit repairs (mint, row pin
     /// from a falsifier, freeze growth).  The ground solver stays the
     /// lemma engine (its instances remain sound consequences); it is no
@@ -804,11 +804,11 @@ pub struct ModelCompleter {
     /// cannot make the falsifier-driven refinement monotone (the
     /// eighteenth follow-up's verdict: the ground rows churn every
     /// round, each churn mints new target rows, and the closure never
-    /// fixpoints — measured non-convergent at 10x the global conflict
+    /// fixpoints – measured non-convergent at 10x the global conflict
     /// budget).
     ///
     /// Soundness is unchanged in kind: the structure is an interpretation
-    /// candidate whose `sat` worthiness is *checked* — every tracked
+    /// candidate whose `sat` worthiness is *checked* – every tracked
     /// quantifier is certified against it by the nested checker, and the
     /// quantifier-free assertions are validated against it by the
     /// `Satisfied`-path assertion gate.  A structure that fails either is
@@ -816,7 +816,7 @@ pub struct ModelCompleter {
     structure: Option<CompletedModel>,
     /// The structure's minted points (the mint memory): elements minted by
     /// `mint_fresh_row_element`, across rounds.  The two pollution
-    /// channels key on it — minted points speak only through the
+    /// channels key on it – minted points speak only through the
     /// structure's own rows, never through harvested polarities
     /// (assignment keys at minted atoms, channel (a)) or their twin
     /// entries (harvest entries whose args coincide with the mint's own,
@@ -834,7 +834,7 @@ pub struct ModelCompleter {
     /// Commitment-sets already invalidated once (the idempotence gate for
     /// the duplicate-falsifier re-read channel): re-reading the same
     /// arrangement's atoms every round re-reads the ground's *free* flips
-    /// too — the structure never stabilizes, the checks grow past their
+    /// too – the structure never stabilizes, the checks grow past their
     /// budgets (`nested check undetermined`, measured on set19: `sat` ->
     /// `unknown` at 50+ rounds).  A distinct arrangement may re-read once;
     /// an arrangement whose re-read did not repair it never re-reads
@@ -879,7 +879,7 @@ impl ModelCompleter {
     }
 
     /// The macro solver's current function names (the functions a macro
-    /// definition owns) — the static exclusion set for the hint extraction
+    /// definition owns) – the static exclusion set for the hint extraction
     /// (see `constructor_tables::goal_has_tables`).
     pub(crate) fn macro_function_names(&self) -> FxHashSet<Spur> {
         self.macro_solver.definitions().keys().copied().collect()
@@ -887,22 +887,22 @@ impl ModelCompleter {
 
     /// Cardinality escalation (Z3's model finder's search shape): a
     /// frozen domain that demonstrably cannot carry a satisfying
-    /// structure — a witness axiom falsified for want of a distinguishing
+    /// structure – a witness axiom falsified for want of a distinguishing
     /// element (`not subset => exists x. member(x,s1) /\ not
-    /// member(x,s2)` with no such `x` in the domain) — is thawed so the
+    /// member(x,s2)` with no such `x` in the domain) – is thawed so the
     /// next completion re-freezes at the *current* (grown) universe.
     /// Bounded by `MAX_TABLE_THAWS` (the private constant below).
     ///
     /// The *targeted* cardinality escalation: thaw only the axis sorts
-    /// (the observer's row-point domains — `Elem` in the set family),
+    /// (the observer's row-point domains – `Elem` in the set family),
     /// keeping every constructor range sort frozen.  This is the shape
     /// the witness axioms need: the ground solver has already minted the
     /// distinguishing elements (`skf!0(s1,s2)` with its member pins, from
-    /// the axiom's own instances) — they are simply outside the frozen
+    /// the axiom's own instances) – they are simply outside the frozen
     /// axis domain, so the rows cannot express the distinction the axiom
     /// demands and its check falsifies forever.  Re-freezing the axes at
     /// the grown universe admits exactly those elements, the rows refine,
-    /// and the witness axiom's existential becomes satisfiable — while
+    /// and the witness axiom's existential becomes satisfiable – while
     /// the *range* domain (the sets themselves) staying frozen keeps the
     /// tuple space, the tables and every already-landed certification
     /// stable.  The full thaw (`thaw_table_domains`) re-freezes the range
@@ -1226,7 +1226,7 @@ impl ModelCompleter {
         let minted = self.minted_points.clone();
 
         // Assignments (monotonicity): the structure's whole-term lookup
-        // table is *grown*, never re-rolled — existing keys keep the
+        // table is *grown*, never re-rolled – existing keys keep the
         // structure's frozen word (first-wins, exactly like entries),
         // fresh keys are adopted from the harvest, and keys the repair
         // channel invalidated re-read.  Without the monotone merge the
@@ -1239,24 +1239,24 @@ impl ModelCompleter {
         // is closed by the self-consistency pass below instead of a
         // purge: an adopted polarity that disagrees with the structure's
         // own row at that point is overwritten by the row, so the purge
-        // would only discard *new forced facts at minted tuples* — the
+        // would only discard *new forced facts at minted tuples* – the
         // witness lemmas' pins the structure needs (measured on set16:
         // purging them deadlocks the witness axiom forever).
         //
         // **Element canonicity**: an element of a frozen domain is its
-        // own canonical value — an assignment `e -> v` with `e` an
+        // own canonical value – an assignment `e -> v` with `e` an
         // element and `v != e` is dropped, not adopted.  The ground
-        // solver merges elements freely (an EUF free choice — measured
+        // solver merges elements freely (an EUF free choice – measured
         // on set16: `u!0 -> skf!0(b,a)` while both sit in the frozen
         // Elem domain), and baking that merge into the structure's
         // assignment view makes the completed model evaluate one point
         // two ways: the chain constructions bake `(= u!0 (skf!0 b a))`
         // conditions the aux can set freely, while the entries stay
-        // keyed at both — and the aux restriction asserts `distinct`
+        // keyed at both – and the aux restriction asserts `distinct`
         // over elements the model's own assignments equate (an
         // incoherent interpretation).  Dropping the assignment costs at
-        // most completeness (a *forced* element equality — an asserted
-        // `= e1 e2` — leaves the structure's elements distinct and the
+        // most completeness (a *forced* element equality – an asserted
+        // `= e1 e2` – leaves the structure's elements distinct and the
         // assertion gate honestly refuses `sat`; a repair for that class
         // is future work); adopting it costs the structure's coherence.
         {
@@ -1384,19 +1384,19 @@ impl ModelCompleter {
                     entries = repaired;
                 }
                 // Adoption: harvest entries at points the structure does
-                // not hold.  Every entry is adopted — including ones whose
+                // not hold.  Every entry is adopted – including ones whose
                 // args touch minted points: the seventeenth follow-up's
                 // same-key-twin channel lives on the *rebuild*
                 // architecture (the harvest re-derives the whole table, so
                 // twins had to be purged before re-injecting remembered
                 // rows); here the structure's own rows are kept by the
                 // first-wins rule above, so a minted-touching entry is
-                // either the mint's own twin (already held — skipped) or a
-                // *new forced fact at a minted tuple* — exactly the
+                // either the mint's own twin (already held – skipped) or a
+                // *new forced fact at a minted tuple* – exactly the
                 // falsifier lemmas' witness pins the structure needs to
                 // ever certify the witness axioms over its minted
                 // elements (measured on set16: purging them deadlocks the
-                // witness axiom at (a, tbl!...) forever — the structure
+                // witness axiom at (a, tbl!...) forever – the structure
                 // never sees the witness the ground already chose).
                 if let Some(rows) = harvest_rows.get(&func) {
                     for (args, result, _touches) in rows {
@@ -1438,17 +1438,17 @@ impl ModelCompleter {
 
         // Self-consistency pass: the merged assignments must agree with
         // the structure's entries at every claimed point.  The harvest's
-        // assignments are the *ground solver's* current view — including
-        // its free choices — while a claimed entry is the structure's
+        // assignments are the *ground solver's* current view – including
+        // its free choices – while a claimed entry is the structure's
         // frozen word (first-wins); leaving both in place makes the
         // completed model evaluate one atom two ways (the concrete entry
         // lookup answers `false` while the whole-term assignment lookup
-        // and the chain normalizations answer `true` — measured on set16:
+        // and the chain normalizations answer `true` – measured on set16:
         // the difference axiom's walk consumed `(member u!0 a) = false`
         // and `(= true (member u!0 a)) = true` in ONE evaluation).  The
         // entry wins: the structure is the interpretation candidate the
         // certifier judges, and the repair channels (invalidation, the
-        // assertion gate) are what move a claimed point — never a silent
+        // assertion gate) are what move a claimed point – never a silent
         // free flip in the harvest.
         {
             let mut overrides: Vec<(TermId, TermId)> = Vec::new();
@@ -1465,9 +1465,9 @@ impl ModelCompleter {
             for (atom, value) in overrides {
                 structure.assignments.insert(atom, value);
             }
-            // (A composed-consistency pass — overriding assignment keys
+            // (A composed-consistency pass – overriding assignment keys
             // `g(u...)` whose args resolve to a claimed entry point of
-            // `g` — was built for the extensional residual: the instance
+            // `g` – was built for the extensional residual: the instance
             // lemmas' committed atoms at compound terms shadow the very
             // pins that make them falsifiable.  It regressed set16 to
             // `unknown` (the overrides touch asserted-equality-adjacent
@@ -1520,8 +1520,8 @@ impl ModelCompleter {
 
     /// The assertion gate's repair arm for table goals (see the gate in
     /// the integration): materialize the goal's asserted-equality merges
-    /// — pairs `(compound, representative)` with `compound != rep`, the
-    /// e-graph's consequences of asserted equalities — as structure
+    /// – pairs `(compound, representative)` with `compound != rep`, the
+    /// e-graph's consequences of asserted equalities – as structure
     /// pins.  The compound's application entry is installed raw (keyed
     /// at its own args); the next round's entry-table normalization
     /// re-keys it onto the structure's own points through the computed
@@ -1573,7 +1573,7 @@ impl ModelCompleter {
 
     /// The idempotent variant of the duplicate-falsifier repair ([see
     /// `Self::invalidated_sets`]): the arrangement's atom set hashes to a
-    /// key already invalidated once is skipped — the re-read already ran,
+    /// key already invalidated once is skipped – the re-read already ran,
     /// and repeating it every round only re-reads the ground's free flips
     /// (the structure churns forever).
     pub fn invalidate_arrangement_once(&mut self, atoms: &[TermId]) {
@@ -2583,7 +2583,7 @@ impl UninterpretedSortHandler {
             // "Nothing about" must consider *entry arguments* too: a
             // Bool-valued function over the sort (`subset (Set Set) Bool`)
             // contributes entries whose ARGS are exactly the sort's ground
-            // domain elements while its values are all Bool — an
+            // domain elements while its values are all Bool – an
             // assignments-only check then sees "no values" for a sort
             // whose two-element universe is staring at it through every
             // entry, seeds 8 synthetic `u!i` elements anyway, and the

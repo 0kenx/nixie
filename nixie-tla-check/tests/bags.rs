@@ -2,8 +2,8 @@
 //!
 //! A bag *is* a function whose range is the positive naturals (`Bags.tla`),
 //! and the operators lower to the module's own definitions (see
-//! `Lowerer::bag_desugar`), so what these tests pin is the whole pipeline —
-//! desugar, types, the function encoding — answering over bag state:
+//! `Lowerer::bag_desugar`), so what these tests pin is the whole pipeline –
+//! desugar, types, the function encoding – answering over bag state:
 //! ground construction in `Init`, symbolic reads through `CopiesIn` /
 //! `BagIn`, and the honest decline when an *update* needs a function
 //! definition over a symbolic domain, which the enumeration-based encoding
@@ -49,7 +49,7 @@ fn fails(vars: &str, init: &str, body: &str) {
     );
 }
 
-// ---- construction and the empty bag ----
+// ======== construction and the empty bag ========
 
 #[test]
 fn set_to_bag_holds_one_copy_per_element() {
@@ -67,14 +67,14 @@ fn set_to_bag_holds_one_copy_per_element() {
 
 #[test]
 fn empty_bag_has_no_members() {
-    // `EmptyBag` is `[e \in {} |-> 1]` — a function over an empty domain,
+    // `EmptyBag` is `[e \in {} |-> 1]` – a function over an empty domain,
     // the shape `collect_unsortable` must hand the inferred sort for (its
     // encoding used to decline with "no sort to give it").
     holds("b", "b = EmptyBag", r"\A e \in {1, 2} : ~BagIn(e, b)");
     holds("b", "b = EmptyBag", r"BagToSet(b) = {}");
 }
 
-// ---- symbolic reads through the state bag ----
+// ======== symbolic reads through the state bag ========
 
 #[test]
 fn bag_in_reads_the_state_bag() {
@@ -100,7 +100,7 @@ fn copies_in_adds_across_two_state_bags() {
     );
 }
 
-// ---- ground bag algebra in the invariant ----
+// ======== ground bag algebra in the invariant ========
 
 #[test]
 fn ground_union_and_subbag_order_encode() {
@@ -130,10 +130,10 @@ fn ground_difference_keeps_the_positive_part() {
     );
 }
 
-// ---- updates (issue #20, step 5) ----
+// ======== updates (issue #20, step 5) ========
 
 /// `token (-) SetToBag({e})` lowers to a function definition over
-/// `DOMAIN token` — a symbolic domain whose **key universe** the
+/// `DOMAIN token` – a symbolic domain whose **key universe** the
 /// function-frame analysis now derives (from the bag's assignment sites),
 /// so the update instantiates per candidate instead of declining. The
 /// honest-refusal wall this test used to pin is closed; what stays honest
@@ -167,8 +167,8 @@ Inv == BagCardinality(token) <= 2
 /// The update's arithmetic is live, not decorative: writing `0` at a key
 /// through a `[n \in DOMAIN token |-> …]` update must reach the invariant
 /// reading that key. (The `Bags` module's own `(-)` chain still meets the
-/// inference limitation its vocabulary has always had — recorded in
-/// `METHODOLOGY.md` — so this pins the *kernel* update shape the chain
+/// inference limitation its vocabulary has always had – recorded in
+/// `METHODOLOGY.md` – so this pins the *kernel* update shape the chain
 /// lowers to.)
 #[test]
 fn state_bag_update_breaks_an_invariant_when_it_should() {
@@ -194,7 +194,7 @@ Inv == token[1] >= 1
     }
 }
 
-// ---- issue #18: the EmptyBag binder and BagOfAll ----
+// ======== issue #18: the EmptyBag binder and BagOfAll ========
 
 /// The regression the issue names: two `EmptyBag`s at different element types
 /// in one definition. `EmptyBag` used to lower with one fixed binder
@@ -246,7 +246,7 @@ fn is_bag_and_bag_cardinality_desugar() {
     );
 }
 
-/// `BagUnion(S)` folds bag addition over a set of bags — order-independent
+/// `BagUnion(S)` folds bag addition over a set of bags – order-independent
 /// because bag addition is pointwise `+`, which the `ApaFoldSet` audit now
 /// recognizes structurally.
 /// `BagUnion` lowers (Apalache's own fold) and the fold's body passes the

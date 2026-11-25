@@ -26,13 +26,13 @@ solve, not the cap. Cap below every solve point before dividing.)
 
 worker_550 is the outlier: 10× per-conflict cost at equal search shape.
 Its counters explain why the clauses are giant: `avg_lbd = 543`,
-810 shrunken literals per conflict — and cadical on the same file *also*
+810 shrunken literals per conflict – and cadical on the same file *also*
 learns ~2 677-literal clauses (13.36 M learned literals / 4 989 clauses),
 so the giant-clause regime is legitimate, not a divergence.
 
 ## Root cause 1 (the big one): quadratic insertion sort of the bump set
 
-Stack-walk profile (no-LTO symbols build — the LTO blob attributes 82.8 %
+Stack-walk profile (no-LTO symbols build – the LTO blob attributes 82.8 %
 to `solve_with_theory`, a phantom; the real split): **75.8 % of all
 instructions in `analyze`**, dominated by an element-shifting loop.
 
@@ -41,16 +41,16 @@ instructions in `analyze`**, dominated by an element-shifting loop.
 `insertion_sort_by_key_stable`, justified by a comment promising "typically
 ≤ 40 analyzed variables". On worker-class conflicts the set is ~1 900
 entries; the sweep is O(n²) ≈ 3.6 M element moves per conflict ≈ millions of
-instructions — exactly the profile's hot loop.
+instructions – exactly the profile's hot loop.
 
 CaDiCaL sorts the same array with `MSORT` (`radix.hpp`): `std::sort` below
 `radixsortlim` (default 800), radix sort above. It never insertion-sorts a
 large bump set.
 
-**Fix**: hybrid — insertion sort up to `BUMP_SORT_INSERTION_LIMIT = 64`
+**Fix**: hybrid – insertion sort up to `BUMP_SORT_INSERTION_LIMIT = 64`
 (keeps the measured small-array win over driftsort), stable
 `sort_by_key` (O(n log n)) above. Both branches are stable, so the output
-order — and therefore the entire search trajectory — is bit-identical.
+order – and therefore the entire search trajectory – is bit-identical.
 
 ## Root cause 2: O(n·levels) LBD scan
 
@@ -58,7 +58,7 @@ order — and therefore the entire search trajectory — is bit-identical.
 `levels.contains(&level)` over a SmallVec: ~1 900 literals × 543 levels ≈
 1 M comparisons per conflict (5.9 % of instructions on worker). The solver
 already had a stamped O(n) form (`Solver::compute_lbd`, `lbd_mark`
-generation counter) — but the analyze path used the quadratic free function
+generation counter) – but the analyze path used the quadratic free function
 because it needs only `&Trail`.
 
 **Fix**: `compute_lbd_stamped` sharing the `lbd_mark` stream, growing
@@ -78,13 +78,13 @@ pre-existing `Solver::compute_lbd` now reset the table on wrap. The old
 The 1-UIP walk copied every reason clause into a heap-allocating
 `SmallVec<[Lit; 8]>` to work around a borrow conflict ("snapshot the
 literals so the shared marking helper may take `&mut self`"). One allocation
-plus a full literal copy per non-inline reason — linear, but ~30–60 allocs
+plus a full literal copy per non-inline reason – linear, but ~30–60 allocs
 and ~300 KB of copying per worker-class conflict.
 
 **Fix**: `AnalysisMark` split-borrow bundle (`seen`, `trail`, `learnt`, the
 three level tables) so the walk iterates the reason clause **in the arena**
 with the immutable borrow held across the loop. The LRAT level-0 unit ids
-are deferred to a post-loop flush (walk order preserved — nothing else
+are deferred to a post-loop flush (walk order preserved – nothing else
 appends to `unit_chain` inside the loop).
 
 ## Verification
@@ -108,17 +108,17 @@ appends to `unit_chain` inside the loop).
   | circuit (40 k) | 7.7 G | 7.7 G | 1.00× |
 
 - **Post-fix worker profile**: `analyze` 75.8 % → 1.9 %; the map is now
-  balanced (shrink 13 %, parse 10 %, elim 7 %, propagate 2.8 %) — i.e. the
+  balanced (shrink 13 %, parse 10 %, elim 7 %, propagate 2.8 %) – i.e. the
   analysis path is no longer the outlier; worker's remaining 2.6× vs
   cadical per-conflict lives in propagate/shrink over giant clauses plus
   the 10.3 M-clause DB.
 - **End-to-end (serial, quiet-ish)**: worker_550 63.8 s → **42.5 s**
-  (1.50×; the conflict-to-model count is unchanged — this instance is now
+  (1.50×; the conflict-to-model count is unchanged – this instance is now
   throughput-bounded, not sort-bounded). j3037/FmlaEquiv/summle53 within
   noise (they are search-bound, not analysis-bound).
 - **Gates**: workspace 10 415/10 415; clippy/fmt/doc clean; wisas xs_8_13
   canary `unsat` fast; z3 parity **169 correct / 1 inconclusive / 0 wrong**
-  (Z3 4.16.0, not the 4.15.4 baseline — recorded, not directly comparable
+  (Z3 4.16.0, not the 4.15.4 baseline – recorded, not directly comparable
   to older snapshots); differential **159 solved / 0 disagreements**
   (par2 2 325 under load; the wisas timeouts in the QF_UFLIA tail are the
   10 s cap under load-6+ conditions, canary itself solves in seconds).
@@ -128,7 +128,7 @@ appends to `unit_chain` inside the loop).
 None at the 40 s / 6-way cap beyond load noise: the losses are
 conflicts-to-model-bound (the emergent search gap the deep study already
 catalogued), and worker_550's 42.5 s sits at the cap boundary (flaps in
-place of a 63.8 s certain TO — a strict improvement of the worst loss).
+place of a 63.8 s certain TO – a strict improvement of the worst loss).
 The durable artifact is ~4–15 % off every SAT search (5 % on noL-class,
 11–15 % on summle-class, ~4× on worker-class) at identical trajectories,
 plus the SMT-side CDCL(T) core which executes the same analyze path.
@@ -144,10 +144,10 @@ plus the SMT-side CDCL(T) core which executes the same analyze path.
 ## Follow-up slice (same day): elimination-phase costs
 
 g2-slp-synthesis (60 % of variables eliminable) profiles at **44.7 %
-`eliminate_phase` + ~14 % malloc-family** — the remaining 2.1× per-conflict
+`eliminate_phase` + ~14 % malloc-family** – the remaining 2.1× per-conflict
 excess vs cadical on that file is entirely elimination cost. Two fixes:
 
-1. **`elim_resolve_clauses` arena iteration** — both antecedents were
+1. **`elim_resolve_clauses` arena iteration** – both antecedents were
    snapshot-copied into heap SmallVecs per resolution (the same borrow-
    checker-appeasement shape as `analyze`). Rewritten as a pure marking
    phase (immutable arena borrows only) + effect phase (deferred
@@ -165,12 +165,12 @@ excess vs cadical on that file is entirely elimination cost. Two fixes:
    every phase-restructure needs the counter-identity check against the
    pre-change binary *and* a verdict cross-check on any divergence.
 
-2. **`elim_flush_sort_occs` decorated sort** — the occurrence-list sort
+2. **`elim_flush_sort_occs` decorated sort** – the occurrence-list sort
    (twice per scheduled variable per round) keyed on an arena lookup
    *inside the comparator*: O(n log n) dependent-load pointer chases per
    list. Keys are now pre-extracted (`(len, cid)` pairs, stable sort).
    Equal-size tie groups now keep occurrence-list order instead of
-   driftsort's internal permutation — an arbitrary-tie reordering, so
+   driftsort's internal permutation – an arbitrary-tie reordering, so
    this slice's trajectories legitimately diverge; verified by verdicts
    instead of counter identity: 54-file corpus sweep vs cadical
    **0 mismatches**, **1 800 differential-CNF fuzz iterations 0
@@ -189,11 +189,11 @@ Cumulative instruction ratios vs the pre-study binary (fixed 40 k caps):
 | frb65 | 11.0 G | 10.3 G | 1.06× |
 
 (One 3.5 %-of-total residual in `eliminate` is counter increments inside
-the resolution loops — cadical pays the same per-resolution count. The
-elim schedule itself — which variables, how often — is heuristic
+the resolution loops – cadical pays the same per-resolution count. The
+elim schedule itself – which variables, how often – is heuristic
 territory and untouched here.)
 
-## Negative result (same day): cadical `rsort` radix port — neutral, not landed
+## Negative result (same day): cadical `rsort` radix port – neutral, not landed
 
 Ported cadical's `radix.hpp` `rsort` (stable byte-wise LSD radix with
 constant-byte pass skipping and sortedness detection) and wired it into the
@@ -201,18 +201,18 @@ two per-conflict decorated sorts (bump-order timestamps; the shrink
 `(level<<32|trail_index)` order via the order-reversing complement key),
 switching above cadical's own `radixsortlim` (800). Keys are unique per
 element at both call sites (VMTF stamps for bumped vars, trail indices for
-literals), so the output order — and the trajectory — is bit-identical;
+literals), so the output order – and the trajectory – is bit-identical;
 verified directly.
 
 En route the small-branch comparison briefly sorted the complement key
-with `Reverse`, silently *ascending* the original order — the
+with `Reverse`, silently *ascending* the original order – the
 trajectory-identity gate flagged it instantly (every file diverged; worker
 "got lucky" and solved). The corrected port measured:
 
 | file | comparison sort | radix | ratio |
 |---|---|---|---|
 | worker_550 (40 k) | 187.2 G | 184.6 G | 1.015× |
-| summle53/11, timetable, g2-slp, mdp-28 | — | — | ≈ 1.000× |
+| summle53/11, timetable, g2-slp, mdp-28 | – | – | ≈ 1.000× |
 
 Bump sets exceed 800 elements only on giant-clause conflicts, which the
 first slice already made rare. Well inside the ±5 % neutrality band →
@@ -224,13 +224,13 @@ the kind of off-by-one the identity gate exists to catch.
 ## Session close: standing table after the three landed slices
 
 54-file table (40 s, 6-way, load ~4–6): **nixie 43 / cadical 48, 0
-mismatches, 5 ox-only wins** — headline unchanged (the losses are
+mismatches, 5 ox-only wins** – headline unchanged (the losses are
 conflicts-to-model-bound, as the deep study catalogue says), but the
 composition moved exactly where a pure throughput win predicts:
 
 - **summle_X4053 and summle_X11112 now solve under the cap** (were certain
   losses; serial 36.8 s → 35.7 s and capped-run instructions −12/15 %).
-- **worker_550 solves serially in 42.5 s** (was 63.8 s) — sits at the
+- **worker_550 solves serially in 42.5 s** (was 63.8 s) – sits at the
   cap edge and flaps under parallel load.
 - `shuff`/`FmlaEqu`/`frb45` (34–39 s solves) flap with load margin, as
   they always have.
@@ -241,10 +241,10 @@ Per-conflict instruction state vs cadical after the three slices
 1.05 M vs 0.95 M, mdp/crypto at parity. The remaining excess concentrates
 in (a) the shrink/minimize walk over giant clauses (worker: 34 % of
 instructions), (b) elimination phases (g2-slp: 45 %), (c) propagate watch
-layout — each a further data-structure slice, none a missing mechanism.
+layout – each a further data-structure slice, none a missing mechanism.
 
 SMT-side paired check over the 270-instance differential sample:
-geomean 1.007 (neutral — the sample is easy-instance-dominated; the
+geomean 1.007 (neutral – the sample is easy-instance-dominated; the
 differential's 0-disagreement is the load-bearing gate there).
 
 ## Second follow-up slice: the elimination connect pass + a reverted take/put-back
@@ -266,11 +266,11 @@ instructions at fixed caps.
 
 **Reverted with prejudice**: replacing the `ps`/`ns` occurrence clones in
 `elim_resolvents_bounded` with take/put-back diverged circuit_48's
-trajectory. Root cause: the clones are **load-bearing** — the pair loop
+trajectory. Root cause: the clones are **load-bearing** – the pair loop
 mutates the live lists underneath them (`elim_shrink_clause`'s
 self-subsumption path `swap_remove`s the shrunken clause from the
 dropped literal's occurrence list; with the lists taken the removal
-no-ops and the restore reintroduces a stale entry — exactly the
+no-ops and the restore reintroduces a stale entry – exactly the
 false-SAT hazard class the swap_remove's comment documents). A warning
 comment now guards the clone site. Third time this session the
 trajectory-identity gate caught a wrong-direction change before landing;
@@ -307,7 +307,7 @@ g2-slp, circuit_48 – the fragile one – si2-b03m, Timetable, j3037) at a
 |---|---|---|---|
 | worker_550 (40 k) | 184.5 G | 172.2 G | **1.071×** |
 | noL (40 k) | 5.15 G | 5.05 G | 1.019× |
-| summle53 / timetable / g2-slp / circuit64 | — | — | ≈ 1.000× |
+| summle53 / timetable / g2-slp / circuit64 | – | – | ≈ 1.000× |
 
 Gates: workspace 10 415/10 415, clippy/fmt/doc clean, differential
 160/0 (par2 2 311), z3 parity 169/0/1, 1 200 differential-CNF fuzz
@@ -328,7 +328,7 @@ summle53 1.11×, timetable 1.10× (parity class), rbsat 1.43×, g2-slp
 2.07×, circuit 2.22×, worker 3.3× (was 10.1×). What remains in the
 outliers, per profile: worker's shrink block-walk + pivot trail scans
 over ~1 900-literal clauses; g2-slp/circuit's eliminate/subsume rounds
-(occurrence-list churn — the `ps`/`ns` clones are now documented as
+(occurrence-list churn – the `ps`/`ns` clones are now documented as
 load-bearing); and the propagate watch layout (the named next
 data-structure slice). None is a missing mechanism; all are constant
 factors on files whose *losses* are conflicts-to-model-bound.
@@ -339,7 +339,7 @@ frb45 flap at the cap edge with load as they always have).
 
 Landed this session: `1d9de4d` (analyze quadratics), `b382263` (theory
 walk arena iteration), `218355c` (elim resolution + decorated occs
-sort), `2b1495e` (elim connect pass), `d4820fb` (iterative minimizer) —
+sort), `2b1495e` (elim connect pass), `d4820fb` (iterative minimizer) –
 plus three documented negative results / near-misses (rsort radix
 neutral-reverted; missing-antecedent wrong-UNSAT caught pre-landing;
 take/put-back stale-entry hazard caught and reverted with a warning at
@@ -348,7 +348,7 @@ the clone site).
 ## Fourth follow-up slice: occurrence-flush scratch reuse + cadical gate order
 
 `elim_flush_sort_occs`'s decorated sort collected into a fresh
-`Vec<(usize, ClauseId)>` per call — twice per scheduled variable, and
+`Vec<(usize, ClauseId)>` per call – twice per scheduled variable, and
 6.2 % of circuit-class instructions. Now collected into a round-scoped
 scratch buffer on the `Eliminator` (trajectory-identical: pure
 allocation reuse, verified bit-identical on 5 instances).
@@ -437,7 +437,7 @@ Timetable, constraints_17, j3037) vs the previous binary.
 |---|---|---|---|
 | g2-slp (40 k) | 63.1 G | 48.2 G | **1.311×** |
 | timetable (40 k) | 102.3 G | 88.7 G | **1.154×** |
-| worker / circuits / mdp | — | — | ≈ 1.000× |
+| worker / circuits / mdp | – | – | ≈ 1.000× |
 
 Gates: workspace 10 415/10 415, clippy/fmt clean, differential 160/0
 (par2 2 310), z3 parity 169/0/1, 800 differential-CNF fuzz iterations
@@ -509,7 +509,7 @@ heuristic-ordered), with the workspace suite, clippy/fmt, the z3 parity
 suite and the SMT differential clean at every landing, and ~7 000
 differential-CNF fuzz iterations in total across the passes.
 
-## Negative result: unshadowing zero-broken walks — the shadowing is protective
+## Negative result: unshadowing zero-broken walks – the shadowing is protective
 
 The session-opening mystery (a walk reaching `minimum == 0` on
 `summle_X4053` at conflict 21 006 while the search ground on to 90 909)
@@ -522,9 +522,9 @@ stable mode. Trace evidence: walks completed at conflicts 21 006 and
 landed in focused mode (target inactive) and the solve closed 12 k
 conflicts later.
 
-The obvious fix — on a zero-broken walk, copy the assignment into the
+The obvious fix – on a zero-broken walk, copy the assignment into the
 target/best arrays too (phases-only, no verdict claimed; the descent
-still confirms) — was implemented and **rejected on multi-seed
+still confirms) – was implemented and **rejected on multi-seed
 evidence**:
 
 | file (conflicts to verdict, pre → post) | s0 | s1 | s2 | s3 |
@@ -535,20 +535,20 @@ evidence**:
 
 summle53 is consistently **worse** at every diverging seed: the
 zero-broken test is computed over the walk's slot set, which excludes
-clauses containing fixed literals — a completed walk is a satisfying
+clauses containing fixed literals – a completed walk is a satisfying
 assignment *of the slots only*, and following it as phases leads the
 descent into regions that cost more than the accidental shadowing did.
 One summle11 seed improved 1.9×; the aggregate is chaos-shaped with a
 negative lean. Reverted per the matched-null discipline; the shadowing
 stays, deliberately, with this study as the record.
 
-**Kept**: the `stats.walk.minimum` monotonicity fix — the update's
+**Kept**: the `stats.walk.minimum` monotonicity fix – the update's
 `== 0 ||` disjunct let every later walk's worse minimum overwrite an
 earlier completion, hiding walk0 events from the counter (this exact
 misdirection cost an hour of diagnosis mid-study; the search never
 reads the counter, so the fix is trajectory-neutral, verified).
 
-## Negative result 2: the walk-objective stripping port (cadical parity) — knob-gated, default off
+## Negative result 2: the walk-objective stripping port (cadical parity) – knob-gated, default off
 
 The shadowing study's root cause pointed one level deeper: cadical
 garbage-collects fixed variables before every walk with new fixed
@@ -556,14 +556,14 @@ vars, flushing them from all clauses, so its walk objective covers the
 **full residual clause set** and a zero-broken completion is a true
 residual model. Our port excluded fixed-literal clauses from the
 objective instead, so walk0 completions satisfied only the fixed-free
-subset — which is exactly why following them (the unshadowing
+subset – which is exactly why following them (the unshadowing
 experiment) hurt.
 
 The faithful port (strip fixed-false literals from participating
 clauses, keep permanently-satisfied ones out, single-flippable-literal
-clauses now visible to the objective) works as designed — summle53's
+clauses now visible to the objective) works as designed – summle53's
 canonical-seed solve improves 90 909 → 56 438 conflicts, walk0 now a
-genuine residual model — but the multi-seed verdict is chaos-shaped:
+genuine residual model – but the multi-seed verdict is chaos-shaped:
 
 | file (conflicts, pre → post) | s0 | s1 | s2 | s3 |
 |---|---|---|---|---|
@@ -573,12 +573,12 @@ genuine residual model — but the multi-seed verdict is chaos-shaped:
 | worker / rbsat / mdp | identical / TO→TO | | | |
 
 Timetable's canonical-seed 32.8 k solve (this session's consistent win)
-regresses to timeout — the fifth instance of the single-policy-port
+regresses to timeout – the fifth instance of the single-policy-port
 failure mode: porting one cadical policy onto this engine's surrounding
 phase/schedule machinery redistributes trajectories both ways.
 
 **Disposition**: landed behind `NIXIE_WALK_STRIP_FIXED=1`, **default
-off** (historical exclusion behavior, trajectory-identical at default —
+off** (historical exclusion behavior, trajectory-identical at default –
 verified bit-exact). The knob keeps the study reproducible and the port
 available if the surrounding machinery ever moves closer to cadical's.
 Gates: workspace 10 415/10 415, clippy/fmt clean, differential 160/0,
@@ -591,7 +591,7 @@ objective is not a full model; the faithful objective makes walk0 a
 model but the port is corpus-negative in our engine. The walk's
 `minimum` counter bug that hid all of this is fixed (monotone).
 
-## Negative result 3 (pass 5): shrink packed-key retention — neutral
+## Negative result 3 (pass 5): shrink packed-key retention – neutral
 
 Hypothesis: the shrink block walk's `trail.level()`/`trail.trail_index()`
 per-literal loads are scattered random accesses (the profile's shrink
@@ -604,11 +604,11 @@ giant-clause instances. Implemented (trajectory-identical, verified on
 | file | before | after | ratio |
 |---|---|---|---|
 | worker_550 | 168.2 G | 169.2 G | **0.994×** |
-| frb45 / noL | — | — | 0.996× |
-| summle ×2 / circuit64 / j3037 | — | — | 0.999–1.000× |
+| frb45 / noL | – | – | 0.996× |
+| summle ×2 / circuit64 / j3037 | – | – | 0.999–1.000× |
 
 Neutral-to-slightly-negative everywhere: the per-literal key push costs
-what the saved lookups saved — after the descending sort the boundary
+what the saved lookups saved – after the descending sort the boundary
 walk's `trail.level` accesses are already effectively sequential (same
 level-table region), so the scatter hypothesis was wrong. Reverted per
 the ±5 % band. The shrink cost on worker is intrinsic to the flag/mark
@@ -616,7 +616,7 @@ random access over ~1 900 literals per conflict; packing it away is the
 whole-engine per-variable layout change the standing-gap study already
 scoped, not a local fix.
 
-## Negative result 4 (pass 5): propagation clause prefetch — net-negative
+## Negative result 4 (pass 5): propagation clause prefetch – net-negative
 
 The last bounded idea for the propagate bucket (33–40 % on
 circuit/frb45): software-prefetch the clause of a watcher
@@ -636,7 +636,7 @@ reps, pinned core, identical instruction streams):
 
 Why it loses on exactly the target class: circuit's watch-list
 iterations are dominated by cheap blocker-hit paths (~10 instructions,
-often satisfied binaries that never load the clause at all) — the
+often satisfied binaries that never load the clause at all) – the
 prefetch's address computation (arena-base load + offset arithmetic)
 adds ~50 % to that path, and the prefetched lines are dead work for
 every blocker hit. Latency hiding only pays when the loop body stalls
@@ -644,7 +644,7 @@ on the miss it hides; this loop body mostly doesn't. Reverted.
 
 **Conclusion for the propagate slice**: the remaining 1.8× on
 circuit-class files is work-shape (long watch lists, many
-satisfied-binary visits), fixable only structurally — cadical-style
+satisfied-binary visits), fixable only structurally – cadical-style
 **tagged binary watchers** (binaries carried inline in the watcher,
 clause load skipped structurally) or the 8-byte watcher packing the
 earlier study scoped. Naive prefetch is measured out.
@@ -676,19 +676,19 @@ the target class), one target characterized to its exact shape, ten
 negative results total now standing guard over the boundary of what
 local optimization can reach in this engine.
 
-## Pass 6: the root-fixed sweep port (cadical collect.cpp) — mechanistic win, corpus trade, knob-gated
+## Pass 6: the root-fixed sweep port (cadical collect.cpp) – mechanistic win, corpus trade, knob-gated
 
 The deep study's first instrumented step (a patched `/tmp/cadical`
 printing `conflicts/level/size/glue/trail` per conflict, exactly the
 earlier studies' harness) **inverted the j3037 diagnosis**: our search
 shape is cadical's (level 20.3→15.0 vs 19.6→13.8, learnt sizes 32 vs
-36, **377 k vs 361 k conflicts — 4 % apart**). j3037 was never a
+36, **377 k vs 361 k conflicts – 4 % apart**). j3037 was never a
 search-quality gap. The wall gap (37 s vs 22.9 s) decomposes as
 instructions 1.36× (growing from 1.07× early) + CPI 1.13× – and the
 smoking gun is the **trail**: cadical's mean trail *shrinks* over the
 run (2901 → 2324 literals) while ours stays flat (3349 → 3190).
 Cadical garbage-collects root-fixed state (satisfied clauses retired,
-root-falsified literals flushed — `collect.cpp`, the piece the reduce
+root-falsified literals flushed – `collect.cpp`, the piece the reduce
 study deliberately left out); our DB only ever grows with it.
 
 Ported as `sweep_root_fixed_clauses` (after each scheduled reduce, when
@@ -712,12 +712,12 @@ sweep, 1 000 fuzz iterations, differential 160/0, parity 169/0/1):
 
 Same shape as `chrono_reuse`: cadical-faithful mechanism, strong
 mechanistic wins, broad regress. **Knob-gated
-(`NIXIE_ROOT_SWEEP=1`), default off** — the default path is
+(`NIXIE_ROOT_SWEEP=1`), default off** – the default path is
 trajectory-identical to pre-change (verified bit-exact on j3037).
 
 ### The deep study's first hard result
 
-j3037, crypto1 and FmlaEqu — the "conflicts-bound" losses — are now
+j3037, crypto1 and FmlaEqu – the "conflicts-bound" losses – are now
 known to be **throughput-shaped after all** for j3037 (equal conflicts,
 growing per-conflict cost from unswept root state), and the sweep
 closes most of its gap when enabled. The conflicts-to-model framing
@@ -757,14 +757,14 @@ damages (its binary-graph edge purge reorders edge lists).
 
 **Then the default flip was caught by the suite answering a wrong
 `sat`**: `cegar_mul_low_word_identity_refuted` (BV-CEGAR, UNSAT input)
-answered `sat` with retire-on — surviving the corpus verdict sweep,
+answered `sat` with retire-on – surviving the corpus verdict sweep,
 1 000 fuzz iterations and 3 gates added along the way (reason-pointer
 guard à la reduce's `is_reason`; assertion-scope/proof/assumption
-gates; `real_theory_attached` gate — the BV path is near-pure-SAT so
+gates; `real_theory_attached` gate – the BV path is near-pure-SAT so
 the last one doesn't even engage). Root cause still open; reproducer:
 the SMT2 above, `precompile/48ae97a` + retire-on default. **Disposition:
 everything back behind `NIXIE_ROOT_SWEEP=1`, default off, hardened**
-(the three gates and the reason guard stay — they are correct
+(the three gates and the reason guard stay – they are correct
 regardless and make the knobbed sweep safer than the first landing).
 The knobbed SAT-only configuration fuzzed clean (1 000 iterations) and
 delivers: j3037 29–33 s, g2-slp 22 s, crypto1 54 s, FmlaEqu 35–41 s,
@@ -772,16 +772,16 @@ Timetable 8.2 s (with NOSTRIP).
 
 **Open item (next session, highest value)**: find the retire-path
 wrong-`sat` mechanism in the BV-CEGAR interaction. The winning table
-above sits behind one soundness answer — understand it, and five
+above sits behind one soundness answer – understand it, and five
 standing losses close at once.
 
 ## Pass 8: the wrong-`sat` root cause traced to its final fork
 
 The question "apart from the guards, what is the root cause?" reopened
-the closed conclusion — correctly. Re-deriving the evidence showed the
+the closed conclusion – correctly. Re-deriving the evidence showed the
 guards never fixed anything: **every configuration with strip OFF
 (retire-only) answers the wrong `sat`, every configuration with strip
-ON answers `unsat`** — the earlier "guards fixed it" reading was the
+ON answers `unsat`** – the earlier "guards fixed it" reading was the
 strip-on configurations, and at least one intermediate observation was
 also a stale-shared-target artifact. The guards are defense in depth,
 not the cure. Live reproducer (all instrumentation in this section was
@@ -791,34 +791,34 @@ on `cegar_mul_low_word_identity_refuted`'s input.
 ### The causal chain, layer by layer (each instrumented and verified)
 
 1. **The CEGAR loop behaves correctly.** Round 4's `bv.check()` returns
-   Sat with `spurious=0` — every abstracted mul carries its exact
+   Sat with `spurious=0` – every abstracted mul carries its exact
    product value in the model. That is a *relaxation-consistent* model,
    not a formula model, and the dispatch's whole-assertion validation
    correctly refutes it (`validation refuted=true`) and correctly
    refuses to answer (`return None`).
 2. **The general path produces the wrong `Sat`.** `check_core`'s CDCL(T)
    loop returns `raw_result=Sat`, `certified=Sat`; neither of the two
-   instrumented loop arms nor any early exit fired — the verdict comes
+   instrumented loop arms nor any early exit fired – the verdict comes
    from `SatResult::Sat` → `!has_quantifiers` → `build_model` → `Sat`.
 3. **Two tempting theories falsified by measurement.** The fallback
-   does *not* inherit an abstracted encoding (`terminal=2 of 2` — the
+   does *not* inherit an abstracted encoding (`terminal=2 of 2` – the
    exact circuits are all in place), and the theory layer is *not*
-   starved (`bv_terms=2, var_to_constraint=1` — the final check's
+   starved (`bv_terms=2, var_to_constraint=1` – the final check's
    empty-`bv_terms` short-circuit at theory_manager.rs:3926 does not
    apply).
 4. **What remains is the embedded SAT solver itself.** `self.bv` owns
    its own `nixie_sat::Solver` (the sweep fired *there*, during the
-   CEGAR rounds — `self.sat`, the main solver, is a different
+   CEGAR rounds – `self.sat`, the main solver, is a different
    instance). The general path's BV final check re-solves that embedded
    instance and accepts its answer. The embedded instance carries the
-   full exact encoding yet reports satisfiable — **either** (a) the
+   full exact encoding yet reports satisfiable – **either** (a) the
    retire-only sweep is unsound *at the pure-SAT level* on this
    unit-dense instance (thousands of constant bit-pins make almost
-   every clause "satisfied at level 0" — the sweep retires nearly the
+   every clause "satisfied at level 0" – the sweep retires nearly the
    whole formula, and any flaw in the permanence argument shows up
    immediately), **or** (b) the embedded solver's *incremental* state
-   is poisoned (the BV layer drives `push`/`pop` on it —
-   `bv/solver.rs`'s `ContextMark` machinery — and a pop rewinds
+   is poisoned (the BV layer drives `push`/`pop` on it –
+   `bv/solver.rs`'s `ContextMark` machinery – and a pop rewinds
    level-0 trail literals that retirements were justified by; the
    CEGAR rounds also re-`check()` the same instance repeatedly).
 
@@ -828,8 +828,8 @@ Dump the embedded instance at the failing check
 (`Solver::export_problem_dimacs` exists) and solve it standalone:
 from-scratch + no sweep, from-scratch + retire-only, incremental
 replay. If from-scratch + retire-only answers `sat` on a satisfiable
-export — the export includes the level-0 pins, so cross-check with
-cadical — the SAT-level retirement argument itself has a hole on
+export – the export includes the level-0 pins, so cross-check with
+cadical – the SAT-level retirement argument itself has a hole on
 unit-dense inputs. If only the incremental replay lies, the hole is
 the BV layer's `push`/`pop` × sweep interaction, and the correct fix
 is restoring sweep-retired clauses on pop (the same bookkeeping
@@ -854,20 +854,20 @@ retire log 76 entries, 2 broken, 10 true-but-not-level0
 **Root cause (complete)**: the BV layer's `check_body` parks arbitrary
 *model decisions* at decision level 0 between probes (its own doc: "some
 assignments (even a branch `Decision`) land at decision level 0"), and on
-a first-`Unsat` verdict rewinds the trail with `restore_to_trail_size` —
+a first-`Unsat` verdict rewinds the trail with `restore_to_trail_size` –
 un-assigning level-0 literals. The sweep (firing *inside* those solves)
 treated every level-0-true literal as a permanent cadical-style fact and
 retired clauses justified by them; the rewind un-justified the
 retirements; the re-solve answered `Sat` on the weakened formula. The
 `assert_const` pins install bare `Decision` reasons (no backing clause),
-and `forget_learned_since` drops learned units on the retry path — three
+and `forget_learned_since` drops learned units on the retry path – three
 distinct non-permanent level-0 sources. No scope gate can see
 `restore_to_trail_size`; that is why the guards never fixed it (and the
 strip-on/strip-off difference was pure trajectory luck, as pass 8
 concluded).
 
 **The fix (permanence guard)**: a clause may be retired/stripped only
-behind a literal whose reason is a **live original clause** — a fact
+behind a literal whose reason is a **live original clause** – a fact
 re-derivable from the permanent clause set, so any rewind followed by
 re-propagation re-establishes the justification. Bare decisions (model
 leftovers, constant pins without backing clauses) and learned units
@@ -878,11 +878,11 @@ paths), cost one reason-clause lookup per candidate.
 
 **A second hole surfaced and quarantined**: the STRIP half (with the
 guard) answered a wrong `unsat` on `circuit_48in64out_700g/800g` and
-`si2-b03m` — SAT files, seed-stable `sat` at default (verified across
+`si2-b03m` – SAT files, seed-stable `sat` at default (verified across
 4 seeds), deterministically `unsat` with the strip on. A different
 mechanism from the level-0 permanence bug (this one over-strengthens);
 root cause open. **The strip now lives behind its own
-`NIXIE_ROOT_SWEEP_STRIP=1` (default off)** — its only measured win
+`NIXIE_ROOT_SWEEP_STRIP=1` (default off)** – its only measured win
 (g2-slp 36 s → 22 s) stays reachable; the wrong-unsat reproducers are
 recorded.
 
@@ -908,20 +908,20 @@ Chasing the strip's wrong `unsat` (`circuit_48in64out_700g/800g`,
    (via other falsified literals), dangling/reshaping the reason
    mid-analysis. Hoisted to clause level (skip the clause entirely,
    reduce's `is_reason` semantics). It did **not** fix the wrong
-   unsat — the mechanism is elsewhere — but it is correct regardless.
+   unsat – the mechanism is elsewhere – but it is correct regardless.
 
 2. **The strip products were audited against the pristine input** (log
    every strip pre/post, verify each strengthened clause with cadical):
    18 of 3 008 post-strip clauses on `si2-b03m` are **not entailed**
    (first bad: strip #710 removed literals 410 and 411 from an entailed
    clause; `input ⊨ ¬410` holds, **`input ⊨ ¬411` does not**). All 18
-   cluster around the `-412` gate region — a poison cascade through the
+   cluster around the `-412` gate region – a poison cascade through the
    shared literal.
 
 3. **The poison is upstream of the strip**: the falsification of 411
    was a level-0 trail fact whose reason passed the permanence guard
    (live original clause), yet is not entailed by the input. So some
-   level-0 prefix fact on this trajectory is unentailed — the strip
+   level-0 prefix fact on this trajectory is unentailed – the strip
    merely *harvests* it into a permanent clause. The default (retire
    only) answers `sat` on this file seed-stably, so the unentailed
    fact arises only on the strip trajectory; whether the producer is a
@@ -929,7 +929,7 @@ Chasing the strip's wrong `unsat` (`circuit_48in64out_700g/800g`,
    earlier in-place rewrite is the open question.
 
 The strip stays behind `NIXIE_ROOT_SWEEP_STRIP=1` (default off) with
-these reproducers and the audit method recorded — the next session can
+these reproducers and the audit method recorded – the next session can
 binary-search the first unentailed level-0 assignment by logging every
 level-0 propagation's (var, reason) and running the same cadical
 entailment check per fact.
@@ -948,32 +948,32 @@ var 411: clause 10180 [412, 413, -411, 410, 1646] (original, live)
 ```
 
 and the entailment checks: `input ⊨ ¬410` ✓, `input ⊨ ¬413` ✓,
-`input ⊨ ¬1646` ✓, **`input ⊨ ¬412` ✗** — the falsification 411's
+`input ⊨ ¬1646` ✓, **`input ⊨ ¬412` ✗** – the falsification 411's
 propagation rests on is *not entailed*, and 412's trail reason reads
 `Decision`. Two mechanisms combined:
 
 1. **The permanence guard was one level deep.** It checked the
    stripped literal's *immediate* reason (clause 10180: original,
-   live ✓) but not the chain under it — 10180 propagated ¬411 only
+   live ✓) but not the chain under it – 10180 propagated ¬411 only
    because 412/410/1646 were already falsified, and those
    falsifications were not clause-derived.
 2. **Where the phantom `Decision` came from**: no level-0
-   `assign_decision` for 412 was ever logged at assign time — the
+   `assign_decision` for 412 was ever logged at assign time – the
    reason was *re-pointed* to `Decision` afterwards by
    `retire_clause`'s deleted-reason hygiene (`Trail::set_reason`),
    which fires exactly when a reason clause is retired. The sweep's
    own retire (default-on) retires reason clauses of still-assigned
    level-0 literals, their facts surviving on the trail with
-   reason=Decision — unverifiable, and in this case not entailed.
+   reason=Decision – unverifiable, and in this case not entailed.
 
 **Fix (full-chain derivability)**: before the scan, one pass over the
-level-0 trail prefix in trail order computes `derived[i]` — a level-0
+level-0 trail prefix in trail order computes `derived[i]` – a level-0
 fact counts as derived iff its reason is a live original clause AND
 every falsified literal of that clause is an *earlier derived* fact
 (propagation appends in causal order, so one pass suffices). Both the
 retire justifier and every stripped falsified literal must be
 `derived`. With the full-chain guard all three strip reproducers
-answer `sat`, the cegar repro stays `unsat`, and the fuzz is clean —
+answer `sat`, the cegar repro stays `unsat`, and the fuzz is clean –
 but **g2-slp's strip win (22 s) vanishes** (36.4 s ≈ retire-only):
 that win was harvesting unverifiable chain facts. Recorded honestly:
 the strip's only measured advantage was an artifact of the unsound

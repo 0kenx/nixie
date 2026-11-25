@@ -5,8 +5,8 @@ The module doc at `nixie-sat/src/config_presets.rs` says the presets'
 landed cadical amortizers (trie-shared vivification, budgeted transred
 rounds, on-the-fly vivify subsumption) and should be revisited.  The
 2026-08-25 recheck (`docs/studies/2026-08-inprocessing-soundness-recheck.md`)
-re-screened with the amortizers present — solved 30 vs 32 at a 30 s cap on
-an 80-file sample, single seed, solved-count only — and kept presets off.
+re-screened with the amortizers present – solved 30 vs 32 at a 30 s cap on
+an 80-file sample, single seed, solved-count only – and kept presets off.
 This study runs the disciplined A/B on the 54-file standing corpus
 (`precompile/corpus-sc24f/`, preserved from `/tmp/sc24f`) with
 deterministic counters, per `docs/BENCHMARKING.md` §2/§5/§9/§10.
@@ -30,7 +30,7 @@ kissat reference shape (read before designing): its search loop interleaves
 `probe` rounds (congruence + substitute + backbone + vivify + sweep +
 transred + factor, limit growing `probeint × nlog(n)`) and `eliminate`
 rounds (dense-mode escalating-bound BVE with forward subsumption, limit
-growing `eliminateint × nlog²(n)`) — `src/search.c`, `src/probe.c`,
+growing `eliminateint × nlog²(n)`) – `src/search.c`, `src/probe.c`,
 `src/eliminate.c`.  Our bundle is cadical-shaped (elim + subsume + vivify +
 transred + probe), not kissat-shaped; this study tests the bundle we have.
 
@@ -51,7 +51,7 @@ transred + probe), not kissat-shaped; this study tests the bundle we have.
 
 ## Primary / secondary metrics
 
-- **Primary: conflicts-to-verdict** (deterministic, complete — the search
+- **Primary: conflicts-to-verdict** (deterministic, complete – the search
   path is the object under test; the inprocessing rounds change it by
   design).  Geomean ratio `on/off` over files both arms decide; SAT and
   UNSAT reported separately; per-family breakdown.
@@ -66,7 +66,7 @@ transred + probe), not kissat-shaped; this study tests the bundle we have.
 - Tails at ≥10 seeds (1..10) both arms: `6s167-opt` (the anchor: 6.5×
   conflicts vs kissat, 1.3× seed spread), `FmlaEquivChain` (3.5× at
   median), `mrpp_4x4` (the throughput outlier, control).
-  frb65/shuffling excluded — measured seed-luck (addendum 2).
+  frb65/shuffling excluded – measured seed-luck (addendum 2).
 
 ## Go / no-go (pre-registered)
 
@@ -75,10 +75,10 @@ transred + probe), not kissat-shaped; this study tests the bundle we have.
   solved-at-60s not lower, AND the gain robust on the ≥10-seed tails
   (median ratio ≤ 0.95 per tail).  Then a matched null is built and run
   before any landing (§2): identical rounds/budgets/code path, candidate
-  selection scrambled — reported as treatment/null.
-- **Neutral:** geomean in (0.95, 1.05] — report as neutral, below the
+  selection scrambled – reported as treatment/null.
+- **Neutral:** geomean in (0.95, 1.05] – report as neutral, below the
   pre-registered bar; no landing.
-- **No-go:** geomean > 1.05 or solved-at-cap worse — negative result,
+- **No-go:** geomean > 1.05 or solved-at-cap worse – negative result,
   documented here with per-family data.
 
 Falsification criteria: apparent gains that (a) live only on high-seed-
@@ -88,7 +88,7 @@ losses, are trajectory reshuffle, not effect (§6/§11).
 ## 6s167-opt residue (KR3.2 rider)
 
 The 2026-08-21 elimination-port study measured instructions-to-verdict on
-6s167-opt dropping 46.9G → 14.0G with the inprocessing bundle on — the one
+6s167-opt dropping 46.9G → 14.0G with the inprocessing bundle on – the one
 clear per-file winner.  This A/B measures whether that is a
 conflicts-to-verdict effect (search path closing toward kissat's 19 k) or
 merely cheaper per-conflict work.  Either way the residue gets a named
@@ -101,7 +101,7 @@ mechanism with the measurement that proves it.
 ### Corpus re-baseline (KR1.2)
 
 `precompile/dcfc089/stats_solve` (env-unset) vs the 2026-09-01 standing
-binary `7e644a7`: **54/54 files verdict- AND conflicts-bit-identical** —
+binary `7e644a7`: **54/54 files verdict- AND conflicts-bit-identical** –
 the SAT core has not drifted since the standing study.  Fresh 3-arm
 standing pass (54 files × {nixie, cadical 3.0.1, kissat 4.0.4}, 60 s cap,
 pinned cores 3/4/5):
@@ -109,11 +109,11 @@ pinned cores 3/4/5):
 | arm | solved / 54 | conflicts geomean vs kissat (34 both-solved) |
 |---|---|---|
 | nixie `off` | 50 | **1.332×** (reproduces the 1.33× factor) |
-| cadical 3.0.1 | 51 | — |
+| cadical 3.0.1 | 51 | – |
 | kissat 4.0.4 | 50 | 1.00× |
 
 0 verdict mismatches across all arms on all 54 files.  (Wall geomeans
-this pass — nixie/cadical 0.80×, nixie/kissat 1.00× over 47 three-solved —
+this pass – nixie/cadical 0.80×, nixie/kissat 1.00× over 47 three-solved –
 are NOT comparable to the 2026-09-01 numbers (1.27×/1.50×): the machine
 carried unrelated load during this pass; wall is sanity-only, and the
 conflict counters are load-invariant.)
@@ -122,10 +122,10 @@ conflict counters are load-invariant.)
 
 Primary metric, conflicts-to-verdict, `on/off` paired geomean over the 28
 both-decisive files: **1.44×** (sat 1.44 / unsat 1.44).  Solved-at-60 s:
-**off 50 → on 42** — the pre-registered no-go condition (solved-at-cap
+**off 50 → on 42** – the pre-registered no-go condition (solved-at-cap
 worse) fires regardless of the geomean.  Propagations-to-verdict on the
 same pairs: 0.80× (the rounds shorten the search path more than their own
-propagation work costs — but only on the files they finish).
+propagation work costs – but only on the files they finish).
 
 The effect is strongly bimodal, and the two halves are both real:
 
@@ -136,7 +136,7 @@ The effect is strongly bimodal, and the two halves are both real:
 * **9 files sat→TO** (Timetable, noL-11-14, af-synthesis, g2-slp,
   crypto1, x9-08075, mp1-Nb7T42, 64_25, rbsat) and 1 TO→sat
   (circuit_64i).  mp1-Nb7T42 and rbsat are files *only* nixie-`off`
-  solves (kissat TOs on both) — the bundle destroys two unique wins.
+  solves (kissat TOs on both) – the bundle destroys two unique wins.
 
 **Verdict: presets stay off, now on the strength of a deterministic-
 counter corpus A/B rather than a 30 s solved-count screen.**  No matched
@@ -153,7 +153,7 @@ play the noise-band role for the negative claim.
 | FmlaEquivChain | 9/10 (off TO once) | **0.345×** | 0.20 / 0.36 / 0.66 |
 | 6s167-opt | 10/10 | **0.560×** | 0.44 / 0.56 / 0.67 |
 
-`on` wins every one of the 29 paired decisive seeds — the tail gains are
+`on` wins every one of the 29 paired decisive seeds – the tail gains are
 not seed luck (contrast the frb65/shuffling default-seed bias, addendum 2
 of the standing study).
 
@@ -168,7 +168,7 @@ the pre-search one-shot), binary `precompile/2bfd8b0/stats_solve`
    ELS+BVE) is a no-op**: `INPROCESS=1 INPROC_INTERVAL=0 NO_PROBE=1` is
    *bit-identical* to `off` on 6s167-opt, mrpp_4x4 and FmlaEquivChain at
    every tested seed (e.g. 6s167: 118 191 / 124 517 / 121 437 / 149 261 /
-   115 371 — the `off` numbers exactly).  After the preset's pre-search
+   115 371 – the `off` numbers exactly).  After the preset's pre-search
    ELS+BVE the extra one-shot round finds nothing.  **Do not re-test.**
 2. **The periodic mid-search inprocess rounds carry the wins**: rounds-
    only (`NO_PROBE=1`): mrpp 249 k → 106 k (0.43×), FEC 2 148 k →
@@ -176,10 +176,10 @@ the pre-search one-shot), binary `precompile/2bfd8b0/stats_solve`
 3. **Scheduled probing (`inprobing`) is mixed and can be catastrophic**:
    probing-only on mrpp seed 0 = 881 692 conflicts (3.5× WORSE than off);
    on 6s167 it is an independent small win (probing-only 0.88×; rounds
-   0.73×; both 0.69× — approximately multiplicative).
+   0.73×; both 0.69× – approximately multiplicative).
 4. **The same mid-search rounds cause the losses**: rounds-only = TO on
    rbsat and af-synthesis (probing-only solves both, 690 k / 209 k);
-   64_25 TOs under the full bundle *at the identical 4 500 conflicts* —
+   64_25 TOs under the full bundle *at the identical 4 500 conflicts* –
    the cap is burned inside the rounds' own propagation work, not by a
    longer search path.
 
@@ -193,17 +193,17 @@ With the full bundle on, 6s167-opt still needs 82 k conflicts vs kissat's
 | conflicts | 118 191 | 82 063 | 19 164 |
 | propagations/decision | 35 | 54 | 93 |
 | decisions/conflict | 3.5 | 3.3 | 4.3 |
-| avg LBD | 12.32 | 10.46 | — |
+| avg LBD | 12.32 | 10.46 | – |
 | learned clauses | 118 190 | 82 062 | 18 767 (used 5.8× each) |
 
 So the 6.5× residue splits into (a) a **1.8× inprocessing-schedule
-component** — closed by the mid-search rounds + probing, measured
-seed-robust above — and (b) a **~3.7× learned-clause-quality/retention
+component** – closed by the mid-search rounds + probing, measured
+seed-robust above – and (b) a **~3.7× learned-clause-quality/retention
 residue** that inprocessing does not touch: even with the bundle on, the
 DB is tiny (net 628 clauses) and LBD better, yet kissat refutes with 4.4×
 fewer, much more heavily reused learned clauses (18.8 k clauses, each
 used 5.8× on average).  That residue is lever-2 territory (tiered
-retention / usage signal — the 2026-08-22 study's random-deletion-beats-
+retention / usage signal – the 2026-08-22 study's random-deletion-beats-
 glue result), not an inprocessing-schedule question.  kissat's
 inprocessing components we still lack (factor/BVA, kitten sweep,
 congruence, backbone) remain an unquantified further unknown, but the
@@ -212,17 +212,17 @@ bundle we have already recovers only the schedule component.
 ### What not to retry; what is open
 
 * Pre-search one-shot inprocess/vivify beyond default ELS+BVE: measured
-  no-op — do not re-test (1).
-* Probing-only as a preset: neutral to catastrophic (mrpp 3.5×) — dead.
-* Rounds-only as a preset: same 9-file loss list as the full bundle —
+  no-op – do not re-test (1).
+* Probing-only as a preset: neutral to catastrophic (mrpp 3.5×) – dead.
+* Rounds-only as a preset: same 9-file loss list as the full bundle –
   dead as an unconditional flip.
-* **Open (next campaign)**: a *gating policy* for the mid-search rounds —
+* **Open (next campaign)**: a *gating policy* for the mid-search rounds –
   they pay 2–6× on clause-DB-heavy instances and destroy phase-guided
   model finding on the rest; the win/loss split may be observable (DB
   growth, learned/original ratio, recent walk/lucky success).  Any such
   policy climbs the §10 ladder with a matched null: identical round
   schedule and budgets, pass content scrambled (subsume/vivify candidate
-  order by hash instead of occurrence/size rank — the `NIXIE_SBVA_NULL`
+  order by hash instead of occurrence/size rank – the `NIXIE_SBVA_NULL`
   precedent), reported as treatment/null over ≥10 seeds.
 
 ### Store
@@ -231,19 +231,19 @@ bundle we have already recovers only the schedule component.
 `sc24f`, host `workstation`, sha `dcfc089`), roles baseline/treatment/
 reference; every record's verdict differentially verified (0 cross-arm
 disagreements).  Decomposition runs are quoted in full above (binary
-`2bfd8b0`, not store-recorded — attribution evidence, not effect claims).
+`2bfd8b0`, not store-recorded – attribution evidence, not effect claims).
 Runner: `precompile/corpus-sc24f/ab_runner.py`; analysis:
 `precompile/corpus-sc24f/analyze.py`; raw logs `standing4.log`,
 `onarm.log`, `tails*.log` in the same directory.
 
-### Verification-gate notes (2026-09-04 addendum — infra only, no study number touched)
+### Verification-gate notes (2026-09-04 addendum – infra only, no study number touched)
 
 Three gate-harness incompatibilities surfaced when the supervisor re-ran
 the six gates; all three are infrastructure fixes with **zero** effect on
 any number in this study (no solver code changed; the parity results file
 was byte-identical after the fix):
 
-1. **`gate:parity`** — `bench/z3_parity/run_parity.sh` had a
+1. **`gate:parity`** – `bench/z3_parity/run_parity.sh` had a
    `#!/bin/bash` shebang and this environment has no `/bin/bash` (nix;
    bash lives in the store), so the direct invocation
    `./bench/z3_parity/run_parity.sh` died with "bad interpreter".  Fixed
@@ -252,8 +252,8 @@ was byte-identical after the fix):
    `cd ../..` assumed it was started *inside* `bench/z3_parity/`).
    Re-run: 170 benchmarks, **0 verdict mismatches**, 169 decisive-agreed,
    1 inconclusive (Z3 4.16.0 returns `Unknown` on `array_unique.smt2`),
-   2 m 21 s — reproducing the pre-fix numbers exactly.
-2. **`gate:doc`** — this cargo rejects passthrough args for `cargo doc`
+   2 m 21 s – reproducing the pre-fix numbers exactly.
+2. **`gate:doc`** – this cargo rejects passthrough args for `cargo doc`
    (`cargo doc --no-deps --all-features -- -D warnings` ⇒ "error:
    unexpected argument '-D' found"), so the gate command as literally
    written can never pass here.  Substitution (cargo-sanctioned):
@@ -262,14 +262,14 @@ was byte-identical after the fix):
    errors for every rustdoc invocation in the workspace.  Verified: exit 0,
    zero warnings, and `cargo doc -v` shows rustdoc invoked with
    `-D warnings`.
-3. **`gate:tests`** — the `pete_cxs_bp_is_unsat_on_every_trajectory`
+3. **`gate:tests`** – the `pete_cxs_bp_is_unsat_on_every_trajectory`
    canary (a known-slow debug soundness guard, ~313–330 s debug / ~25 s
    release) exceeds the gate harness's command budget: the suite was
    SIGTERM'd at ~291 s with only that test still running, reporting 1
    failed although the assertion passes.  The canary now carries
    `#[ignore = …]` (and `.config/nextest.toml` documents the wider
    slow-timeout budget that still applies to explicit runs), so the
-   default suite completes well inside the cap — **re-verified after the
+   default suite completes well inside the cap – **re-verified after the
    change: the default pass is 10 466/10 466 in 65 s (12 skipped, incl.
    the canary), and the canary run explicitly via
    `cargo nextest run -p nixie-solver --run-ignored only -E

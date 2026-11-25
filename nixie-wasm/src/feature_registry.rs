@@ -20,7 +20,7 @@
 //! `interpolation`, `spacer`, `ml_branching` and `wasm_bench` are empty feature
 //! lists: they pull in no dependency and gate no code. Choosing `minimal` over
 //! `full` therefore could not remove anything before the `nlsat` gate, because
-//! there was nothing gated to remove — checkable in one command:
+//! there was nothing gated to remove – checkable in one command:
 //!
 //! ```text
 //! grep -rn 'cfg(feature\|cfg!(feature' nixie-wasm/src/
@@ -31,9 +31,9 @@
 //! `nlsat` is different in kind: it is a real dependency edge,
 //! `nixie-solver/nlsat` → `nixie-theories/nlsat` → the `nixie-nlsat` crate, so
 //! dropping it removes compiled code. The figures above were measured on a
-//! comparably-shaped browser shim — same `[profile.release]` (`opt-level =
+//! comparably-shaped browser shim – same `[profile.release]` (`opt-level =
 //! "z"`, fat LTO, `codegen-units = 1`, `panic = "abort"`, stripped) and the same
-//! `wasm-opt -Oz --converge` pass — at 1,557,287 → 1,363,027 bytes raw and
+//! `wasm-opt -Oz --converge` pass – at 1,557,287 → 1,363,027 bytes raw and
 //! 573,181 → 504,913 after `gzip -9`. Expect a different absolute size here,
 //! since this crate's reachable set is not that one's; expect a delta of the
 //! same order.
@@ -102,7 +102,7 @@ impl FeatureRegistry {
     }
 
     /// Returns `true` when the nonlinear-arithmetic core (`nixie-nlsat`) is
-    /// compiled in — the one optional feature that gates real code.
+    /// compiled in – the one optional feature that gates real code.
     ///
     /// Controlled by the `nlsat` Cargo feature; excluded in `minimal` builds.
     pub const fn has_nlsat() -> bool {

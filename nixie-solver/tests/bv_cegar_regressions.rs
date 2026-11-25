@@ -19,12 +19,12 @@ fn run(script: &str) -> Vec<String> {
 
 /// `run` with division abstraction enabled (`NIXIE_BV_CEGAR_DIV=64`): the
 /// div tests below must exercise the *abstraction*, not silently fall back
-/// to the exact circuits (division CEGAR is sound but ships default-off —
+/// to the exact circuits (division CEGAR is sound but ships default-off –
 /// a measured negative on the available corpus).  `set_var` is process-
 /// global but safe here: nextest runs each test in its own process, and
 /// even under a threaded runner the only tests in this binary are the six
 /// CEGAR ones, for which this variable only *widens* abstraction (never
-/// changes a verdict — the relaxation argument).
+/// changes a verdict – the relaxation argument).
 fn run_div(script: &str) -> Vec<String> {
     // SAFETY: see doc comment.
     unsafe { std::env::set_var("NIXIE_BV_CEGAR_DIV", "64") };
@@ -36,7 +36,7 @@ fn run_div(script: &str) -> Vec<String> {
 
 /// Bounded zero-divisor (both operands non-constant, so the mul is
 /// abstracted, not constant-folded): `1 <= x, y < 2^32` bounds the exact
-/// product below `2^64`, so `bvmul x y = 0` has no solution — but the
+/// product below `2^64`, so `bvmul x y = 0` has no solution – but the
 /// identity lemmas alone cannot see the bounds.  Refinement (value lemma
 /// or terminal circuit) must transfer the refutation through the
 /// relaxation.
@@ -57,7 +57,7 @@ fn cegar_mul_bounded_zero_divisor_unsat() {
 }
 
 /// `Sat` with wide muls: the reported model must satisfy the EXACT product
-/// semantics — a spurious abstracted value can never pass the consistency
+/// semantics – a spurious abstracted value can never pass the consistency
 /// check, and the final model must evaluate every assertion true.
 #[test]
 fn cegar_mul_satisfiable_model_is_exact() {
@@ -82,7 +82,7 @@ fn cegar_mul_satisfiable_model_is_exact() {
 }
 
 /// Low-word identity (width 32): the 32-bit product MUST equal the low
-/// half of the zero-extended 64-bit product — true for every assignment,
+/// half of the zero-extended 64-bit product – true for every assignment,
 /// so the disequality is unsat, and refuting it requires the abstraction
 /// to enforce exact multiplier semantics (terminal tier or a sufficient
 /// value-lemma set).  Two independent wide muls over shared operands.
@@ -101,7 +101,7 @@ fn cegar_mul_low_word_identity_refuted() {
     assert_eq!(out, vec!["unsat"]);
 }
 
-/// Division abstraction — SMT-LIB zero-divisor semantics are wired as EXACT
+/// Division abstraction – SMT-LIB zero-divisor semantics are wired as EXACT
 /// tier-1 lemmas: `bvudiv a 0 = 1…1` and `bvurem a 0 = a`.  Denying either
 /// under a provably-zero divisor is unsat with no refinement at all.
 #[test]
@@ -120,7 +120,7 @@ fn cegar_div_zero_divisor_semantics_exact() {
     assert_eq!(out, vec!["unsat"]);
 }
 
-/// Division abstraction — satisfiable model must carry the EXACT quotient
+/// Division abstraction – satisfiable model must carry the EXACT quotient
 /// and remainder (the tier-2 consistency check enforces `7·5 + 3 = 38`).
 #[test]
 fn cegar_div_satisfiable_model_is_exact() {
@@ -147,7 +147,7 @@ fn cegar_div_satisfiable_model_is_exact() {
 /// Euclidean uniqueness theorem pins `q = a bvudiv b` and `r = a bvurem b`;
 /// denying either requires the exact division semantics (refinement tiers).
 /// (The bounds on `q` are load-bearing: without them `q·b + r` can wrap
-/// mod 2^64 and the identity has spurious solutions — verified against z3.)
+/// mod 2^64 and the identity has spurious solutions – verified against z3.)
 #[test]
 fn cegar_div_identity_equation_unsat() {
     let out = run_div(

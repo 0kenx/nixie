@@ -29,7 +29,7 @@ fn chrono_always_survives_repeated_assumption_solves() {
     });
     // At-most-one-of-{a,b,c} plus (d), with (¬a∨x),(¬b∨x),(¬c∨x) and
     // (¬x∨¬d): x is forced exactly when any of a..c is taken, and conflicts
-    // with d — enough branching for chronological stops to interleave.
+    // with d – enough branching for chronological stops to interleave.
     let v = |i: u32| Var::new(i);
     let l = |i: i32| {
         let var = v(i.unsigned_abs() - 1);

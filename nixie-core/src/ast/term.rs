@@ -133,7 +133,7 @@ pub enum TermKind {
     // Transcendental functions over the reals (`Real -> Real`).  These make
     // the constraint language undecidable; the transcendental theory answers
     // them with dReal-style delta-satisfiability (interval constraint
-    // propagation — `nixie-theories/src/trans/`, `docs/TRANS.md`), never by
+    // propagation – `nixie-theories/src/trans/`, `docs/TRANS.md`), never by
     // pretending they are linear.
     /// `e^x`
     Exp(TermId),
@@ -527,40 +527,40 @@ pub enum TermKind {
     /// Carries its **set** sort, because the empty set is not sort-inferable
     /// from its (absent) elements.
     SetEmpty(SortId),
-    /// `(set.singleton x)` — the one-element set containing `x`.
+    /// `(set.singleton x)` – the one-element set containing `x`.
     SetSingleton(TermId),
     /// `(set.union a b)`.
     SetUnion(TermId, TermId),
     /// `(set.inter a b)`.
     SetInter(TermId, TermId),
-    /// `(set.minus a b)` — set difference.
+    /// `(set.minus a b)` – set difference.
     SetMinus(TermId, TermId),
-    /// `(set.member x s)` — a `Bool`.
+    /// `(set.member x s)` – a `Bool`.
     SetMember(TermId, TermId),
-    /// `(set.subset a b)` — a `Bool`.
+    /// `(set.subset a b)` – a `Bool`.
     SetSubset(TermId, TermId),
-    /// `(set.card s)` — an `Int`.
+    /// `(set.card s)` – an `Int`.
     ///
     /// Kept as its own kind rather than expanded: cardinality is what forces
     /// set reasoning to interact with arithmetic, and CVC5 gives it a whole
     /// module (`cardinality_extension.cpp`) for that reason.
     SetCard(TermId),
-    /// `(set.complement s)` — the complement relative to the element sort's
+    /// `(set.complement s)` – the complement relative to the element sort's
     /// universe.
     ///
     /// Membership is decidable pointwise (`x ∈ ~s ↔ x ∉ s`); cardinality is
     /// only meaningful when the universe is finite, which the reduction
     /// checks before emitting any arithmetic.
     SetComplement(TermId),
-    /// `(as set.universe (Set T))` — the universe set of an element sort.
+    /// `(as set.universe (Set T))` – the universe set of an element sort.
     ///
     /// Carries its **set** sort, like [`TermKind::SetEmpty`].
     SetUniv(SortId),
-    /// `(set.choose s)` — some element of `s`, as CVC5's `SET_CHOOSE`:
+    /// `(set.choose s)` – some element of `s`, as CVC5's `SET_CHOOSE`:
     /// `choose(s) ∈ s ↔ s ≠ ∅`, and `s = t → choose(s) = choose(t)` by
     /// congruence.
     SetChoose(TermId),
-    /// `(rel.join r s)` — relation composition (CVC5 `RELATION_JOIN`).
+    /// `(rel.join r s)` – relation composition (CVC5 `RELATION_JOIN`).
     ///
     /// Both operands are relations (sets of tuples) whose boundary sorts
     /// agree; the result relates `r`'s front to `s`'s back through the
@@ -568,16 +568,16 @@ pub enum TermKind {
     /// The eager reduction skolemizes `x` per (element, join-term), exactly
     /// like the disequality witnesses.
     SetRelJoin(TermId, TermId),
-    /// `(rel.product r s)` — cartesian product (CVC5 `RELATION_PRODUCT`).
+    /// `(rel.product r s)` – cartesian product (CVC5 `RELATION_PRODUCT`).
     ///
     /// Operands are sets (of tuples or plain); the result pairs them:
     /// `(t, u) ∈ r × s  ⇔  t ∈ r ∧ u ∈ s`.
     SetRelProduct(TermId, TermId),
-    /// `(rel.transpose r)` — the converse relation (CVC5
+    /// `(rel.transpose r)` – the converse relation (CVC5
     /// `RELATION_TRANSPOSE`): `t ∈ ~r  ⇔  rev(t) ∈ r`, with `rev` the
     /// component-reversed tuple.
     SetRelTranspose(TermId),
-    /// `(rel.iden s)` — the identity relation *over* the set `s` (CVC5
+    /// `(rel.iden s)` – the identity relation *over* the set `s` (CVC5
     /// `RELATION_IDEN`): `(a, b) ∈ iden(s)  ⇔  a = b ∧ a ∈ s`. Note the
     /// operand is a plain set, not a relation.
     SetRelIden(TermId),
@@ -585,66 +585,66 @@ pub enum TermKind {
     /// (CVC5 `BAG_EMPTY`).
     ///
     /// Carries its **bag** sort, because the empty bag is not
-    /// sort-inferable from its (absent) elements — exactly like
+    /// sort-inferable from its (absent) elements – exactly like
     /// [`TermKind::SetEmpty`].
     BagEmpty(SortId),
-    /// `(bag e n)` — the bag containing `n` copies of `e` (CVC5
+    /// `(bag e n)` – the bag containing `n` copies of `e` (CVC5
     /// `BAG_MAKE`): `bag.count e (bag e n) = n`, zero for anything else.
     ///
     /// The bag theory's "singleton": every value is a finite union of
     /// these, exactly as every set value is a union of
     /// [`TermKind::SetSingleton`]s.
     BagMake(TermId, TermId),
-    /// `(bag.union_max a b)` — bag union by maximum multiplicity (CVC5
+    /// `(bag.union_max a b)` – bag union by maximum multiplicity (CVC5
     /// `BAG_UNION_MAX`): `count(x, a ∪ b) = max(count(x,a), count(x,b))`.
     BagUnionMax(TermId, TermId),
-    /// `(bag.union_disjoint a b)` — bag union by sum (CVC5
+    /// `(bag.union_disjoint a b)` – bag union by sum (CVC5
     /// `BAG_UNION_DISJOINT`): `count(x, a ⊎ b) = count(x,a) + count(x,b)`.
     BagUnionDisjoint(TermId, TermId),
-    /// `(bag.inter_min a b)` — bag intersection by minimum multiplicity
+    /// `(bag.inter_min a b)` – bag intersection by minimum multiplicity
     /// (CVC5 `BAG_INTER_MIN`): `count(x, a ∩ b) = min(count(x,a),
     /// count(x,b))`.
     BagInterMin(TermId, TermId),
-    /// `(bag.difference_subtract a b)` — bag difference by subtraction
+    /// `(bag.difference_subtract a b)` – bag difference by subtraction
     /// (CVC5 `BAG_DIFFERENCE_SUBTRACT`):
     /// `count(x, a \ b) = max(count(x,a) − count(x,b), 0)`.
     BagDifferenceSubtract(TermId, TermId),
-    /// `(bag.difference_remove a b)` — bag difference by removal (CVC5
+    /// `(bag.difference_remove a b)` – bag difference by removal (CVC5
     /// `BAG_DIFFERENCE_REMOVE`): removes `x` entirely when `b` contains
-    /// it at all — `count(x, a \\ b) = ite(count(x,b) > 0, 0,
+    /// it at all – `count(x, a \\ b) = ite(count(x,b) > 0, 0,
     /// count(x,a))`.
     BagDifferenceRemove(TermId, TermId),
-    /// `(bag.member x b)` — a `Bool` (CVC5 `BAG_MEMBER`):
+    /// `(bag.member x b)` – a `Bool` (CVC5 `BAG_MEMBER`):
     /// `x ∈ b ⇔ count(x, b) ≥ 1`.
     BagMember(TermId, TermId),
-    /// `(bag.subbag a b)` — a `Bool` (CVC5 `BAG_SUBBAG`): bag inclusion,
+    /// `(bag.subbag a b)` – a `Bool` (CVC5 `BAG_SUBBAG`): bag inclusion,
     /// pointwise `count(x,a) ≤ count(x,b)`.
     BagSubbag(TermId, TermId),
-    /// `(bag.count x b)` — an `Int` (CVC5 `BAG_COUNT`): the multiplicity
+    /// `(bag.count x b)` – an `Int` (CVC5 `BAG_COUNT`): the multiplicity
     /// of `x` in `b`.
     ///
     /// Kept as its own kind: it is the bag theory's analogue of
-    /// [`TermKind::SetMember`] *and* of [`TermKind::SetCard`] at once —
+    /// [`TermKind::SetMember`] *and* of [`TermKind::SetCard`] at once –
     /// the reduction grounds every bag constraint into arithmetic over
     /// count terms, which is what makes the fragment decidable without
     /// enumerating multiplicities.
     BagCount(TermId, TermId),
-    /// `(bag.card b)` — an `Int` (CVC5 `BAG_CARD`): the sum of the
+    /// `(bag.card b)` – an `Int` (CVC5 `BAG_CARD`): the sum of the
     /// multiplicities.
     BagCard(TermId),
-    /// `(bag.setof b)` — duplicate removal (CVC5 `BAG_SETOF`, the delta
+    /// `(bag.setof b)` – duplicate removal (CVC5 `BAG_SETOF`, the delta
     /// operator): `count(x, setof b) = ite(count(x,b) > 0, 1, 0)`.
     BagSetof(TermId),
-    /// `(bag.choose b)` — some element of `b` (CVC5 `BAG_CHOOSE`):
+    /// `(bag.choose b)` – some element of `b` (CVC5 `BAG_CHOOSE`):
     /// `b ≠ ∅ → count(choose(b), b) ≥ 1`, and `choose` is congruent
     /// (`a = b → choose(a) = choose(b)`); of an empty bag it is an
     /// unspecified value of the element sort. The result sort is the
     /// element sort.
     BagChoose(TermId),
-    /// `(bag.map f b)` — pointwise image (CVC5 `BAG_MAP`):
+    /// `(bag.map f b)` – pointwise image (CVC5 `BAG_MAP`):
     /// `count(y, map(f, b)) = Σ_x ite(f(x) = y, count(x, b), 0)` over the
     /// distinct-valued elements of the domain, and the cardinality is
-    /// preserved exactly (`|map(f, b)| = |b|` — every copy maps to one
+    /// preserved exactly (`|map(f, b)| = |b|` – every copy maps to one
     /// copy). Carries the function's name symbol and its **codomain**
     /// sort (a bare symbol is not a term, so the image bag's element
     /// sort must be stored); the result sort is `(Bag ret)`.
@@ -660,9 +660,9 @@ pub enum TermKind {
         /// The domain bag.
         bag: TermId,
     },
-    /// `(bag.filter p b)` — the sub-bag of elements satisfying `p` (CVC5
+    /// `(bag.filter p b)` – the sub-bag of elements satisfying `p` (CVC5
     /// `BAG_FILTER`): `count(x, filter(p, b)) = ite(p(x), count(x, b), 0)`
-    /// — exact per element (filter only removes), with `|filter(p, b)| ≤
+    /// – exact per element (filter only removes), with `|filter(p, b)| ≤
     /// |b|`. Carries the predicate's name symbol; the result sort is the
     /// operand's own bag sort.
     BagFilter {
@@ -671,7 +671,7 @@ pub enum TermKind {
         /// The bag.
         bag: TermId,
     },
-    /// `(bag.fold f t b)` — fold `f` over the elements of `b` with
+    /// `(bag.fold f t b)` – fold `f` over the elements of `b` with
     /// multiplicity, starting from `t` (CVC5 `BAG_FOLD`): the function has
     /// type `(-> T1 T2 T2)` and takes its **element first, accumulator
     /// second** (`combine_i = f(elements_i, combine_{i-1})`, exactly
@@ -688,7 +688,7 @@ pub enum TermKind {
     /// f(e2, f(e1, a))` (commutativity+associativity imply it); the
     /// reduction proves the law by simplification before unrolling a
     /// multiset with two or more distinct element spellings, and declines
-    /// (`incomplete`) anything it cannot unroll — a free fold term with
+    /// (`incomplete`) anything it cannot unroll – a free fold term with
     /// the honesty gate raised, never a guessed value.
     BagFold {
         /// The function's interned name (binary: element, accumulator).

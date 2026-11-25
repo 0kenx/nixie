@@ -701,7 +701,7 @@ mod tests {
     /// (`certify_result` + its inlined certification locals) statically
     /// reserves ~1.3 KB of frame at the bottom of the check call chain,
     /// and a workspace-feature-unified build (which inlines differently
-    /// than a crate-local build) could sit within ~1 KB of the guard —
+    /// than a crate-local build) could sit within ~1 KB of the guard –
     /// observed 2026-11-16 when an unrelated solver change (the
     /// blastable-memo hardening) flipped this test to SIGABRT while the
     /// identical code passed at HEAD and at 1 MiB.

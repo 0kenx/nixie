@@ -9,8 +9,8 @@
 //!   `(state, position)` search, no graphs), for acceptance under total
 //!   guard assignments;
 //! - a test-local **per-target run oracle** (`run_exists`) checking runs
-//!   that end at one *specific* state — the exact meaning of one product
-//!   reach atom — used to validate every consequence the propagator emits
+//!   that end at one *specific* state – the exact meaning of one product
+//!   reach atom – used to validate every consequence the propagator emits
 //!   over partial guard assignments against **all guard completions**;
 //! - hand-computed structural cases for the corner semantics (empty word,
 //!   epsilon cycles, parallel transitions, constant guards, ...).
@@ -45,7 +45,7 @@ fn tri_vectors(k: usize) -> Vec<Vec<Tri>> {
 /// Test-local run oracle: does some run consume `word` from the initial
 /// state and end at exactly `target`, following only transitions whose
 /// guards `truth` makes present? This is the meaning of the product reach
-/// atom `reach((q0,0), (target, n))` — length-≥-1 paths — including the
+/// atom `reach((q0,0), (target, n))` – length-≥-1 paths – including the
 /// `n = 0 ∧ target = q0` case, which requires an epsilon cycle through
 /// the initial state (zero steps do not count).
 fn run_exists(
@@ -63,7 +63,7 @@ fn run_exists(
     };
     if n == 0 && target == initial {
         // Length-≥-1 requirement: an epsilon cycle through the initial
-        // state — arriving back at `initial` via present epsilon edges.
+        // state – arriving back at `initial` via present epsilon edges.
         let mut visited = vec![false; states as usize];
         visited[initial as usize] = true;
         let mut queue = vec![initial];
@@ -154,7 +154,7 @@ impl Case {
     }
 
     /// Build the model; guard variables are minted by name, so rebuilding
-    /// yields the same `TermId`s (name interning) — each replay uses one
+    /// yields the same `TermId`s (name interning) – each replay uses one
     /// freshly built model, like the graph harness.
     fn build(&self, tm: &mut TermManager) -> (FsmModel, AutomatonHandle, Vec<TermId>) {
         let guard_vars: Vec<TermId> = (0..self.guard_count())
@@ -211,11 +211,11 @@ fn guard_truth_fn<'a>(
 
 /// Exhaustively replay every partial guard assignment through the
 /// propagator and validate every emitted consequence against **all guard
-/// completions** with the per-target run oracle — the FSM-level analogue
+/// completions** with the per-target run oracle – the FSM-level analogue
 /// of `graph::tests`' consequence contract (it assumes nothing about the
 /// graph suite). Also cross-checks, for every completion, that the
 /// interpreter's acceptance equals the disjunction of the per-target run
-/// oracles — the semantic heart of the reduction.
+/// oracles – the semantic heart of the reduction.
 fn check_case(case: &Case) {
     let guard_count = case.guard_count();
     for states in tri_vectors(guard_count) {
@@ -557,7 +557,7 @@ fn shared_negated_and_compound_guards() {
             };
             // a1 accepts "0" for every (g,h): g or ¬g is present.
             assert!(model.accepts_under(a1, &[0], &truth).unwrap());
-            // a2 accepts "0" exactly under g∧h — the compound guard keeps
+            // a2 accepts "0" exactly under g∧h – the compound guard keeps
             // its ordinary Boolean meaning.
             assert_eq!(model.accepts_under(a2, &[0], &truth).unwrap(), g_v && h_v);
         }

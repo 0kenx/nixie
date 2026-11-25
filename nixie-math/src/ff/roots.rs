@@ -51,7 +51,7 @@ impl RootBudget {
     }
 }
 
-/// The product of the *distinct* linear factors of `f` — i.e. the
+/// The product of the *distinct* linear factors of `f` – i.e. the
 /// squarefree polynomial whose roots are exactly the roots of `f`
 /// (Rabin's `distinct_roots_poly`).
 ///
@@ -68,7 +68,7 @@ pub fn distinct_roots_poly(
         Some(1) => return Ok(poly.monic(f)),
         _ => {}
     }
-    // x^p mod f: build x^p as x shifted, then reduce — no, compute via
+    // x^p mod f: build x^p as x shifted, then reduce – no, compute via
     // pow_mod directly on the monomial x.
     let x = monomial_x(f, 1);
     let p = f.modulus().clone();
@@ -102,7 +102,7 @@ fn monomial_x(f: &FieldCtx, k: usize) -> UniPoly {
 /// All distinct roots of `f` in 𝔽_p, sorted by value. `None` = budget
 /// exhausted (→ `Unknown`); `Some(vec![])` = no roots.
 ///
-/// Equal-degree splitting walks deterministic shifts `a = 0, 1, 2, …` —
+/// Equal-degree splitting walks deterministic shifts `a = 0, 1, 2, …` –
 /// for a product of `d` distinct linear factors,
 /// `gcd(g, (x + a)^{(p-1)/2} - 1)` splits `g` unless `a` lands in a set
 /// of at most `d` residue classes, so the walk terminates quickly and
@@ -162,7 +162,7 @@ pub fn roots(
         let _ = &roots_out;
     }
     // Convert to canonical values and sort numerically (by residue, not by
-    // string — cvc5 sorts by string as a CoCoA workaround).
+    // string – cvc5 sorts by string as a CoCoA workaround).
     let mut values: Vec<BigUint> = roots_out.iter().map(|r| f.to_biguint(r)).collect();
     values.sort();
     values.dedup();
@@ -173,7 +173,7 @@ pub fn roots(
 /// One equal-degree split attempt over shifts `a = 0, 1, 2, …`: returns
 /// the first nontrivial `gcd(g, (x+a)^{(p-1)/2} - 1)` split as `(a-part,
 /// b-part)`. `Ok(None)` = budget exhausted; a returned pair may still be
-/// `(g, 1)` shaped (both factors in one side) — the loop retries.
+/// `(g, 1)` shaped (both factors in one side) – the loop retries.
 #[allow(clippy::type_complexity)]
 fn split_equal_degree(
     f: &FieldCtx,
@@ -182,7 +182,7 @@ fn split_equal_degree(
     budget: &mut RootBudget,
 ) -> Result<Option<(UniPoly, UniPoly)>, RootError> {
     let p = f.modulus().clone();
-    // Try every residue class: the walk is complete — a product of d ≥ 2
+    // Try every residue class: the walk is complete – a product of d ≥ 2
     // distinct linear factors fails to split for at most d shifts, so some
     // a < p always works. The budget charges per attempt, so a large p
     // cannot spin forever; exhausting the residues without a split is a
@@ -208,7 +208,7 @@ fn split_equal_degree(
         a_int += 1u8;
     }
     // Exhausted the residue classes without splitting: impossible for a
-    // squarefree product of ≥ 2 linear factors — treat as budget failure
+    // squarefree product of ≥ 2 linear factors – treat as budget failure
     // so the caller answers Unknown rather than inventing roots.
     Err(RootError::Budget)
 }

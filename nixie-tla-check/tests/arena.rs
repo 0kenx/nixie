@@ -194,9 +194,9 @@ fn the_candidate_budget_is_enforced() {
     ));
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Strings, tuples and records
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// A TLA+ string is an atom: only ever compared for equality, never taken
 /// apart.
@@ -213,7 +213,7 @@ fn strings_are_atoms() {
     }
 }
 
-/// `Cardinality` over string elements — the case that found a **false `sat`**
+/// `Cardinality` over string elements – the case that found a **false `sat`**
 /// in the solver and was `#[ignore]`d until it was fixed.
 ///
 /// The de-duplicating sum guards each indicator with an element equality, so
@@ -236,7 +236,7 @@ fn cardinality_over_strings() {
     }
 }
 
-/// Tuples are structural, so they can be heterogeneous — which is exactly what
+/// Tuples are structural, so they can be heterogeneous – which is exactly what
 /// an SMT array could not represent, since it forces one sort per component.
 #[test]
 fn tuples_are_heterogeneous_and_componentwise() {
@@ -251,7 +251,7 @@ fn tuples_are_heterogeneous_and_componentwise() {
     }
 }
 
-/// Two tuples of different arity are both tuples and simply not equal — a
+/// Two tuples of different arity are both tuples and simply not equal – a
 /// `FALSE`, not a shape error.
 #[test]
 fn tuples_of_different_arity_are_unequal_not_an_error() {

@@ -55,7 +55,7 @@
 //! Each refinement round re-solves the whole problem from scratch, so the
 //! refinement is capped at one round (`MAX_CASE_SPLIT_ROUNDS`) and at
 //! [`PER_ROUND_CAP`] new split terms.  There is deliberately NO wall-clock
-//! affordability gate: see the note at [`PER_ROUND_CAP`] — a time-gated
+//! affordability gate: see the note at [`PER_ROUND_CAP`] – a time-gated
 //! closing round made verdicts load-dependent (`sat` on a busy machine,
 //! `unsat` on a quiet one, same binary, same input).
 //!
@@ -94,13 +94,13 @@ const PER_ROUND_CAP: usize = 32;
 
 // NOTE: the refinement used to carry a wall-clock affordability gate
 // (`CASE_SPLIT_REFINE_BUDGET_MS`, first solve < 5 s).  Removed 2026-08-21:
-// it made the *verdict* load-dependent — on QF_UFLIA/wisas/xs_8_13.smt2 the
+// it made the *verdict* load-dependent – on QF_UFLIA/wisas/xs_8_13.smt2 the
 // same binary answered `sat` 7/8 identical runs (gate expired → closing
 // round skipped → non-convex hole reported as `sat`) and `unsat` when the
 // first solve happened to be fast; forcing the arms gave 5×`sat` (budget 0)
 // vs 5×`unsat` (budget ∞).  "Preserving the original fast answer" is not a
 // legitimate goal when that answer is uncertifiable: skipping the closing
-// round must yield `unknown`, never `sat` — and with the gate gone the
+// round must yield `unknown`, never `sat` – and with the gate gone the
 // round always runs, so the case never arises.  Cost stays bounded by the
 // deterministic caps above; an overall unaffordable search is the user's
 // `timeout_ms`'s business.
@@ -417,7 +417,7 @@ impl Solver {
                 },
             };
             // Strict inequalities tighten by one over the integers.
-            // Strict inequalities tighten by one over the integers —
+            // Strict inequalities tighten by one over the integers –
             // CHECKED: at `±i64::MAX` the unchecked shift used to overflow
             // (a debug panic, a silent wrap in release).  A bound that does
             // not shift is simply not added: the case-split heuristic loses
@@ -466,19 +466,19 @@ impl Solver {
 
     /// **Item 96's channel**: mint the CDCL-visible LIA branch atoms the
     /// arithmetic theory requested at its integrality-search budget decline
-    /// (the branch-walk ray — Z3's `branch_infeasible_int_var` /
+    /// (the branch-walk ray – Z3's `branch_infeasible_int_var` /
     /// `lia_move::branch`, see the `LiaBranchRequest` type in the arithmetic solver).
     ///
     /// Each request spells `(>= sum(coef·term) rhs+k)`: a fresh Boolean atom
     /// encoded into the SAT core, phase-hinted `true` (deciding it true
     /// either finds the model above the branch point or teaches the
-    /// refutation clause for the region below it — the pruning the
+    /// refutation clause for the region below it – the pruning the
     /// internal B&B lacks).  The atom's dichotomy `(>= f k) ∨ (< f k)` is a
     /// theory tautology, so minting can never change satisfiability; the
     /// memo ([`Self::lia_branch_atoms`]) never re-mints, and the round
     /// budget ([`Self::MAX_LIA_BRANCH_ROUNDS`]) bounds the re-solve cost.
     ///
-    /// Returns `true` when at least one NEW atom was minted — the caller
+    /// Returns `true` when at least one NEW atom was minted – the caller
     /// then rebuilds the theory state and re-solves (the same
     /// reset-and-re-solve round shape as [`Self::refine_int_case_split`]).
     /// The theory records requests unless `NIXIE_LIA_BRANCH_LEMMA=0`
@@ -505,7 +505,7 @@ impl Solver {
             let rhs_big = req.rhs.to_integer();
             // MATCHED NULL arm (NIXIE_LIA_BRANCH_NULL=1): the same minting
             // machinery at the same decline cadence, with the branch point
-            // scrambled to zero — still a VALID dichotomy for any integral
+            // scrambled to zero – still a VALID dichotomy for any integral
             // form ((>= f) (or) (< f)), carrying none of the LP-point
             // information.  If the null recovers as much as the treatment,
             // the recovery is the minting perturbation, not the branch
@@ -539,7 +539,7 @@ impl Solver {
             let k_term = manager.mk_int(k_total);
             let atom = manager.mk_ge(poly, k_term);
             // Memo: the term is hash-consed, so a repeated (form, k)
-            // request is the SAME term — mint each atom once.
+            // request is the SAME term – mint each atom once.
             if !self.lia_branch_atoms.insert(atom) {
                 continue;
             }

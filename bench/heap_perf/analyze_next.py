@@ -117,12 +117,12 @@ def analyze(directory, output):
         for arm in experiment.ARMS:
             row = next(r for r in rows if r['case'] == name and r['arm'] == arm)
             value = row['instructions_median']
-            values.append(f"{value/1e6:.2f} ({row['solved']}/{row['total']})" if value else f"— (0/{row['total']})")
+            values.append(f"{value/1e6:.2f} ({row['solved']}/{row['total']})" if value else f"– (0/{row['total']})")
         lines.append('| '+name+' | '+' | '.join(values)+' |')
     lines += ['', 'Median millions of instructions among known answers; Unknown costs excluded.', '',
               '| Comparator | Subset | Seeds | Pairs | All / comparator | Lost | Gained |', '|---|---|---|---:|---:|---:|---:|']
     for row in comparisons:
-        ratio = f"{row['ratio']:.4f}" if row['ratio'] is not None else '—'
+        ratio = f"{row['ratio']:.4f}" if row['ratio'] is not None else '–'
         lines.append(f"| {row['control']} | {row['subset']} | {row['seeds']} | {row['pairs']} | {ratio} | {len(row['lost'])} | {len(row['gained'])} |")
     (output/'tables.md').write_text('\n'.join(lines)+'\n')
     print('\n'.join(lines))

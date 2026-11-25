@@ -338,8 +338,8 @@ fn assert_state(a: &Solver, b: &Solver) {
     assert_eq!(format!("{:?}", a.stats), format!("{:?}", b.stats));
     assert_eq!(format!("{:?}", a.trail), format!("{:?}", b.trail));
     // The CSR diagnostic modes (shadow / swapped scan) maintain the CSR's
-    // dead tails (entries beyond `prim_end`) differently per path — mirror
-    // vs direct compaction — while the COMBINED VIEW (the drift-oracle
+    // dead tails (entries beyond `prim_end`) differently per path – mirror
+    // vs direct compaction – while the COMBINED VIEW (the drift-oracle
     // invariant) is the observable.  Compare views when the flags are on.
     #[cfg(feature = "std")]
     if crate::watched::csr_shadow_enabled() {

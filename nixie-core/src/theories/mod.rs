@@ -20,7 +20,7 @@
 //! It is deliberately incomplete, and none of these theories is a decision
 //! procedure: "no conflict found" never means "satisfiable". The theories that
 //! `nixie-solver` actually runs live in the `nixie-theories` crate
-//! (`nixie_theories::{bv, fp, datatype, string, array}`) — bit-blasting,
+//! (`nixie_theories::{bv, fp, datatype, string, array}`) – bit-blasting,
 //! word-level propagation, and the rest are there, not here.
 //!
 //! Reference: Z3's `src/ast/` and `src/smt/theory_*.h`

@@ -5,7 +5,7 @@
 //! ground `b := φ` away before verifying a witness, so the witness itself
 //! carries no value for `b`.  Completing `b` with the sort default `false`
 //! prints a model whose own definition conjunct is violated whenever `φ`
-//! evaluates `true` under the printed numeric values — an invalid model
+//! evaluates `true` under the printed numeric values – an invalid model
 //! behind a correct `sat` verdict (differential `--validate-models` caught
 //! exactly this on QF_NIA/VeryMax 459/489/510/1527/1659 and
 //! QF_ANIA/sum10 i_2/i_3).  The fix evaluates the definition at completion
@@ -47,7 +47,7 @@ fn int_pin(model: &str, name: &str) -> Option<String> {
 
 /// Definition-Boolean completion: `b` is defined `(or (not (= x 0))
 /// (not (= y 0)))` and the printed numerics satisfy it, so the model must
-/// pin `b = true` — not the `false` sort default.
+/// pin `b = true` – not the `false` sort default.
 #[test]
 fn definition_bool_is_completed_from_its_definition() {
     let script = r#"

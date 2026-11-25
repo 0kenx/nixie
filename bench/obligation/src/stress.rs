@@ -1,7 +1,7 @@
 //! Representation stress (semantics-preserving wrappers).
 //!
-//! These do not change the answer of the instance they are applied to —
-//! they add *tautologies over fresh variables* or duplicate clauses — but
+//! These do not change the answer of the instance they are applied to –
+//! they add *tautologies over fresh variables* or duplicate clauses – but
 //! they stress parsing, simplification, hash-consing and stack discipline:
 //! deep nesting over user-controlled terms is a known bug class for
 //! recursive walkers (see AGENTS.md: "Deep input must not overflow the
@@ -55,9 +55,9 @@ fn chain_kind(logic: &str) -> &'static str {
 /// Insert a self-contained stress block immediately before the first
 /// `(check-sat)` of an SMT2 script. Every added assertion is a tautology
 /// over fresh variables, so sat/unsat is preserved exactly:
-///  * `sdb`: `(not^d sdb) = sdb` with d even — a d-deep term the solver
+///  * `sdb`: `(not^d sdb) = sdb` with d even – a d-deep term the solver
 ///    must walk without native recursion blowing the stack.
-///  * `sdi`/`sdv`: a d-deep constant chain equal to its exact value —
+///  * `sdi`/`sdv`: a d-deep constant chain equal to its exact value –
 ///    deep arithmetic with a only-if-fully-evaluated result. Int chains
 ///    are only emitted for arithmetic logics, BV xor chains for BV.
 pub fn apply_smt2(script: &str, cfg: &StressCfg, rng: &mut Rng, logic: &str) -> String {
@@ -186,7 +186,7 @@ pub fn apply_cnf(script: &str, dup: usize) -> String {
             }
             continue;
         }
-        // Clause spanning a missing trailing newline etc. — copy verbatim.
+        // Clause spanning a missing trailing newline etc. – copy verbatim.
         out.push_str(line);
         out.push('\n');
     }

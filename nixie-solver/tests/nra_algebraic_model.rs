@@ -7,9 +7,9 @@
 //! not invented: each test names the goal it came from, and running that goal
 //! through `z3` reproduces the string character-for-character. Z3 is the
 //! reference implementation this project reimplements, so its spelling of
-//! `root-obj` — descending monomials, elided unit coefficients, `(- n)` for
+//! `root-obj` – descending monomials, elided unit coefficients, `(- n)` for
 //! negative integers, and the bound variable always printed `x` whatever the
-//! SMT constant is called — is the specification here.
+//! SMT constant is called – is the specification here.
 //!
 //! # What "byte-exact" covers, honestly
 //!
@@ -20,8 +20,8 @@
 //! Z3 4.15.4 emits a bare `( … )` and breaks the body onto its own line. That
 //! difference predates algebraic values, applies to every model this solver
 //! prints, and changing it would move every other model test in the tree. What
-//! *is* pinned byte-exact for `(get-model)` is the **value string** — the
-//! `root-obj` term itself — which is the part this work is responsible for.
+//! *is* pinned byte-exact for `(get-model)` is the **value string** – the
+//! `root-obj` term itself – which is the part this work is responsible for.
 
 #![cfg(feature = "nlsat")]
 
@@ -36,7 +36,7 @@ fn run(script: &str) -> Vec<String> {
 
 /// The `n`th response line of a script's output.
 ///
-/// One entry per response-producing command, in order — `execute_script`
+/// One entry per response-producing command, in order – `execute_script`
 /// parses the whole script in one pass (a declaration does not carry across
 /// separate calls), so an incremental test indexes the response list rather
 /// than splitting the joined text, which cannot tell a `sat` inside `unsat`
@@ -49,7 +49,7 @@ fn response(output: &[String], index: usize) -> &str {
 
 /// `(get-value (x))` for `x² = 2`, exactly as `z3 4.15.4` prints it.
 ///
-/// Z3 picks the *first* real root of `x² − 2` — i.e. `−√2` — when nothing
+/// Z3 picks the *first* real root of `x² − 2` – i.e. `−√2` – when nothing
 /// constrains the sign, and this solver's cell decomposition independently
 /// picks the same one.
 const Z3_NEGATIVE_BRANCH_GET_VALUE: &str = "((x (root-obj (+ (^ x 2) (- 2)) 1)))";
@@ -57,7 +57,7 @@ const Z3_NEGATIVE_BRANCH_GET_VALUE: &str = "((x (root-obj (+ (^ x 2) (- 2)) 1)))
 /// The same for `x² = 2 ∧ x > 0`: the *second* real root, `+√2`.
 const Z3_POSITIVE_BRANCH_GET_VALUE: &str = "((x (root-obj (+ (^ x 2) (- 2)) 2)))";
 
-/// The `define-fun` body Z3 reports for each branch — the value half of
+/// The `define-fun` body Z3 reports for each branch – the value half of
 /// `(define-fun x () Real (root-obj (+ (^ x 2) (- 2)) N))`.
 const Z3_NEGATIVE_BRANCH_VALUE: &str = "(root-obj (+ (^ x 2) (- 2)) 1)";
 const Z3_POSITIVE_BRANCH_VALUE: &str = "(root-obj (+ (^ x 2) (- 2)) 2)";
@@ -103,7 +103,7 @@ fn get_model_root_obj_golden() {
     }
 }
 
-/// `(get-value (x))` is byte-exact against Z3 for both branches — the whole
+/// `(get-value (x))` is byte-exact against Z3 for both branches – the whole
 /// response line, not a substring.
 #[test]
 fn get_value_line_is_byte_exact_with_z3() {
@@ -124,7 +124,7 @@ fn get_value_line_is_byte_exact_with_z3() {
 }
 
 /// `(get-model)` and `(get-value ..)` must not disagree about the same
-/// constant — the contract `Context::format_get_value` documents. Both are
+/// constant – the contract `Context::format_get_value` documents. Both are
 /// rendered from the one side-channel, so this pins that they stay wired
 /// together rather than growing a second renderer.
 #[test]
@@ -163,7 +163,7 @@ fn a_rational_nra_model_is_unaffected() {
         "a rational witness must not be reported through the algebraic \
          channel: {joined}"
     );
-    // 2 and 3 in some order — the pair is what the constraints force.
+    // 2 and 3 in some order – the pair is what the constraints force.
     assert!(
         joined.contains("(define-fun x () Real 2.0)")
             && joined.contains("(define-fun y () Real 3.0)")
@@ -174,15 +174,15 @@ fn a_rational_nra_model_is_unaffected() {
 }
 
 /// A model mixing an algebraic constant, a rationally-constrained one, and a
-/// wholly unconstrained one must report all three — and must agree with Z3 on
+/// wholly unconstrained one must report all three – and must agree with Z3 on
 /// each.
 ///
 /// This is the case that would break if the side-channel were populated only
 /// for the *irrational* variables: `y` would then be completed from the `Real`
 /// sort default as `0.0`, contradicting `y > 3`. It is populated all-or-nothing
 /// precisely so the completion never has to guess at a constrained variable,
-/// while `z` — genuinely unconstrained, absent from the translated problem
-/// altogether — still gets its sort default, exactly as Z3 gives it.
+/// while `z` – genuinely unconstrained, absent from the translated problem
+/// altogether – still gets its sort default, exactly as Z3 gives it.
 ///
 /// Captured from `z3 4.15.4`: `x = (root-obj (+ (^ x 2) (- 2)) 1)`,
 /// `y = 4.0`, `z = 0.0`.
@@ -217,7 +217,7 @@ fn a_mixed_algebraic_rational_and_unconstrained_model_matches_z3() {
 #[test]
 fn pop_clears_the_algebraic_side_channel() {
     // Responses, in order: [0] check-sat, [1] get-value, [2] check-sat,
-    // [3] get-model, [4] get-value — the first two from inside the pushed
+    // [3] get-model, [4] get-value – the first two from inside the pushed
     // scope, the last three from the stack that replaced it.
     let output = run("(set-logic QF_NRA)
 (declare-fun x () Real)
@@ -256,7 +256,7 @@ fn pop_clears_the_algebraic_side_channel() {
     );
 }
 
-/// A fresh assertion on top of an algebraic model invalidates it too — the
+/// A fresh assertion on top of an algebraic model invalidates it too – the
 /// same `invalidate_results` hook that drops `Model`.
 #[test]
 fn a_later_assert_clears_the_algebraic_side_channel() {
@@ -279,7 +279,7 @@ fn a_later_assert_clears_the_algebraic_side_channel() {
         "the first check must report the algebraic witness"
     );
 
-    // `x² = 2 ∧ x = 1` has no solution, so no model may be published for it —
+    // `x² = 2 ∧ x = 1` has no solution, so no model may be published for it –
     // and in particular not the previous check's `√2`.
     assert_ne!(
         response(&output, 2),
@@ -305,7 +305,7 @@ fn a_later_assert_clears_the_algebraic_side_channel() {
 ///
 /// Z3 answers `2.0` here (it can compute in the algebraic field); this solver
 /// cannot yet, and the important property is that it does not answer `0.0`,
-/// which is what completing `x` from the `Real` sort default would produce —
+/// which is what completing `x` from the `Real` sort default would produce –
 /// a fabricated value contradicting the very model it was completed from.
 #[test]
 fn a_compound_query_over_an_algebraic_constant_does_not_fabricate_a_value() {

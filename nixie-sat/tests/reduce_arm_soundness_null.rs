@@ -6,7 +6,7 @@
 //! 1. The reason-protection check read `lits[0]` only (valid for
 //!    watch-propagated clauses, where propagate assigns `clause[0]`), but
 //!    BIG-propagated binaries can have their implied literal at either
-//!    position — the guard missed them and the clause was deleted while a
+//!    position – the guard missed them and the clause was deleted while a
 //!    trail literal still recorded it as reason.
 //! 2. Deleting a binary without purging its implication-graph edges left a
 //!    stale BIG edge that kept propagating implications of the deleted

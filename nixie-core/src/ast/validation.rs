@@ -86,7 +86,7 @@ fn eval_cached(
                         cache.insert(id, Some(ModelValue::Real(BigRational::new(numer, denom))));
                     }
                     // A field numeral is already normalized into [0, p)
-                    // at construction; carried exactly (`BigInt` — the ZK
+                    // at construction; carried exactly (`BigInt` – the ZK
                     // moduli are 254 bits, and this value feeds certified
                     // mode, where truncation would certify wrong models).
                     TermKind::FfConst { value, field } => {
@@ -348,7 +348,7 @@ fn eval_cached(
                         _ => None,
                     },
                     TermKind::Distinct(args) => {
-                        // Every operand must be fully evaluated — no partial
+                        // Every operand must be fully evaluated – no partial
                         // judgement on a partial table. The comparison is
                         // structural over `ModelValue` (derived `Eq`):
                         // uninterpreted values compare by (sort, id), so two
@@ -886,7 +886,7 @@ fn ff_modulus(field: &crate::sort::field::FieldId, manager: &TermManager) -> Opt
     ))
 }
 
-/// Fold from the FIRST operand (no externally supplied neutral element —
+/// Fold from the FIRST operand (no externally supplied neutral element –
 /// the field's own zero/one depend on the field the operands name).
 fn fold_operands_from_first(
     args: &[TermId],
@@ -1724,7 +1724,7 @@ mod deep_walk_tests {
 // ======== UF certificate evaluation (2026-09 extension) ========
 //
 // `Apply` evaluates by per-application model lookup and `Distinct` by exact
-// pairwise comparison — the two arms the certified-mode UF model
+// pairwise comparison – the two arms the certified-mode UF model
 // certificate depends on. These units pin their semantics directly.
 
 #[cfg(test)]

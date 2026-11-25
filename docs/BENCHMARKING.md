@@ -1,7 +1,7 @@
 # Measuring Heuristic Changes in Nixie
 
 How to tell whether a search-heuristic change actually helped. This is a **methodology**
-document, not an API guide — for API pitfalls see [`PITFALLS.md`](PITFALLS.md).
+document, not an API guide – for API pitfalls see [`PITFALLS.md`](PITFALLS.md).
 
 It applies to any change that alters the *path* the search takes without altering the answer:
 branching, phase/polarity, restarts, rephasing, clause deletion, inprocessing schedules,
@@ -14,7 +14,7 @@ required. See `AGENTS.md`.
 
 ## 1. The core problem: CDCL is chaotic
 
-A CDCL solver is a chaotic dynamical system. Perturb it anywhere and the trajectory diverges —
+A CDCL solver is a chaotic dynamical system. Perturb it anywhere and the trajectory diverges –
 different conflicts, different learned clauses, different everything downstream. So what you
 measure after a change is always two things added together:
 
@@ -30,7 +30,7 @@ The second term is not small. Measured on this repo's own benchmarks (18 instanc
 | **changing only the RNG seed** (identical solver, identical schedule) | **7.31×** |
 | the entire effect being hunted (rephase policy selection) | 2.05× |
 
-Per-instance the noise is strongly bimodal — some instances are effectively deterministic
+Per-instance the noise is strongly bimodal – some instances are effectively deterministic
 (`c7552` 1.1× max/min across 12 seeds), others are wild (`fsf-300-354` **203×**, `case17` 49×).
 Mean within-instance sd of log cost: **0.52**.
 
@@ -38,7 +38,7 @@ A 2× improvement and a 2× coincidence are indistinguishable without a control.
 
 ---
 
-## The landing gate — run before landing solving-path changes
+## The landing gate – run before landing solving-path changes
 
 Heuristic-comparison discipline (§2) governs *experiments*.  The **landing
 gate** governs *landings*: every commit that touches solving (nixie-sat,
@@ -53,7 +53,7 @@ It compares the candidate against a pinned precompile binary on a fixed
 9-instance in-repo corpus (plus optional big external instances when the
 gitignored corpora are present) using **deterministic solver counters**
 (conflicts, falling back to decisions/propagations for
-propagation-decided instances — verified bit-identical across repeated
+propagation-decided instances – verified bit-identical across repeated
 runs; never wall-clock).  Thresholds mirror the neutrality band:
 
 * verdict mismatch vs baseline → **FAIL** (soundness canary),
@@ -64,7 +64,7 @@ runs; never wall-clock).  Thresholds mirror the neutrality band:
 
 Why this exists: the 36 h window ending 2026-09-15 landed ~15 commits each
 carrying soundness-only verification while aggregate solving cost regressed
-3× (uncached env probes) and a further ~1.4× content-level — chaos cancels
+3× (uncached env probes) and a further ~1.4× content-level – chaos cancels
 in the geomean, a shifted geomean is a process signal, and nothing measured
 cost.  See `docs/studies/2026-09-15-env-probe-regression.md`.
 
@@ -75,7 +75,7 @@ commit.  Seed replication (§4, ≥10 seeds) is available via
 
 ## 2. The rule: every heuristic comparison ships with a matched null
 
-A **null** is a placebo — a change that perturbs the search but contains no useful information.
+A **null** is a placebo – a change that perturbs the search but contains no useful information.
 It answers: *what would I have measured if my idea were worthless?*
 
 **Matched** is the load-bearing word. The null must perturb the search **as hard as** the real
@@ -101,7 +101,7 @@ thing with the meaning scrambled.
 | new phase/rephase action | same phase-array rewrite, but content randomised |
 | new clause-deletion heuristic | delete the same number of clauses, chosen by a scrambled score |
 | new branching order | same score distribution, permuted across variables |
-| any learned model | permute the weights, or shuffle the training labels — preserves the output distribution, severs the input→output mapping |
+| any learned model | permute the weights, or shuffle the training labels – preserves the output distribution, severs the input→output mapping |
 
 The last row is the general ML form: keep the marginal output distribution identical, destroy
 the relationship to the input. If the model still "wins", it was never using its input.
@@ -125,7 +125,7 @@ the relationship to the input. If the model still "wins", it was never using its
 ## 3. Cost metrics: deterministic, and actually complete
 
 **Never use wall-clock time as the primary metric**, and never as a policy *input*. Other work
-on the machine contaminates it, and a time-dependent solver is nondeterministic — which breaks
+on the machine contaminates it, and a time-dependent solver is nondeterministic – which breaks
 `bench/z3_parity/run_parity.sh`, bug reproduction, and differential fuzzing.
 
 Use tick/propagation counters. But **verify the counter covers all the work you changed.**
@@ -138,8 +138,8 @@ deterministic proxy tracks reality.
 
 ### Cost is not score: report both
 
-A geomean tick ratio answers *“is the search cheaper?”*. A competition — and this repo's
-standing table — scores `P(solve < T)`: the fraction of instances that finish inside a
+A geomean tick ratio answers *“is the search cheaper?”*. A competition – and this repo's
+standing table – scores `P(solve < T)`: the fraction of instances that finish inside a
 fixed cap. Under the heavy tail measured in §5 those two objectives come apart, and a
 change can be flat on one while moving the other in either direction.
 
@@ -150,12 +150,12 @@ the first, and when to believe it.
 
 ### The neutrality band: ±5%
 
-A geomean effect within **±5%** is **neutral** — reported as neutral, never as a win or a
+A geomean effect within **±5%** is **neutral** – reported as neutral, never as a win or a
 loss.
 
 The band is a *practical-significance* threshold, not a confidence interval. Paired
 deterministic counters (e.g. instructions-to-verdict under trajectory identity) repeat nearly
-bit-exactly, so a 3% shift is usually real — and still not actionable: an effect that small
+bit-exactly, so a 3% shift is usually real – and still not actionable: an effect that small
 does not justify added complexity, a new maintenance surface, or soundness-adjacent risk,
 and it sits inside the day-to-day trajectory reshuffle of unrelated changes landing next to
 it. Effects at or beyond the band need the full §2/§5 machinery (matched null, seeds,
@@ -164,12 +164,12 @@ families) before they mean anything at all.
 Corollaries:
 
 - A pre-registered go bar (e.g. ≥ 1.02×) is legitimate: it prices the change's complexity.
-  Landing *inside* the band while failing the bar is a neutral outcome, not a "regression" —
+  Landing *inside* the band while failing the bar is a neutral outcome, not a "regression" –
   the write-up must say "neutral, below the pre-registered bar", not "slower".
 - Conversely, a within-band *end-to-end* effect is never, by itself, a reason to land a
-  change — **with one landing corollary**: a component-level effect **above** the band paired
+  change – **with one landing corollary**: a component-level effect **above** the band paired
   with a **neutral** end-to-end result is landable when the component improvement is measured
-  real and the landing adds **no new risk — verified as inert (or measured) on every path
+  real and the landing adds **no new risk – verified as inert (or measured) on every path
   that executes the component, not merely on the presets you benchmarked**.  A SAT-core
   change is an SMT-path change whenever the embedded CDCL(T) core executes it (the SMT
   default runs inprocessing): the trie-vivify landing answered "no new risk" from the
@@ -182,13 +182,13 @@ Corollaries:
 - **Enablement rule (2026-08-25, direction)**: the statistical bar above governs *claims
   of improvement* (win/loss language, "N% faster").  It is not the bar for deciding
   whether a **sound-by-construction mechanism runs by default**.  A change may be enabled
-  by default when (a) its soundness is an argument, not a measurement — every unsafe
+  by default when (a) its soundness is an argument, not a measurement – every unsafe
   interaction is excluded structurally, and (b) screening shows **no obvious regress**:
   a full differential at the new default with **0 verdict disagreements** and a solved
   count not worse than the previous default.  Default flips under this rule still ship
   with the fresh differential and parity from (b); if the later multi-seed A/B shows the
   default was the wrong call, the revert is a one-line flip, not a measurement program.
-  (First application: freeze-set collapse, `studies/2026-08-freeze-set-collapse.md` —
+  (First application: freeze-set collapse, `studies/2026-08-freeze-set-collapse.md` –
   +3 solved / 0 lost / 0 disagreements at default-on.)
 - The band applies to *measured* geomeans from paired, deterministic, complete-work metrics.
   Unpaired or single-seed numbers may not borrow it to claim neutrality: establish the
@@ -204,7 +204,7 @@ directly: forcing a constant rephase action gave bit-identical costs across seed
 instance.
 
 Comparing a deterministic policy against a stochastic baseline **at a single seed** compares a
-fixed point against one draw from a distribution — and you happened to draw the baseline's
+fixed point against one draw from a distribution – and you happened to draw the baseline's
 value. In the case above, the constant policy looked like a winner at seed 0 but was **2.8×
 worse** than the default across all 36 (instance, seed) cells.
 
@@ -226,13 +226,13 @@ From the measured noise (sd of log cost = 0.52), runs needed for 80% power at α
 
 Consequences:
 
-- **Common-random-numbers pairing is mandatory, not optional** — same instances, same seeds,
+- **Common-random-numbers pairing is mandatory, not optional** – same instances, same seeds,
   same order across arms. It cuts required runs ~8×.
 - A "3% PAR-2 improvement" claim on a few hundred single-seed runs is **unfalsifiable**. Do not
   make it, and do not accept it.
 - Prefer seed-insensitive instances during development (`c7552`, `AProVE07-21`, `SCPC-500-*`,
   `div-mitern172` all have max/min < 1.6×). Signal is visible there at a fraction of the cost.
-- Report per-family results, never aggregate-only. Report SAT and UNSAT separately —
+- Report per-family results, never aggregate-only. Report SAT and UNSAT separately –
   `satlib/RND3SAT/UUF*` is entirely unsatisfiable and makes a good negative control.
 
 ---
@@ -243,7 +243,7 @@ A per-instance or per-decision "virtual best" selected with hindsight is an **up
 a result. It capitalises on chaos. Always validate by replaying the discovered configuration
 under a **fresh seed**.
 
-Worked example from the rephase study — a Bertsekas rollout choosing the best action at each
+Worked example from the rephase study – a Bertsekas rollout choosing the best action at each
 rephase boundary:
 
 | | geomean gain |
@@ -255,7 +255,7 @@ Individual inversions were severe: 7.29× → 0.19×, 12.45× → 0.45×. **80% 
 was fitted to one trajectory.**
 
 A useful diagnostic: correlate the apparent advantage against per-instance seed-noise. In that
-study, Pearson r = **+0.84** — the "signal" lived almost entirely on chaotic instances. On
+study, Pearson r = **+0.84** – the "signal" lived almost entirely on chaotic instances. On
 seed-stable instances the advantage over the matched null was 1.13×; on noisy ones, 4.24×. When
 your effect appears only where measurement is least reliable, it is measurement, not effect.
 
@@ -275,7 +275,7 @@ Before claiming a heuristic change helped:
 - [ ] ≥10 seeds per cell; baseline reported as a distribution
 - [ ] Common-random-numbers pairing across arms
 - [ ] Effect size checked against the power table in §5
-- [ ] Geomean within ±5% reported as **neutral** (§3 band) — no win/loss language, no landing or reverting on it alone
+- [ ] Geomean within ±5% reported as **neutral** (§3 band) – no win/loss language, no landing or reverting on it alone
 - [ ] Any hindsight-selected configuration replayed at a fresh seed
 - [ ] Per-family and SAT/UNSAT breakdowns reported
 - [ ] Solved-at-cap reported alongside the geomean ratio, over the same paired runs (§3, §11)
@@ -283,7 +283,7 @@ Before claiming a heuristic change helped:
 - [ ] Wall-clock confirmed on a quiet machine
 - [ ] `./bench/z3_parity/run_parity.sh` clean (soundness is unaffected by any of the above)
 - [ ] Go/no-go metrics and falsification criteria written down **before** running (§10)
-- [ ] Ladder position stated: telemetry / shadow / flag-gated — no default flip without passing gates (§10)
+- [ ] Ladder position stated: telemetry / shadow / flag-gated – no default flip without passing gates (§10)
 - [ ] Baseline arm is the strongest relevant existing path (plus reference solver where one exists), not a strawman (§10)
 - [ ] Every raw run recorded with `benchstore.py`; existing cells reused, never re-run (§9)
 
@@ -296,7 +296,7 @@ All numbers in this document come from it. ~1 530 solver runs on an instrumented
 CaDiCaL 3.0.1.
 
 **Question.** CaDiCaL's `rephase()` picks from six actions (`original`, `inverted`, `flipping`,
-`random`, `best`, `walk`) via a hardcoded round-robin on a counter — it observes nothing about
+`random`, `best`, `walk`) via a hardcoded round-robin on a counter – it observes nothing about
 the instance or search state. Z3's `do_rephase()` is the same shape. Is that fixed schedule
 leaving value on the table, i.e. is it worth learning?
 
@@ -304,10 +304,10 @@ leaving value on the table, i.e. is it worth learning?
 actions at each rephase boundary.
 
 **Matched null.** The same rollout over six variants of `rephase_random` under different RNG
-nonces — same operation (full phase-array rewrite), same magnitude, same 6-way branching, zero
+nonces – same operation (full phase-array rewrite), same magnitude, same 6-way branching, zero
 heuristic content.
 
-**Outcome — the controls caught two real but meaningless measurements:**
+**Outcome – the controls caught two real but meaningless measurements:**
 
 | headline measurement | matched control | verdict |
 |---|---|---|
@@ -323,7 +323,7 @@ decision point the variance is chaos, not action semantics.
 planned restart-level RL selector was cancelled on this evidence. Untouched by the study, and
 still open: per-*variable* phase policies and one-shot pre-search phase initialisation.
 (Corrected 2026-09-02: this list originally included "the `target` phase array that Nixie
-still lacks entirely" — stale: cadical-faithful target phases landed 2026-08-15 in
+still lacks entirely" – stale: cadical-faithful target phases landed 2026-08-15 in
 `7cb81f5` and are wired through `decision_polarity` / `update_target_and_best` /
 `copy_phases(PhaseArray::Target)`.)
 
@@ -345,7 +345,7 @@ Results live in the same per-machine, gitignored tree as the precompiled binarie
 precompile/<sha-short>/benchmark/runs/<suite>/<instance>__<inst8>__c<cfghex16>__s<seed>.json
 ```
 
-- One JSON file per `(instance × config × seed)` run — `nixie-bench-record/1` schema.
+- One JSON file per `(instance × config × seed)` run – `nixie-bench-record/1` schema.
 - **Config identity is content-addressed.** The `c<cfghex16>` segment is
   `sha256(canonical flags)[:16]`; `config.id` is a human label only. Two arms with different
   labels but identical flags are **the same cell** (recorded once); any behavioural difference
@@ -408,7 +408,7 @@ Experiment protocol:
 2. `$BENCH missing manifest.json` → run exactly those cells, with the target sha's precompiled
    binary.
 3. `record` each run immediately after it finishes.
-4. Compare arms by joining stored records on `(instance sha256, config id, seed)` — common-random-
+4. Compare arms by joining stored records on `(instance sha256, config id, seed)` – common-random-
    number pairing holds by construction.
 
 Rules:
@@ -430,14 +430,14 @@ measure; these rules say how an experiment is allowed to proceed.
    `telemetry/oracle study → shadow mode → flag-gated matched-null A/B → default flip`.
    No behaviour change before the previous gate passes with pre-registered exit criteria. All eight
    novel-agenda proposals start instrumentation-only for exactly this reason; four local policy
-   ports died at the null without ever touching default behaviour — which was the system working.
+   ports died at the null without ever touching default behaviour – which was the system working.
 2. **Pre-register falsification.** Write the go/no-go metrics and the falsification criteria into
    the study doc *before* running. Post-hoc metrics migrate toward whatever moved. Intermediate
    proxies are not success: "a stronger relaxation violation by itself is not success"; "a reduced
    pivot count is insufficient if row work or coefficient growth increases".
 3. **Strongest-baseline rule.** The baseline arm is the strongest relevant existing Nixie path, and
    where a reference implementation exists the treatment is also compared against it. Beating a
-   weakened arm proves nothing — and beating a *superseded* reference proves less than it looks
+   weakened arm proves nothing – and beating a *superseded* reference proves less than it looks
    (§12). For SAT-side work the reference arms are **kissat** (the goal) and cadical (the parity
    source); for SMT, `z3`.
 4. **Tick-accounting changes are schedule changes.** They alter budgets globally and therefore
@@ -470,7 +470,7 @@ Recall the measured distribution: sd of log cost **0.52**, per-instance seed spr
 
 Both appear as "an x% geomean effect". So the ±5% neutrality band in §3 governs *cost*
 claims; it is not a verdict on *score*. A change inside the band with a real, paired,
-repeatable solved-at-cap gain is a legitimate landing candidate — reported honestly as
+repeatable solved-at-cap gain is a legitimate landing candidate – reported honestly as
 "cost-neutral, +N solved at cap", never as "N% faster".
 
 The converse guard matters more, because it is the easier mistake: **a solved-at-cap
@@ -478,7 +478,7 @@ gain of a few files is well inside the noise of a 261-file table.** Two runs of 
 binary at different seeds routinely differ by several files (see the standing-gap study's
 own load-margin erratum, where the 60 s 6-way cap turned two ~51 s solves into TOs).
 Treat solved-at-cap exactly like any other measurement: paired, ≥10 seeds, matched null,
-per-family. The flip *list* is the evidence, not the flip *count* — a change that gains 6
+per-family. The flip *list* is the evidence, not the flip *count* – a change that gains 6
 and loses 4 has produced a reshuffle, not an improvement, unless the gains concentrate
 somewhere the mechanism predicts.
 
@@ -488,7 +488,7 @@ This follows from the same distribution and is the non-obvious half.
 
 Competition score is `P(cost < T)` per instance. If your expected cost on a class of
 instances is above the cap and the opponent's is below it, **reducing your variance
-lowers your score and increasing it raises your score** — the trailing player wants a
+lowers your score and increasing it raises your score** – the trailing player wants a
 wider distribution, because only the lucky tail crosses the line. This is the standard
 trailing-team result from optimal-stopping and portfolio theory, and it applies to the
 17 residual files in the standing table more or less exactly.
@@ -501,7 +501,7 @@ Practical consequences for study design:
   randomised action) can be geomean-positive and score-negative on the classes where we
   are behind. The stable-mode `RANDPOL` landing is the counter-example worth remembering:
   removing randomness there was **+16 standing files**, because on those instances we
-  were *not* behind on expectation — the randomness was destroying a working descent.
+  were *not* behind on expectation – the randomness was destroying a working descent.
   Both directions are real; which one applies is an empirical question about where the
   class's cost distribution sits relative to the cap, and that is measurable before the
   change is built.
@@ -520,10 +520,10 @@ oracle from the standing-gap study) seeds the saved/target/best arrays with a kn
 on `worker_550` that produced **sat with 0 conflicts, 28 987 decisions, pure descent**.
 That experiment establishes that for the model-finding loss class, the *correct decision
 is known*. So a candidate phase source can be scored by **agreement with the oracle
-phases** — a per-instance, near-deterministic quantity needing no seeds, no matched null,
+phases** – a per-instance, near-deterministic quantity needing no seeds, no matched null,
 and no cap.
 
-Generalised: any instance solvable twice yields an oracle for some decision — the model
+Generalised: any instance solvable twice yields an oracle for some decision – the model
 (correct polarity), the final proof's clause usage (which learned clauses mattered), the
 minimised core (which assumptions mattered). Screening candidate heuristics on
 oracle-agreement costs a fraction of a runtime A/B and has no chaos term.
@@ -543,7 +543,7 @@ Two rules keep this honest:
 ## 12. The reference bar: kissat is the goal, cadical is the parity source
 
 Added 2026-09-01. Every standing SAT measurement in this repo to date used **CaDiCaL** as
-the reference — most recently 145 vs 162 on the 261-file table
+the reference – most recently 145 vs 162 on the 261-file table
 ([`studies/2026-08-satcomp-standing-gap.md`](studies/2026-08-satcomp-standing-gap.md)).
 That choice is correct for one purpose and wrong for the other, and the two were conflated.
 
@@ -586,8 +586,8 @@ kissat --statistics <file.cnf>        # deterministic counters
 
 ### Counter completeness (§3) applies, differently
 
-§3's warning — CaDiCaL's printed `ticks` is `searchticks + inprobeticks` and silently
-excludes local search — has a kissat analogue that is easier to get wrong. kissat splits
+§3's warning – CaDiCaL's printed `ticks` is `searchticks + inprobeticks` and silently
+excludes local search – has a kissat analogue that is easier to get wrong. kissat splits
 its deterministic work across **at least seven** counters:
 
 ```
@@ -596,13 +596,13 @@ backbone_ticks  substitute_ticks  transitive_ticks
 ```
 
 Measured on `constraints_17_0.4_1`: `search_ticks` 230.9 M, `probing_ticks` 40.8 M,
-`factor_ticks` 19.9 M, `kitten_ticks` 3.2 M, the remaining three 2.3 M — so
+`factor_ticks` 19.9 M, `kitten_ticks` 3.2 M, the remaining three 2.3 M – so
 **`search_ticks` alone is 78% of the summed total on that instance**, and the shortfall is
 largest exactly on the instances where kissat's inprocessing is doing the winning. Sum the counters, or compare on a metric whose
 coverage has been verified on the instance at hand
 (`metrics.counter_coverage_verified` is a required record field for this reason).
 
-Two of those counters name inprocessing components Nixie does not have — `factor_ticks`
+Two of those counters name inprocessing components Nixie does not have – `factor_ticks`
 (structured factoring/BVA) and `kitten_ticks` (the embedded sub-solver used for sweeping).
 Where a kissat comparison shows a large gap, check first whether the gap lives in a
 component we simply do not run; that is a different (and cheaper) finding than a decision-
@@ -612,7 +612,7 @@ quality deficit.
 
 The standing table is the repo's headline number, and it currently has no kissat column.
 Re-running it is a mechanical, well-defined job that produces the first honest statement
-of the actual competitive gap — recorded as a follow-up in
+of the actual competitive gap – recorded as a follow-up in
 [`2026-08-novel-research-agenda.md`](2026-08-novel-research-agenda.md) §*2026-09 addendum*.
 Until it exists, no document in this repo should describe the SAT core's standing in
 competition terms.

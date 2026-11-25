@@ -1,7 +1,7 @@
 //! Nullary `define-fun` handling regressions.
 //!
 //! The Context historically asserted `(= name body)` for every nullary
-//! `define-fun` — definitionally satisfiable, added for `get-model`
+//! `define-fun` – definitionally satisfiable, added for `get-model`
 //! visibility.  On macro-heavy inputs (the `goto_symex`/Sydr files declare
 //! tens of thousands of nullary definitions, each body referencing earlier
 //! bodies) that ran the full per-assert preprocessing+blasting pipeline over
@@ -15,14 +15,14 @@
 //!
 //! These tests pin the contract the change must preserve:
 //!
-//! 1. **No constraint** — a definition cannot change satisfiability
+//! 1. **No constraint** – a definition cannot change satisfiability
 //!    (`define_does_not_constrain`).
-//! 2. **Model visibility** — the name lists at its *defined* value, for
+//! 2. **Model visibility** – the name lists at its *defined* value, for
 //!    constant bodies, compound bit-vector bodies over pinned variables,
 //!    and chained definitions (`define_lists_defined_value_*`).
-//! 3. **`get-value`** — unchanged (the parser inlines the body at use
+//! 3. **`get-value`** – unchanged (the parser inlines the body at use
 //!    sites; the value comes from the body itself).
-//! 4. **Ingestion scale** — thousands of chained definitions parse and
+//! 4. **Ingestion scale** – thousands of chained definitions parse and
 //!    check in bounded time (`chained_defines_ingest_linearly`): the
 //!    historical quadratic made this class of input unsolvable *before*
 //!    the search began.
@@ -71,7 +71,7 @@ fn define_lists_defined_value_constant() {
 
 /// Compound BV body over a pinned variable: the name lists at the body's
 /// value under the model (`hi = x + 1 = 8` when `x = 7`).  `Model::eval`
-/// alone cannot fold BV operators — the resolution substitutes model
+/// alone cannot fold BV operators – the resolution substitutes model
 /// assignments first, exactly like `get-value`'s completion.
 #[test]
 fn define_lists_defined_value_compound_bv() {
@@ -112,7 +112,7 @@ fn define_lists_defined_value_chained() {
 }
 
 /// `get-value` on the name: the parser inlines the body, so the value is
-/// the body's — this contract predates the alias change and must survive.
+/// the body's – this contract predates the alias change and must survive.
 #[test]
 fn define_get_value_reports_body() {
     let out = run(r#"

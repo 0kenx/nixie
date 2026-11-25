@@ -271,7 +271,7 @@ have no potential benefit.
 
 ## Additional capability gates
 
-**Formal harness — drop at the required-verifier gate.** The package requires
+**Formal harness – drop at the required-verifier gate.** The package requires
 an unpublished `oxiformal` checkout and `cargo formal`. The current dev-shell
 PATH has no `cargo-formal`; no corresponding crate exists under the supplied
 reference checkouts. The original package explicitly distinguishes its plain
@@ -281,7 +281,7 @@ no solver-runtime cost, but zero runtime cost does not substitute for a verified
 benefit. No external toolchain was fabricated and no historical upstream proof
 result was relabeled as a Nixie result.
 
-**Diagnostic tools — apply.** The restored tools, with the partial-model
+**Diagnostic tools – apply.** The restored tools, with the partial-model
 accounting fix below, pass ten Python tests and four actual Z3 4.16.0 controls:
 a falsifying datatype model, a consistent partial function model, a valid
 recursive-function model, and a valid constant-array model. This candidate
@@ -373,7 +373,7 @@ Full-process retired instructions, not profile sample percentages or wall time,
 remain the primary cost measurement.
 
 
-### General function retries — drop
+### General function retries – drop
 
 The isolated production candidate `001cd07b` restores only the three guarded
 Ackermann refinement/re-solve sites. The clause construction was checked against

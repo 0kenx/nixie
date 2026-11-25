@@ -1,4 +1,4 @@
-//! The symbol table, its disambiguation, and the renaming pass — a port of
+//! The symbol table, its disambiguation, and the renaming pass – a port of
 //! `PcalSymTab`, `PcalSymTab.Disambiguate` and `PcalFixIDs`.
 //!
 //! PlusCal's four name spaces (variables, labels, processes, procedures)
@@ -7,8 +7,8 @@
 //! visible in every generated definition name: names are considered in type
 //! order (global, label, procedure, process, process variable, procedure
 //! variable, parameter), earlier types keep their spelling, and each later
-//! collision grows a suffix — `_`, then characters of the defining context,
-//! then the type number — until unique. Two labels spelled alike in
+//! collision grows a suffix – `_`, then characters of the defining context,
+//! then the type number – until unique. Two labels spelled alike in
 //! different processes are the corpus's live example (`l0` → `l0_`).
 
 use super::ast::*;

@@ -1,4 +1,4 @@
-# Study B (pre-registered): walk warmup — closing the cadical parity gap
+# Study B (pre-registered): walk warmup – closing the cadical parity gap
 
 Part of the 2026-09 SAT-core campaign (O3/KR3). Pre-registration written
 **before** any A/B measurement.
@@ -6,7 +6,7 @@ Part of the 2026-09 SAT-core campaign (O3/KR3). Pre-registration written
 ## Background
 
 CaDiCaL's `walk.cpp` runs a propagation-based **warmup** before every walk
-round (`options.hpp`: `OPTION(warmup, 1, 0, 1, ...)`, default **on** —
+round (`options.hpp`: `OPTION(warmup, 1, 0, 1, ...)`, default **on** –
 "warmup before walk using propagation"): decide + propagate to a full
 assignment *ignoring conflicts*, seed the saved phases with it, then let
 the ProbSAT round start from a propagation-consistent assignment. Nixie's
@@ -25,7 +25,7 @@ on chain-like structure (the warmup's claim to work).
 Warmup-on (cadical parity) reduces conflicts-to-verdict on walk-active
 files at equal or better solved-at-cap, versus both the default (off) and
 a matched null that runs the identical warmup pass but **scrambles the
-semantic content** of what it writes (every written phase bit inverted —
+semantic content** of what it writes (every written phase bit inverted –
 same pass, same work, same schedule, same RNG stream, information
 destroyed).
 
@@ -53,7 +53,7 @@ changes the RNG stream (warmup consumes no draws; inversion consumes none).
   seed-0..9 (10 seeds), 54 corpus files, 60 s cap. Counters primary; wall
   sanity only.
 - Falsification: if warmup shows no effect at all at seed 0 on every file
-  (identical conflicts), the wiring is dead — fix or close.
+  (identical conflicts), the wiring is dead – fix or close.
 
 ## Rung 0 (telemetry, before A/B)
 
@@ -61,13 +61,13 @@ changes the RNG stream (warmup consumes no draws; inversion consumes none).
 2. Confirm the warmup actually runs (walk_counters warmups > 0) and changes
    trajectories where it fires.
 
-## Result: null — the semantic content provably does nothing (T/N = 1.0000×)
+## Result: null – the semantic content provably does nothing (T/N = 1.0000×)
 
 Rung 0 (seed 0, 54 files, 60 s cap): warmup ran on 20 files (walk rounds
-present) and changed trajectories on 25 files — the wiring is live. But
+present) and changed trajectories on 25 files – the wiring is live. But
 the treatment and the matched null produced **bit-identical conflict
 counts on 53/54 files** (the 54th: `j3037_10_mdd_b`, where the treatment
-TO'd and the null solved — TO-censoring, not a content effect).
+TO'd and the null solved – TO-censoring, not a content effect).
 
 Full pre-registered A/B (10 seeds × 54 files × 4 arms, counters only;
 sweep on 11 pinned cores, load-safe metrics):
@@ -79,12 +79,12 @@ sweep on 11 pinned cores, load-safe metrics):
 | warmup-null (null) | 394 | 38–41 |
 | els (reference arm, see study A) | 396 | 36–43 |
 
-- **Geomean null/treatment over 250 both-solved pairs: 1.0000×** — the
+- **Geomean null/treatment over 250 both-solved pairs: 1.0000×** – the
   inverted-phase null is the treatment, bit-for-bit, wherever both decide.
 - Geomean warmup/off over 219 pairs: 0.9687× (inside the ±5 % neutrality
-  band) — and since the null shows the phase content carries nothing, this
+  band) – and since the null shows the phase content carries nothing, this
   3 % is the pass's *schedule* side effects (the warmup's ignored-conflict
-  propagation bumps counters/scores — a tick-accounting change, BENCHMARKING
+  propagation bumps counters/scores – a tick-accounting change, BENCHMARKING
   §10.4), not the claimed mechanism.
 - The seed-0 ±9 verdict-move split (frb65/64_25/FmlaEquiv/shuffling win,
   mp1/Timetable/stable-300 lose) is textbook trajectory reshuffle: frb65
@@ -94,7 +94,7 @@ sweep on 11 pinned cores, load-safe metrics):
 
 **Verdict: documented null. The pre-registered win condition (T/N ≤ 0.95
 with no solved-at-cap regression) fails at T/N = 1.0000. The walk-warmup
-default stays OFF** — cadical-parity alone does not justify a knob whose
+default stays OFF** – cadical-parity alone does not justify a knob whose
 measured information content is zero on this corpus; the pass is available
 as `NIXIE_WARMUP=1` for any corpus where propagation-seeded phases plausibly
 matter.
@@ -103,7 +103,7 @@ matter.
 
 The same sweep's `ELS=1` arm re-tests the 2026-09-05 single-seed screen
 (then: −9 files at cap): across 10 seeds ELS-on measures **396 vs 391
-solved** (means 39.6 vs 39.1, per-seed ranges 36–43 vs 37–41 — inside
+solved** (means 39.6 vs 39.1, per-seed ranges 36–43 vs 37–41 – inside
 seed noise) with conflicts geomean **0.9525×** over 244 pairs. The −9
 loss does not replicate; `64_25` is the one consistent ELS loser
 (Sat→TO at all five decisive seeds). ELS stays default-off: the corpus-level

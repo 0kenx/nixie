@@ -16,18 +16,18 @@
 //!    *relaxation*: it knows the linear structure and nothing at all about the
 //!    multiplication.
 //! 2. If the relaxation is infeasible, the original problem is unsat and we are
-//!    done — dropping the nonlinear semantics only ever *weakens*, so an
+//!    done – dropping the nonlinear semantics only ever *weakens*, so an
 //!    infeasible relaxation is a sound refutation.
 //! 3. If it is feasible, the model may violate a monic (`v != x * y` under the
 //!    returned assignment). That is where `monomial_bounds` and `lemmas`
 //!    come in: interval propagation over the monics either derives a conflict
 //!    directly, or the lemma constructors emit linear consequences of the
 //!    multiplication that the current model falsifies. Those are added to the
-//!    relaxation and the loop repeats — the *lemma cascade*, driven by the
+//!    relaxation and the loop repeats – the *lemma cascade*, driven by the
 //!    crate-private `engine::NlaEngine`.
 //! 4. When neither propagation nor a cut makes progress, the engine splits a
-//!    case — on a factor's sign where that is still open, otherwise on a
-//!    factor's value — and recurses into every case.
+//!    case – on a factor's sign where that is still open, otherwise on a
+//!    factor's value – and recurses into every case.
 //!
 //! # Soundness contract
 //!
@@ -44,7 +44,7 @@
 //! * *derived bounds*, each computed by checked interval arithmetic over bounds
 //!   already in scope;
 //! * *lemmas*, each a linear consequence of a product under premises the engine
-//!   has established — global ones (the square tangent `(x-a)² ≥ 0`) at any
+//!   has established – global ones (the square tangent `(x-a)² ≥ 0`) at any
 //!   scope, branch-local ones only inside the case that establishes them;
 //! * *branch atoms* at scopes at or above the node, whose cases are exhaustive
 //!   over `Z` (`x ≤ -1 ∨ x = 0 ∨ x ≥ 1`, and `v ≤ k ∨ v ≥ k+1` for integral
@@ -58,12 +58,12 @@
 //! [`crate::nl_eval::holds_under`] against the *original* assertions.
 //! [`check_assertions`] performs that verification itself before returning, so
 //! a `Sat` it hands back has already been checked in exact `BigInt` arithmetic
-//! — but the contract stays advisory so that a caller which rewrote the goal on
+//! – but the contract stays advisory so that a caller which rewrote the goal on
 //! the way in still re-checks against what it actually needs to answer about.
 //!
 //! **Every degradation goes toward `Unknown`.** A coefficient that cannot be
 //! represented, a budget that runs out, a resource limit inside the LIA solver,
-//! a conjunct outside the linearisation grammar — each of these loses precision
+//! a conjunct outside the linearisation grammar – each of these loses precision
 //! or completeness and none of them can produce a wrong verdict. In particular
 //! `Linearization::incomplete` records
 //! that a conjunct was dropped: the resulting problem is *weaker*, so `Unsat`
@@ -109,8 +109,8 @@
 //! Every multiplication, addition and division on coefficients goes through the
 //! checked helpers re-exported by this module (mostly `arithmetic/simplex`'s).
 //! `None` means "cannot represent"; the caller then declines to derive anything
-//! rather than deriving something wrong. Monic consistency — the one check that
-//! could turn an overflow into a wrong `Sat` — is done in [`num_bigint::BigInt`]
+//! rather than deriving something wrong. Monic consistency – the one check that
+//! could turn an overflow into a wrong `Sat` – is done in [`num_bigint::BigInt`]
 //! instead, where nothing can wrap.
 
 pub(crate) mod engine;
@@ -174,7 +174,7 @@ pub(crate) fn checked_pow_r64(a: Rational64, e: u32) -> Option<Rational64> {
 /// Budgets for the nonlinear search.
 ///
 /// Every field bounds work, and exhausting any of them degrades the answer to
-/// [`NlaVerdict::Unknown`]. None of them affects which answers are *possible* —
+/// [`NlaVerdict::Unknown`]. None of them affects which answers are *possible* –
 /// a larger budget can only turn `Unknown` into a verdict, never one verdict
 /// into the other.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -285,7 +285,7 @@ pub fn check_assertions(
             };
             // Re-verify in exact arithmetic against the untouched input. The
             // engine's own consistency check already ran in `BigInt`, so this
-            // should never fail — but "should never" is not a soundness
+            // should never fail – but "should never" is not a soundness
             // argument, and the check is cheap next to the search.
             if holds_under(assertions, manager, &interp) {
                 NlaVerdict::Sat(interp)

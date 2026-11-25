@@ -27,7 +27,7 @@ pub struct GraphStatement {
     vertices: usize,
     false_term: TermId,
     /// `(from, to)` per edge, packed back to back for the witness checks'
-    /// edge scans — the full 16-byte tuples interleave the atom/negation
+    /// edge scans – the full 16-byte tuples interleave the atom/negation
     /// payload the scans never touch, doubling their cache footprint.
     /// Behind an `Arc` so statement clones stay O(1). A pure function of
     /// `edges`, keeping derived `PartialEq` consistent.
@@ -46,7 +46,7 @@ impl core::error::Error for GraphProofError {}
 
 /// Untrusted witness for `premises => conclusion` relative to one original
 /// graph declaration. The witness names the statement and carries an
-/// explicit justification structure the checker verifies directly —
+/// explicit justification structure the checker verifies directly –
 /// **no search, no closure recomputation** (the certificate path runs per
 /// emitted consequence inside the CDCL loop, so it must be linear in the
 /// witness; the recompute-based [`GraphStatement::check_lemma`] remains
@@ -70,13 +70,13 @@ pub enum GraphRule {
     /// `¬reach(from, to)` witnessed by a successor-closed vertex set
     /// `closed`: `from ∈ closed`, `to ∉ closed`, and every edge whose
     /// tail is in `closed` while its head is not has its negation among
-    /// the premises — so no premise-true edge leaves the set, and
+    /// the premises – so no premise-true edge leaves the set, and
     /// nothing reachable from `from` escapes it. The set is carried as a
     /// **membership bitmap** (vertex `v` ∈ closed ⇔ bit `v` set), shared
     /// by every rule the emitting memo produces: the emitting closure
     /// computes it once per lifetime as the packed complement of its
     /// `seen` array, and the per-consequence check then runs pure bit
-    /// tests — no set materialization on the checking path at all.
+    /// tests – no set materialization on the checking path at all.
     Cut {
         /// Separated source vertex.
         from: u32,
@@ -93,7 +93,7 @@ pub enum GraphRule {
     },
     /// `acyclic` witnessed by a topological order of the vertices: a
     /// permutation where every non-refuted edge ascends. Checking is
-    /// O(vertices + edges) with O(1) work per edge — no search, no
+    /// O(vertices + edges) with O(1) work per edge – no search, no
     /// closure. (The all-edges-refuted form is the degenerate order.)
     TopoOrder {
         /// A permutation of all vertex indices.
@@ -105,7 +105,7 @@ pub enum GraphRule {
     /// `closed ∪ {v}` has its head in `closed`. By induction `closed`
     /// contains every vertex reachable from `v` in ≥1 steps, so `v ∉
     /// closed` means no cycle through `v`. (A separating set cannot
-    /// witness the self-pair — `v` would have to be on both sides.)
+    /// witness the self-pair – `v` would have to be on both sides.)
     NoCycleThrough {
         /// The vertex the cycle must pass through.
         v: u32,
@@ -233,12 +233,12 @@ impl GraphCertificate {
                     return Err(GraphProofError("cut witness endpoints mismatch"));
                 }
                 // The witness bitmap is used as-is (pure bit tests; no set
-                // materialization on the checking path — this check runs
+                // materialization on the checking path – this check runs
                 // per emitted consequence, and over product-scale statements
                 // both hash sets and per-check fills dominated certificate
                 // checking). Endpoints come from the statement's packed
-                // (from, to) array — half the cache footprint of the full
-                // edge tuples — and only actual crossing edges touch the
+                // (from, to) array – half the cache footprint of the full
+                // edge tuples – and only actual crossing edges touch the
                 // atom/negation payload.
                 let bits = closed;
                 if bits.len() != self.statement.vertices_count().div_ceil(64) {
@@ -301,7 +301,7 @@ impl GraphCertificate {
                     return Err(GraphProofError("no-cycle witness set contains the vertex"));
                 }
                 // The region whose leaving edges must be premise-refuted is
-                // `closed ∪ {v}` (the `v` bit is tested inline — no copy of
+                // `closed ∪ {v}` (the `v` bit is tested inline – no copy of
                 // the shared witness).
                 let endpoints = self.statement.endpoints();
                 for (i, &(from_e, to_e)) in endpoints.iter().enumerate() {
@@ -526,7 +526,7 @@ impl GraphStatement {
         seen
     }
 
-    /// Is the subgraph of `kept` edges acyclic? (Kahn's algorithm —
+    /// Is the subgraph of `kept` edges acyclic? (Kahn's algorithm –
     /// iterative, explicit, independent of the propagator's detectors.)
     fn kept_is_acyclic(&self, keep: &dyn Fn(usize) -> bool) -> bool {
         let n = self.vertices;
@@ -606,7 +606,7 @@ impl GraphStatement {
     ///   literal whose opposite the remaining premises imply (recursion).
     ///
     /// Foreign premises are ignored (weakening). Every check recomputes an
-    /// explicit closure over the declaration — the propagator is untrusted.
+    /// explicit closure over the declaration – the propagator is untrusted.
     pub fn check_lemma(
         &self,
         conclusion: TermId,
@@ -926,7 +926,7 @@ mod tests {
         );
         // One live cycle edge keeps a cycle (the self-loop-free triangle
         // minus all-but-one edges is acyclic, so refute all but e20:
-        // that single edge alone cannot cycle) — actually any single edge
+        // that single edge alone cannot cycle) – actually any single edge
         // is acyclic; refute three, keep e12.
         assert!(
             statement

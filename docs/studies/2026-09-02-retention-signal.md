@@ -5,10 +5,10 @@
 >
 > The cadical-reduce port had two wrong-UNSAT leaks (O(1) `lits[0]` reason
 > check missing BIG-propagated binaries; binary deletion without BIG-edge
-> purge — see commit `3993905`). On SAT instances the leaks terminate runs
+> purge – see commit `3993905`). On SAT instances the leaks terminate runs
 > early with a spurious Unsat that a conflicts-only harness scores as a
 > *fast solve*; on UNSAT instances the spurious empty clause shortens runs
-> the same way. Re-run on the sound binary: **T/N geomean 1.0020** —
+> the same way. Re-run on the sound binary: **T/N geomean 1.0020** –
 > usage-ranking has no effect. The "6s167 usage stronghold (47×)" and the
 > "2026-08-22 cells no longer reproduce" finding were both the bug
 > speaking: today's cells reproduce the *sound* behavior, and the 47× was
@@ -30,11 +30,11 @@ All three run the cadical-reduce schedule (first reduction at conflict
 the same tier protection (glue≤2∧used>0 keep; glue≤6∧used≥30 keep) and
 the same deletion count (75 % of candidates):
 
-* **base** — legacy tiered reduce (the standing-table default arm).
-* **treat** (`NIXIE_CADICAL_REDUCE=1 NIXIE_REDUCE_BY_USED=1`) — candidates
+* **base** – legacy tiered reduce (the standing-table default arm).
+* **treat** (`NIXIE_CADICAL_REDUCE=1 NIXIE_REDUCE_BY_USED=1`) – candidates
   ranked **least-used-first** (used asc, then glue desc): clauses that
   have not participated in conflicts die first, regardless of glue.
-* **null** (`NIXIE_CADICAL_REDUCE_NULL=1`) — identical trigger points and
+* **null** (`NIXIE_CADICAL_REDUCE_NULL=1`) – identical trigger points and
   counts, uniform-random selection (partial Fisher–Yates; the existing
   matched-null arm).
 
@@ -70,7 +70,7 @@ measure. If the stable-300 anomaly is real signal (not chaos), usage is
 the minimal hypothesis that explains it: what the search actually reuses
 should be kept, independent of how the clause was born.
 
-## Results (2026-09-02, same day — 12 × 10 × 3 cells, 60 s cap)
+## Results (2026-09-02, same day – 12 × 10 × 3 cells, 60 s cap)
 
 | instance | treat med | null med | T/N | verdicts |
 |---|---|---|---|---|
@@ -84,10 +84,10 @@ should be kept, independent of how the clause was born.
 | frb65-12-2 | 54 131 | 60 384 | 0.896 | Sat |
 | si2-b03m | 36 875 | 36 690 | 1.005 | Sat |
 | Break_unsat_06_07 | 34 428 | 35 152 | 0.979 | Unsat |
-| g2-ak128booth | 0 | 0 | — | both solve pre-search |
+| g2-ak128booth | 0 | 0 | – | both solve pre-search |
 | barman-pfile06 | 1 041 | 1 302 | 0.799 | Unsat |
 
-**T/N geomean 0.9039, 5/11 families ≤ 0.95 — the advance gate (≤ 0.90 AND
+**T/N geomean 0.9039, 5/11 families ≤ 0.95 – the advance gate (≤ 0.90 AND
 ≥ 2/3 families) is NOT met. Per pre-registration: heterogeneous, switch
 stays `doc(hidden)` default-off.** Same shape as the 2026-08-22 reduce
 study: no consistent treatment/null separation.
@@ -96,26 +96,26 @@ study: no consistent treatment/null separation.
 
 1. **6s167-opt is a usage-signal stronghold, seed-robust**: treat spans
    909–18 881 conflicts over 10 seeds (median 2 528) vs the legacy base's
-   115–149k band — ~47× at median, with Unsat (seed-independent) on every
+   115–149k band – ~47× at median, with Unsat (seed-independent) on every
    arm. Spot-check (default seed): usage-ranked 909, glue-ranked 121 248,
    random 11 303, legacy base 118 191. Per-trigger deletion counts match
    the null contract (total deletions differ only because the treat runs
    are ~50× shorter). Even *random* deletion beats *glue-ranked* 10× on
-   this instance today — the glue ranking is actively harmful on this
+   this instance today – the glue ranking is actively harmful on this
    class, and usage is the strongest single signal measured here.
 2. **The 2026-08-22 study's arm cells no longer reproduce on the current
    tree**: its 6s167 null (random) median was 127 562 then; the same arm
    measures ~9–11k now (glue-ranked still ~121k, matching). The tree moved
    under it (default-elimination bundle, rephase/walk, arena compaction
-   since). **Old study arm numbers must not be reused as baselines** —
+   since). **Old study arm numbers must not be reused as baselines** –
    re-measure the arm you need on the tree you're changing.
 
 ### Not pursued (recorded as leads)
 
 * Per-instance policy selection (usage-ranked here, glue-ranked there) is
   the hindsight-oracle trap quantified at 2.26× in §8 of BENCHMARKING.md.
-* A *state-based* hybrid — e.g. fall back to usage-ranked reduction when
-  DB churn stops correlating with progress — is a new design, needs its
+* A *state-based* hybrid – e.g. fall back to usage-ranked reduction when
+  DB churn stops correlating with progress – is a new design, needs its
   own pre-registration; the 6s167 evidence makes it the candidate.
 
 ## Sound re-measurement (post `3993905`, same cells, same harness plus verdict checking)
@@ -134,7 +134,7 @@ study: no consistent treatment/null separation.
 | Break_unsat_06_07 | 38 104 | 38 299 | 0.995 |
 | barman-pfile06 | 1 043 | 1 228 | 0.849 |
 
-**T/N geomean 1.0020 — no effect.** Verdicts correct on all cells (the
+**T/N geomean 1.0020 – no effect.** Verdicts correct on all cells (the
 fix's regression tests pin constraints_17 across all four arms). The
 retention-signal thread is closed at this granularity: neither
 usage-ranking nor glue-ranking separates from random selection once the

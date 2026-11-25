@@ -2,16 +2,16 @@
 //!
 //! The evaluator the query-free certificate runs on
 //! (`solver::array_completion_certify::evaluate_closed`) has no value for a
-//! datatype term, so a `select` whose index is a constructor value — `(select
+//! datatype term, so a `select` whose index is a constructor value – `(select
 //! e w)` with `w` printed as `(mk 0 red)` and `e` as a store chain keyed by
-//! constructor values — was never folded, and a goal reading one (a negated
+//! constructor values – was never folded, and a goal reading one (a negated
 //! universal over a vacuous binder, `recheck14/corpus/g14a/s01255`) stayed
 //! undecided: its correct model was withheld.
 //!
 //! Here such a read is folded before evaluation: the store chain is walked
 //! from the outermost `store` in, each key compared with the index as VALUES
-//! — constructors by name and then field by field, every other field by its
-//! exact evaluation — so the first key equal to the index gives the read, a
+//! – constructors by name and then field by field, every other field by its
+//! exact evaluation – so the first key equal to the index gives the read, a
 //! key that differs is passed, and the constant array at the base gives its
 //! default.  A comparison the values cannot decide (a field that does not
 //! evaluate, an index that is not a constructor value) leaves the read as it

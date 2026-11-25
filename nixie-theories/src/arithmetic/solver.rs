@@ -33,7 +33,7 @@ fn fixed_value(
     hi: Option<&super::simplex::Bound>,
 ) -> Option<super::delta::DeltaRational> {
     // Exact equality (equal wide pairs included); the NARROW form is
-    // returned — a fixed value beyond width has no i64 constant to name
+    // returned – a fixed value beyond width has no i64 constant to name
     // it, and the caller (`fixed_to_const_reason`) is an i64-consumer
     // optimization that declines.
     let (l, u) = (lo?, hi?);
@@ -63,7 +63,7 @@ fn gcd_i64(mut a: i64, mut b: i64) -> i64 {
 static TEST_FORCE_BRANCH_CHANNEL: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-/// The comparison flavour a slack's defining atom asserted — kept so the
+/// The comparison flavour a slack's defining atom asserted – kept so the
 /// stranded-bound re-homing sweep can re-assert the ATOM's own bound on a
 /// rebuilt row (see [`ArithSolver::rehome_stranded_row_bounds`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,33 +105,33 @@ struct SlackForm {
 ///
 /// When the internal integrality search gives up on a budget (item 96's
 /// branch-walk ray: mutually-defining unbounded basics whose every branch
-/// bound the LP re-satisfies along the ray, immune to any budget — the
+/// bound the LP re-satisfies along the ray, immune to any budget – the
 /// dose-response measured zero recovery at 65 536 depth / 300 000 nodes),
 /// the fractional variable's linear form and the branch point are handed
 /// to the SOLVER layer, which mints `(>= form k)` as a fresh Boolean atom
 /// for the SAT core to decide.  Each decided polarity flows back through
-/// the ordinary atom pipeline as a bound on the form's row — the same
-/// thing a user assertion of that literal does — so CDCL's clause
+/// the ordinary atom pipeline as a bound on the form's row – the same
+/// thing a user assertion of that literal does – so CDCL's clause
 /// learning prunes the walk the internal B&B cannot: this is exactly Z3's
 /// architecture (`theory_arith_int.h: branch_infeasible_int_var`, one
 /// atom per final check, `FC_CONTINUE`), and the reason Z3 decides the
 /// ray family at all.
 ///
 /// The dichotomy `(>= form k) ∨ (< form k)` is a tautology over the
-/// theory, so the minted atom can never change satisfiability — the
+/// theory, so the minted atom can never change satisfiability – the
 /// channel is pure search guidance.  The theory records; it cannot mint
-/// (no manager handle) — the solver drains via
+/// (no manager handle) – the solver drains via
 /// [`ArithSolver::take_lia_branch_requests`].
 #[derive(Clone, Debug)]
 pub struct LiaBranchRequest {
     /// The linear form over user terms: `sum(coef_i · term_i) >= rhs + k`.
-    /// Coefficients are integers (the request is skipped otherwise — see
+    /// Coefficients are integers (the request is skipped otherwise – see
     /// `note_lia_branch_request`).
     pub lhs: Vec<(TermId, Rational64)>,
     /// The form's original right-hand side.
     pub rhs: Rational64,
     /// The branch point: `ceil` of the exact fractional value at decline,
-    /// EXACT at any width (`BigInt` — the ray family walks beyond i64, and
+    /// EXACT at any width (`BigInt` – the ray family walks beyond i64, and
     /// the atom minter's `mk_int` takes big integers natively).
     pub k: num_bigint::BigInt,
 }
@@ -142,7 +142,7 @@ pub struct ArithSolver {
     /// Simplex instance
     simplex: Simplex,
     /// CDCL-visible LIA branch requests (Z3's `branch_infeasible_int_var` /
-    /// `lia_move::branch` channel — see `LiaBranchRequest`).  Recorded at
+    /// `lia_move::branch` channel – see `LiaBranchRequest`).  Recorded at
     /// the internal integrality search's budget decline (the branch-walk
     /// ray class, item 96) and drained by the solver layer, which mints the
     /// `(>= form k)` atoms for the SAT core to decide.  Empty when the
@@ -208,8 +208,8 @@ pub struct ArithSolver {
     /// `prop_set_*` write and undo restore): the memoization stamp for
     /// `derive_expr_bound_reasons` sums these with the simplex's own
     /// `bound_ver`, so a derivation is skipped only when every input it
-    /// reads — tracker bounds, simplex bounds, and the bound-carried
-    /// reason/aux-reason lists rewritten with them — is unchanged.
+    /// reads – tracker bounds, simplex bounds, and the bound-carried
+    /// reason/aux-reason lists rewritten with them – is unchanged.
     prop_ver: Vec<u64>,
     /// See [`Self::prop_lower`].
     prop_upper: Vec<Option<PropBoundEntry>>,
@@ -230,7 +230,7 @@ pub struct ArithSolver {
     /// so this registry lets `intern` re-mark the fresh variable without the
     /// replay having to know anything about sorts.
     /// Sticky honesty flag: an assertion whose row could not be represented
-    /// in `Rational64` was DECLINED instead of wrapped — the `x <= i64::MIN`
+    /// in `Rational64` was DECLINED instead of wrapped – the `x <= i64::MIN`
     /// corner, where the row `lhs - rhs` needs the constant `+2^63` (the
     /// negation of `i64::MIN` does not fit; found by the debug-panic sweep
     /// on `QF_ANIA/diskperf`, where the release build silently wrapped the
@@ -298,7 +298,7 @@ pub struct ArithSolver {
 struct IntEquation {
     terms: Vec<(VarId, i64)>,
     rhs: i64,
-    /// The atom/lemma whose assertion recorded this row — names the row
+    /// The atom/lemma whose assertion recorded this row – names the row
     /// in Diophantine infeasibility cores.
     reason: TermId,
 }
@@ -312,7 +312,7 @@ struct IntEquation {
 /// the undo trail can outlive the rewind, so a stored id later aliases a
 /// DIFFERENT atom (observed as the convert-family invalid propagation
 /// clauses: a bound on one variable citing an atom minted for another).
-/// Terms are hash-consed and immortal — citing them cannot alias.
+/// Terms are hash-consed and immortal – citing them cannot alias.
 struct PropBoundEntry {
     value: DeltaRational,
     reason: TermId,
@@ -356,7 +356,7 @@ pub(crate) const BRANCH_REASON: u32 = u32::MAX;
 /// * `Incumbent` is a witness (free variables set to zero). It satisfies
 ///   the equalities; whether it satisfies every OTHER active row is
 ///   decided by re-pinning it through a scoped LP re-solve
-///   ([`ArithSolver::try_eq_incumbent`]) — never by trusting it.
+///   ([`ArithSolver::try_eq_incumbent`]) – never by trusting it.
 /// * `GiveUp` defers to branch-and-bound (magnitude/size guard).
 #[derive(Debug, Clone, PartialEq)]
 enum IntEqVerdict {
@@ -370,7 +370,7 @@ enum IntEqVerdict {
 /// Memoized verdict + incumbent-rejection marker.  `rejected` is set when
 /// the rows beyond the recorded equalities refused the witness; the
 /// attempt is then skipped until the equality set changes (which resets
-/// the whole entry) — a rejected pinning is one LP wasted per theory
+/// the whole entry) – a rejected pinning is one LP wasted per theory
 /// check otherwise.  This trades a missed rescue in the rare case where
 /// only non-equality rows changed in the witness's favour for not
 /// re-paying the probe at every check.
@@ -429,13 +429,13 @@ impl Default for ArithSolver {
     }
 }
 
-/// `NIXIE_TRACE_TWRITES` — the bound-write trace (`[asrt]`/`[rpb]`/`[twrite]`
+/// `NIXIE_TRACE_TWRITES` – the bound-write trace (`[asrt]`/`[rpb]`/`[twrite]`
 /// lines), read **once per process**.
 ///
 /// Every trace site is a bound writer (`assert_*`, `record_prop_bound`,
 /// `prop_set_*`), i.e. a per-assertion hot path: an unarmed raw probe there
 /// pays a `getenv` walk per assertion (the 2026-09-15 env-probe regression
-/// measured that shape at ~2/3 of a run's cycles on the SAT side — see
+/// measured that shape at ~2/3 of a run's cycles on the SAT side – see
 /// `nixie_sat::env_flags`). The unarmed common case is one atomic load here.
 /// No test or caller sets the variable mid-process, so caching cannot change
 /// observable behaviour beyond the cost.
@@ -445,8 +445,8 @@ fn trace_twrites_enabled() -> bool {
 }
 
 /// Debug/A-B probe for the `assert_*` fast path (`NIXIE_ATOM_SLACK_MEMO`):
-/// unset/`1`/`all` — every kind replays (the default); `nonstrict` — only
-/// `Le`/`Ge`; `strict` — only the δ rows; `0`/`off` — never (the historical
+/// unset/`1`/`all` – every kind replays (the default); `nonstrict` – only
+/// `Le`/`Ge`; `strict` – only the δ rows; `0`/`off` – never (the historical
 /// slow path on every assertion). Read once per process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MemoMode {
@@ -466,7 +466,7 @@ fn atom_slack_memo_mode() -> MemoMode {
     })
 }
 
-/// Which zero-bound an inequality atom puts on its row slack — the kind
+/// Which zero-bound an inequality atom puts on its row slack – the kind
 /// half of the [`ArithSolver::atom_slack`] memo key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum AssertKind {
@@ -481,7 +481,7 @@ enum AssertKind {
 }
 
 /// δ-ordering of two delta-rationals (`real + delta·δ`): by real part, then
-/// by δ coefficient — the order the bound store's comparisons use.
+/// by δ coefficient – the order the bound store's comparisons use.
 fn dr_cmp(a: &DeltaRational, b: &DeltaRational) -> core::cmp::Ordering {
     a.real.cmp(&b.real).then(a.delta.cmp(&b.delta))
 }
@@ -510,7 +510,7 @@ pub struct ImpliedAtom {
     pub form_pol: bool,
     /// Whether the form is a `<=`-side form (`Le`/`Lt`).
     pub form_le_side: bool,
-    /// The terms of every bound the derivation consumed — the antecedents
+    /// The terms of every bound the derivation consumed – the antecedents
     /// of the propagation's explanation clause (sorted, deduplicated).
     pub antecedents: SmallVec<[TermId; 8]>,
 }
@@ -558,8 +558,8 @@ struct AtomSlack {
 
 impl ArithSolver {
     /// Read-only yield census for the z3-shaped LP bound propagation
-    /// (`NIXIE_APROP_CENSUS`; the SAT-side half — "is the forced atom
-    /// unassigned / already assigned this way?" — is
+    /// (`NIXIE_APROP_CENSUS`; the SAT-side half – "is the forced atom
+    /// unassigned / already assigned this way?" – is
     /// `TheoryManager::aprop_census`): one pass of
     /// [`Self::implied_atom_polarities`] plus the bookkeeping that says how
     /// much of the atom table it could see.
@@ -599,9 +599,9 @@ impl ArithSolver {
     /// `calculate_implied_bounds_for_row`'s bound on the row's basic): for
     /// every inequality atom row whose slack is BASIC with a live narrow row,
     /// derive the row's interval from the current bound store and report each
-    /// atom polarity the interval forces — the recorded form's own polarity
+    /// atom polarity the interval forces – the recorded form's own polarity
     /// when its `slack ∘ 0` bound is entailed, its negation when the strict
-    /// opposite is — with the terms of every bound the derivation consumed.
+    /// opposite is – with the terms of every bound the derivation consumed.
     /// Pure interval arithmetic over bounds the asserted atoms (and earlier
     /// bound derivations, through `all_reasons`) already imply: sound
     /// without an LP solve and valid at any assignment depth. Nothing is
@@ -629,7 +629,7 @@ impl ArithSolver {
     /// write has touched since the previous drain (z3
     /// `propagate_bounds_for_touched_rows`): the cost-faithful form. A row
     /// consumed by a pivot leaves the set with its bounds still stale-marked
-    /// until a write re-marks it — completeness only.
+    /// until a write re-marks it – completeness only.
     pub fn drain_implied_atom_polarities(&mut self, out: &mut Vec<ImpliedAtom>) {
         out.clear();
         self.refresh_single_term_index();
@@ -639,12 +639,12 @@ impl ArithSolver {
     }
 
     /// Oracle for one forced polarity (`NIXIE_APROP_ROW_VERIFY`): re-prove it
-    /// with the LP itself — push a scratch scope, assert the form's OPPOSITE
+    /// with the LP itself – push a scratch scope, assert the form's OPPOSITE
     /// `∘ 0` bound on its own slack, and require the simplex to report
     /// infeasibility. `false` means the propagation had no LP justification.
     /// The scratch scope is popped; pivots it caused persist (any basis
     /// spanning the row space is valid), so an oracle run is a different
-    /// trajectory from an un-oracled one. The LP sees simplex bounds only —
+    /// trajectory from an un-oracled one. The LP sees simplex bounds only –
     /// a tracker-only antecedent makes this probe weaker than the clause.
     pub fn verify_implied(&mut self, imp: &ImpliedAtom) -> bool {
         self.simplex.push();
@@ -758,7 +758,7 @@ impl ArithSolver {
     /// Direction-2 derivation off a PINNED equality row (the fixed-table
     /// half of z3's `cheap_eq_on_nbase`): `s = coef·x - rhs` with `s`
     /// pinned to one δ-free value pins `x` to `(s + rhs)/coef`, and every
-    /// other SINGLE-term inequality atom row on `x` — `s2 = c2·x - rhs2` —
+    /// other SINGLE-term inequality atom row on `x` – `s2 = c2·x - rhs2` –
     /// then has a derivable value, so its polarity is forced exactly as in
     /// `implied_for_row`. Valid whether or not `s2` is still basic: a slack's
     /// defining equation stays implied through every pivot. Multi-term rows
@@ -885,7 +885,7 @@ impl ArithSolver {
     /// `lower`: the simplex bound, the single-term tracker bound
     /// (`record_prop_bound`: a `coef·x ∘ rhs` atom bounds `x` directly,
     /// which the slack-per-atom tableau never shows as a bound on `x`
-    /// itself — z3's internalization does), or the tighter of both. A
+    /// itself – z3's internalization does), or the tighter of both. A
     /// branch-local bound (a B&B case split, no atom) reads as absent.
     fn effective_bound(
         &self,
@@ -936,9 +936,9 @@ impl ArithSolver {
         }
     }
 
-    /// The Dutertre–de Moura interval bound of `expr` — `Σ coefⱼ·boundⱼ +
+    /// The Dutertre–de Moura interval bound of `expr` – `Σ coefⱼ·boundⱼ +
     /// constant`, each term taking the bound its coefficient's sign needs for
-    /// the requested direction — with every consumed bound's antecedents.
+    /// the requested direction – with every consumed bound's antecedents.
     /// `i64`-checked narrow arithmetic (`checked_scale_add`): `None` when a
     /// contributing bound is missing, on any overflow (a wide value is the
     /// wide-LP machinery's, not this channel's), or on a crossed window (a
@@ -992,7 +992,7 @@ impl ArithSolver {
     /// resolved exactly this `(kind, lhs, rhs, reason)` and the row is still
     /// live. The validation mirrors `cached_row_slack`'s own liveness probe
     /// (`row_defines_var`), so a hit is precisely the case where that cache
-    /// would have hit too — minus the canonical-key rebuild it pays to find
+    /// would have hit too – minus the canonical-key rebuild it pays to find
     /// out. `None` sends the caller down the unchanged slow path, which then
     /// (re)records the entry.
     fn atom_slack_hit(
@@ -1019,7 +1019,7 @@ impl ArithSolver {
             return None;
         }
         // Dev oracle: a hit is exactly the slow path's own `atom_rows` hit
-        // (same slack, same liveness verdict) — the two caches are kept in
+        // (same slack, same liveness verdict) – the two caches are kept in
         // lockstep by `atom_slack_record` / `atom_slack_drop_reason`.
         #[cfg(debug_assertions)]
         {
@@ -1045,7 +1045,7 @@ impl ArithSolver {
     /// `(re-)intern` that rewrites an `atom_rows` entry. The stranded-bound
     /// re-homing sweep re-interns recorded forms *through `cached_row_slack`
     /// directly* (never via `assert_*`), moving `atom_rows` to the fresh
-    /// slack while a stale memo entry would still name the consumed one —
+    /// slack while a stale memo entry would still name the consumed one –
     /// and a consumed slack can return to the basis later, at which point
     /// the memo would hit where the slow path resolves to the fresh row
     /// (two valid, different LP states: the trajectory fork measured on the
@@ -1091,7 +1091,7 @@ impl ArithSolver {
 #[derive(Debug)]
 enum FracVar {
     /// A fractional variable with EXACT branch bounds (floor/ceil of the
-    /// exact value — from the narrow `DeltaRational`, or from the wide
+    /// exact value – from the narrow `DeltaRational`, or from the wide
     /// store's un-narrowed exact value).  The bounds are integral
     /// `BigRational`s: a bound beyond `i64` (the `2^63`-scale class that
     /// used to hit `Underivable`) stores exactly on the widened bound
@@ -1101,13 +1101,13 @@ enum FracVar {
         floor: num_rational::BigRational,
         ceil: num_rational::BigRational,
     },
-    /// No sound acceptance and no sound branch exist — the search must
+    /// No sound acceptance and no sound branch exist – the search must
     /// decline to `Unknown`.
     Underivable,
 }
 
 /// Checked `acc + bound * coef` over both `DeltaRational` components:
-/// `None` on any i64 overflow (the caller must decline the derivation —
+/// `None` on any i64 overflow (the caller must decline the derivation –
 /// a wrapped value would fabricate the bound it is deriving).
 fn checked_scale_add(
     acc: DeltaRational,
@@ -1251,7 +1251,7 @@ impl ArithSolver {
     /// Comparison keys skip the sign step so the inequality direction is
     /// preserved (matching [`Self::normalize_ineq_expr`]).
     /// Negate every coefficient and the constant in place, returning
-    /// `false` (with `terms` untouched) when any negation does not fit —
+    /// `false` (with `terms` untouched) when any negation does not fit –
     /// the `i64::MIN`-numerator corner.  The un-flipped form is the SAME
     /// linear function, so skipping the flip loses only canonical-form
     /// sharing, never semantics; `row_key`'s sign normalization and
@@ -1310,7 +1310,7 @@ impl ArithSolver {
 
         // Sign normalization for equalities only (inequalities keep their
         // direction; see `normalize_ineq_expr`).  CHECKED: a coefficient or
-        // constant at `i64::MIN` cannot be negated — skip the flip (the
+        // constant at `i64::MIN` cannot be negated – skip the flip (the
         // key then matches the equally-unflipped row `normalize_expr`
         // builds; only canonical-form sharing is lost).
         if equality
@@ -1419,12 +1419,12 @@ impl ArithSolver {
     /// read after a `check()` that ended in `Sat`: the check's internal
     /// branch-and-bound unwinds its scopes AFTER accepting its leaf, and the
     /// persisted pivots can leave the raw LP point outside some bound
-    /// windows — a stale or infeasible vector read by `value()` (for
+    /// windows – a stale or infeasible vector read by `value()` (for
     /// variables the accepted snapshot does not cover) publishes a model
     /// that violates asserted atoms.
     ///
     /// Returns `Some(conflict_terms)` when the live bound set is
-    /// infeasible — the caller converts that into an honest conflict.
+    /// infeasible – the caller converts that into an honest conflict.
     pub fn ensure_feasible_or_conflict(&mut self) -> Option<Vec<TermId>> {
         if self.simplex.state_feasible() {
             return None;
@@ -1447,13 +1447,13 @@ impl ArithSolver {
     }
 
     /// Re-home stranded row bounds: a slack that once defined a row
-    /// (`slack_forms`) but no longer does (`row_defines_var` false — a pivot
+    /// (`slack_forms`) but no longer does (`row_defines_var` false – a pivot
     /// consumed its defining row) while still carrying bounds leaves those
     /// bounds constraining a FREE-floating variable: the semantic constraint
     /// on the linear form is silently dropped from the live system, and a
     /// model accepted over that system violates the asserted atom (the
     /// QF_ANIA/sum10 invalid-model class, exposed once the per-final-check
-    /// reset+replay — which re-homed every atom by re-assertion — was
+    /// reset+replay – which re-homed every atom by re-assertion – was
     /// replaced by the restart rebuild).
     ///
     /// # Soundness gates (the item-69 false-`unsat` fix)
@@ -1467,15 +1467,15 @@ impl ArithSolver {
     ///   not a copy of the old slack.**  After a pivot consumed the old
     ///   row, later rows may have been substituted through the old slack,
     ///   and the rendering can resolve the form as a MULTIPLE of the old
-    ///   slack itself — the observed case rendered `form ≡ (20/7)·old`
+    ///   slack itself – the observed case rendered `form ≡ (20/7)·old`
     ///   while `old`'s live (propagated) pin said `old = 7/20`.  Copying
-    ///   the pin value-for-value then asserted `(20/7)·old = 7/20` — a
-    ///   constraint nobody ever derived — which crossed the sound
+    ///   the pin value-for-value then asserted `(20/7)·old = 7/20` – a
+    ///   constraint nobody ever derived – which crossed the sound
     ///   derivation `old = 7/20` and produced a SINGLETON conflict blaming
     ///   one Euclidean `div`/`mod` axiom, i.e. a learned unit `¬axiom` and
     ///   a false `unsat` (the seed-20261102 mixed-fuzz core,
     ///   `docs/studies/assets/2026-09-18/`; the completion of study
-    ///   item 70's decode — the rescale factor item 70 fingered was
+    ///   item 70's decode – the rescale factor item 70 fingered was
     ///   dropped by exactly this value copy).  The re-intern itself is
     ///   sound (the fresh row is substitution-derived from live rows); only
     ///   carrying bound VALUES across the stranding boundary was not.
@@ -1491,12 +1491,12 @@ impl ArithSolver {
     ///   not live on the old slack, the atom is not currently asserted and
     ///   re-asserting it would constrain the search with a dead literal.
     ///
-    /// So the sweep now: (1) re-interns the recorded form (unchanged — the
+    /// So the sweep now: (1) re-interns the recorded form (unchanged – the
     /// restoration IS load-bearing; the `parity_infeasibility` and
     /// `bnb_dead_leaf` regressions pin that even a slack still referenced
     /// by narrow rows can have its constraint dropped from the live LP);
-    /// (2) re-asserts ONLY the atom's own `∘ 0` bound — scale-invariant,
-    /// so it carries soundly onto any rescaled rendering — and only when a
+    /// (2) re-asserts ONLY the atom's own `∘ 0` bound – scale-invariant,
+    /// so it carries soundly onto any rescaled rendering – and only when a
     /// live bound on the old slack carries the recorded atom's reason (a
     /// dead atom is never re-imposed).  Returns how many constraints were
     /// re-homed; the caller re-checks feasibility when it is non-zero.
@@ -1504,7 +1504,7 @@ impl ArithSolver {
     /// Scope note: the re-homed bounds live at the CURRENT scope, while the
     /// stranded originals stay trailed at their own (possibly shallower)
     /// scopes.  A backtrack past the re-homing scope re-strands the
-    /// constraint until the next call — callers must run this before every
+    /// constraint until the next call – callers must run this before every
     /// feasibility decision that can accept a model, which `final_check`
     /// does.
     pub fn rehome_stranded_row_bounds(&mut self) -> usize {
@@ -1526,7 +1526,7 @@ impl ArithSolver {
             let Some(form) = self.slack_forms.get(&old).cloned() else {
                 continue;
             };
-            // Gate 1: still a column of a NARROW row — the bounds constrain
+            // Gate 1: still a column of a NARROW row – the bounds constrain
             // the system through that live equation; nothing to restore, and
             // a re-intern can fabricate (see the doc comment).  Wide-store
             // references do NOT count: the wide side table is invisible to
@@ -1591,7 +1591,7 @@ impl ArithSolver {
             // without the matching live atom reason in hand.
             let mut moved = false;
             // Strict atoms re-assert STRICT zero bounds (`slack < 0` /
-            // `slack > 0`, the delta encoding) — matching the original
+            // `slack > 0`, the delta encoding) – matching the original
             // assertion exactly, never a weakened `<= 0` / `>= 0`.
             // The WEAK side is never written (the item-76 discipline): a
             // live tighter bound on the fresh row SUBSUMES the atom's own
@@ -1672,7 +1672,7 @@ impl ArithSolver {
         // Recorded for the stranded-bound re-homing sweep like the
         // non-strict rows: a strict atom's row can be consumed by a pivot
         // exactly like any other, and its `slack < 0` bound then constrains
-        // a free-floating variable — the constraint is dropped from the
+        // a free-floating variable – the constraint is dropped from the
         // live LP until the sweep re-asserts it.
         self.slack_forms.insert(
             slack,
@@ -1743,7 +1743,7 @@ impl ArithSolver {
 
     /// Pin an integer-constant COLUMN to its exact value: the big-const
     /// abstraction (encode synthesizes a fresh free column for a folded
-    /// constant that leaves `Rational64` width in every orientation — no
+    /// constant that leaves `Rational64` width in every orientation – no
     /// λ can shrink a numerator, so powers of two only ever fix
     /// denominator width) historically left that column FLOATING.  A
     /// floating constant column makes the abstracted system a relaxation
@@ -1760,11 +1760,11 @@ impl ArithSolver {
     /// The reason is the constant term ITSELF, registered by the caller as
     /// a theory tautology (`a constant equals itself in every model`), so a
     /// conflict explanation citing the pin drops it from the learned
-    /// clause knowingly — the clause stays entailed by the asserted atoms.
+    /// clause knowingly – the clause stays entailed by the asserted atoms.
     ///
     /// Idempotent by BOUND INSPECTION, not a memo: bounds pop with the
     /// scope that asserted them, and the next assert of an atom using the
-    /// column re-pins — a memo would skip that re-pin after a pop and let
+    /// column re-pins – a memo would skip that re-pin after a pop and let
     /// the column float again (the exact hazard this pin retires).
     pub fn pin_int_const(&mut self, term: TermId, value: num_rational::BigRational) {
         use super::delta::BigDeltaRational;
@@ -1823,7 +1823,7 @@ impl ArithSolver {
     /// integral form stays integral), so an integral requested form makes
     /// the slack integer-valued.  [`RowInternMode::Rescaled`] defines the
     /// slack as `form / λ` for a positive width factor: the zero-bound
-    /// constraints are unchanged, but integrality is NOT transferred —
+    /// constraints are unchanged, but integrality is NOT transferred –
     /// `3·2^62 + 1` rescaled by `1/52` takes value `1/52`.  The slack is
     /// integer-valued exactly when the RESCALED row is itself an integral
     /// form, which is checked directly here (the row is fresh: nothing
@@ -1831,7 +1831,7 @@ impl ArithSolver {
     ///
     /// Why this matters: `gomory_cut` sources cuts from integer-marked
     /// tableau basics and `lia_branch_and_bound` splits
-    /// `x ≤ ⌊x̄⌋ ∨ x ≥ ⌈x̄⌉` on them — both reason from `slack ∈ ℤ`, so a
+    /// `x ≤ ⌊x̄⌋ ∨ x ≥ ⌈x̄⌉` on them – both reason from `slack ∈ ℤ`, so a
     /// rescaled slack wrongly marked integer fabricates divisibility
     /// constraints (a Gomory cut over `(1 - s)/52` asserted `1 - s ≡ 0
     /// (mod 52)` with the axiom's own reason and refuted a `sat` goal:
@@ -1877,7 +1877,7 @@ impl ArithSolver {
         // finding 5; see `canonicalize_lin_form` for the soundness notes).
         super::simplex::canonicalize_lin_form(&mut expr.terms, &mut expr.constant);
 
-        // Ensure first coefficient is positive — CHECKED: at an `i64::MIN`
+        // Ensure first coefficient is positive – CHECKED: at an `i64::MIN`
         // coefficient or constant the negation does not fit; skipping the
         // flip keeps the same linear function (only the canonical form is
         // lost) and matches `row_key`'s identically-guarded flip.
@@ -1991,7 +1991,7 @@ impl ArithSolver {
         }
         // bound on x:  coef·x ◦ rhs  ⟺  x ◦' rhs/coef  (comparison flips when coef<0).
         // Checked: the division can leave `i64` width (fractional row
-        // coefficients against near-`i64::MAX` bounds — the scaled pin
+        // coefficients against near-`i64::MAX` bounds – the scaled pin
         // rows produce exactly that shape), and propagation is an
         // OPTIMIZATION: declining to record a bound that does not fit
         // costs completeness only, never soundness.  Unchecked, it wrapped
@@ -2068,12 +2068,12 @@ impl ArithSolver {
     /// The EXACT-intern arm shared by every `assert_*` entry whose `-rhs`
     /// does not fit `Rational64` (`rhs = i64::MIN`): the row `lhs - rhs`
     /// is built exactly in `BigRational` and interned through the shared
-    /// rescale-or-capture discipline (`Simplex::intern_row_big_reported`) —
+    /// rescale-or-capture discipline (`Simplex::intern_row_big_reported`) –
     /// a positive rescale into width keeps the FULL narrow machinery, a
     /// row beyond any scaling is captured exactly in the wide store with
     /// its zero-bound constraint intact.  The slack's `SlackForm` records
     /// the exact path so the stranded-bound sweep re-interns through it
-    /// (the narrow re-intern's `-rhs` would wrap to a DIFFERENT row — the
+    /// (the narrow re-intern's `-rhs` would wrap to a DIFFERENT row – the
     /// pre-fix release hazard this replaces).  This retires the former
     /// sticky-decline guard: the constraint is now represented wherever
     /// width allows and captured exactly otherwise, so no verdict is owed
@@ -2137,7 +2137,7 @@ impl ArithSolver {
     pub fn assert_le(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
         // `-rhs` beyond `Rational64` (the `i64::MIN` corner): the row is
         // interned EXACTLY (rescaled into width or captured in the wide
-        // store) instead of declined — the constraint is represented, not
+        // store) instead of declined – the constraint is represented, not
         // dropped (the wide-LP build retiring the sticky decline).
         if checked_neg_r64(rhs).is_none() {
             let slack = self.intern_exact_row(lhs, rhs, SlackDir::Le, reason);
@@ -2162,7 +2162,7 @@ impl ArithSolver {
         // the previous `None => Some, Some(_) => None` form re-armed on the
         // THIRD term (state `None` again after the second), so any 3+-term
         // atom recorded a spurious single-variable bound on its LAST term,
-        // justified by the whole multi-term atom — the invalid-clause
+        // justified by the whole multi-term atom – the invalid-clause
         // generator behind the convert-family false `unsat` (difference
         // logic never fired it: DL atoms are 2-term).
         let mut n_nonzero = 0usize;
@@ -2218,7 +2218,7 @@ impl ArithSolver {
         // the previous `None => Some, Some(_) => None` form re-armed on the
         // THIRD term (state `None` again after the second), so any 3+-term
         // atom recorded a spurious single-variable bound on its LAST term,
-        // justified by the whole multi-term atom — the invalid-clause
+        // justified by the whole multi-term atom – the invalid-clause
         // generator behind the convert-family false `unsat` (difference
         // logic never fired it: DL atoms are 2-term).
         let mut n_nonzero = 0usize;
@@ -2258,7 +2258,7 @@ impl ArithSolver {
         // `-rhs` beyond `Rational64`: exact intern (see `assert_le`).  The
         // narrow-only GCD/Diophantine bookkeeping below is SKIPPED for the
         // exact row (its `i64` coefficient/constant reads would wrap);
-        // those feeds are optimizations — the LP refutes the same
+        // those feeds are optimizations – the LP refutes the same
         // constraints through the interned row.
         if checked_neg_r64(rhs).is_none() {
             let slack = self.intern_exact_row(lhs, rhs, SlackDir::Eq, reason);
@@ -2325,13 +2325,13 @@ impl ArithSolver {
                 // caused it (not a hardcoded/arbitrary reason id), so the
                 // resulting unsat core cites the real culprit.
                 //
-                // An EMPTY row (`0 = c`, `c` fractional — every coefficient
+                // An EMPTY row (`0 = c`, `c` fractional – every coefficient
                 // cancelled, e.g. `xr - xr` under a `/`-linearization) has
                 // no variable to plant the crossed bounds on: it used to
                 // plant NOTHING and silently DROP the equality, leaving the
                 // atom a free Boolean and reporting `sat` for `0 = 5/3`.
                 // A var-free infeasible row gets a fresh witness variable
-                // instead — the crossed bounds `[1, 0]` refute regardless.
+                // instead – the crossed bounds `[1, 0]` refute regardless.
                 let reason_id = self.add_reason(reason);
                 let victim = expr
                     .terms
@@ -2347,7 +2347,7 @@ impl ArithSolver {
 
             // Check GCD infeasibility if all coefficients are integers
             if !coeffs.is_empty() && coeffs.len() == expr.terms.len() {
-                // Compute GCD of all coefficients — on the RAW form, so the
+                // Compute GCD of all coefficients – on the RAW form, so the
                 // divisibility test below sees the original magnitudes.
                 let g = coeffs.iter().fold(0i64, |acc, &c| gcd_i64(acc, c.abs()));
 
@@ -2357,8 +2357,8 @@ impl ArithSolver {
                 // constants multiples of 10⁹) is recorded as its small-integer
                 // core instead of tripping the 2⁴⁰ `i128` magnitude guard.
                 // The division is exact and the factor is positive, so the
-                // integer solution set — and the infeasibility lineage the
-                // Hermite solve reports — is unchanged.
+                // integer solution set – and the infeasibility lineage the
+                // Hermite solve reports – is unchanged.
                 let mut scale_g = g;
                 if scale_g > 1 {
                     // `checked_abs`: `i64::MIN` has no magnitude; keep the raw
@@ -2524,7 +2524,7 @@ impl ArithSolver {
         // delta-rational path, which is exact for reals and integers alike.
         //
         // The shift itself is CHECKED: at `k = i64::MAX` the `k+1`/`k-1`
-        // used to overflow — a debug panic, and in release a SILENT WRAP to
+        // used to overflow – a debug panic, and in release a SILENT WRAP to
         // `i64::MIN`, turning `x < i64::MAX` into a different constraint
         // than the one asserted.  An unshiftable bound falls through to the
         // delta path, which represents the strict bound exactly.
@@ -2564,7 +2564,7 @@ impl ArithSolver {
         // the previous `None => Some, Some(_) => None` form re-armed on the
         // THIRD term (state `None` again after the second), so any 3+-term
         // atom recorded a spurious single-variable bound on its LAST term,
-        // justified by the whole multi-term atom — the invalid-clause
+        // justified by the whole multi-term atom – the invalid-clause
         // generator behind the convert-family false `unsat` (difference
         // logic never fired it: DL atoms are 2-term).
         let mut n_nonzero = 0usize;
@@ -2609,7 +2609,7 @@ impl ArithSolver {
         }
         // For an INTEGRAL row, x > k is equivalent to x >= k + 1 (same
         // per-row conditions and CHECKED shift as `assert_lt`; see the
-        // soundness note there — at `k = i64::MAX` the unchecked `k+1`
+        // soundness note there – at `k = i64::MAX` the unchecked `k+1`
         // wrapped to `i64::MIN` in release).
         if rhs.denom() == &1
             && self.lhs_is_integral(lhs)
@@ -2643,7 +2643,7 @@ impl ArithSolver {
         // the previous `None => Some, Some(_) => None` form re-armed on the
         // THIRD term (state `None` again after the second), so any 3+-term
         // atom recorded a spurious single-variable bound on its LAST term,
-        // justified by the whole multi-term atom — the invalid-clause
+        // justified by the whole multi-term atom – the invalid-clause
         // generator behind the convert-family false `unsat` (difference
         // logic never fired it: DL atoms are 2-term).
         let mut n_nonzero = 0usize;
@@ -2675,7 +2675,7 @@ impl ArithSolver {
     }
 
     /// A concrete δ₀ the current point tolerates (every live strict bound
-    /// satisfied under `real + δ₀·delta`), or `None` — the certificate's
+    /// satisfied under `real + δ₀·delta`), or `None` – the certificate's
     /// instantiation (see the solver's `certify_delta0`).
     #[must_use]
     pub fn delta_instantiation_exact(&self) -> Option<num_rational::BigRational> {
@@ -2683,14 +2683,14 @@ impl ArithSolver {
     }
 
     /// The delta-AWARE term read for the model certificate: the leaf
-    /// snapshot first (already concrete — `delta = 0`), then the honest
+    /// snapshot first (already concrete – `delta = 0`), then the honest
     /// delta read (the same guards as [`Self::value`]), with NO integrality
     /// rounding (the caller instantiates or rounds as its semantics need).
     ///
     /// This is the channel the certificate's strict-comparison class needs:
     /// [`Self::value`] drops the delta part, so a real resting exactly ON a
     /// strict bound (`x > 4` with the point `(4, +1)`) reads as the boundary
-    /// `4` and the comparison softens — with the delta in hand the
+    /// `4` and the comparison softens – with the delta in hand the
     /// certificate instantiates a concrete witness (`4 + δ₀`) and decides.
     #[must_use]
     pub fn delta_value_term(&self, term: TermId) -> Option<super::delta::DeltaRational> {
@@ -2723,13 +2723,13 @@ impl ArithSolver {
         // narrow: the raw `assignment` entry is stale there, and returning
         // it would publish a witness that violates the variable's own
         // defining row (the Sat gates upstream make this unreachable in
-        // practice; this read stays honest regardless — `None` is "no
+        // practice; this read stays honest regardless – `None` is "no
         // value", never a guess).
         if self.simplex.is_wide_basic(var) && self.simplex.delta_value_exact(var).is_none() {
             return None;
         }
         // The leaf SNAPSHOT wins for BOTH sorts (integers rounded, reals
-        // δ-instantiated at the leaf — see `snapshot_lia_model`'s real
+        // δ-instantiated at the leaf – see `snapshot_lia_model`'s real
         // pass): the branch scopes pop after the snapshot, restoring a
         // point that may re-violate strict bounds the leaf satisfied, and
         // the live reads then decline or report the pre-dive point.
@@ -2741,7 +2741,7 @@ impl ArithSolver {
             ));
         }
         // The HONEST narrow read: BOTH wide channels leave the raw entry
-        // stale by design — a wide basic's row (the guard above) AND a
+        // stale by design – a wide basic's row (the guard above) AND a
         // wide POINT (a non-basic resting at a bound beyond `Rational64`,
         // typically a branch-and-bound bound at 2^63 scale).  Reading the
         // raw entry for a wide point published a fabricated `0` for an
@@ -2766,7 +2766,7 @@ impl ArithSolver {
             // survives the branch scopes' pop, which restores the FRACTIONAL
             // pre-dive point the live reads would otherwise report (a
             // beyond-width leaf value used to be left to `value_exact` on
-            // the assumption it would still be readable later — the popped
+            // the assumption it would still be readable later – the popped
             // state declined it, the model builder defaulted the variable
             // to 0, and the evaluator refuted the candidate: the J5
             // 61-member class).  A value too wide for this channel hands
@@ -2778,7 +2778,7 @@ impl ArithSolver {
                     v.denom().to_i64()?,
                 ));
             }
-            // Get the full delta-rational value (the HONEST read — a
+            // Get the full delta-rational value (the HONEST read – a
             // wide point's raw entry is stale by design; see above)
             let dval = honest?;
 
@@ -2791,7 +2791,7 @@ impl ArithSolver {
             //
             // CHECKED: the ±1 shift at the walls (`r = i64::MAX` under a
             // positive delta, `i64::MIN` under a negative one) leaves
-            // `i64` — the unchecked form wrapped (a fabricated witness at
+            // `i64` – the unchecked form wrapped (a fabricated witness at
             // the OPPOSITE end of the range).  `None` hands publication to
             // the exact channel (`value_exact`), which rounds in
             // `BigRational` and publishes the true integer.
@@ -2833,7 +2833,7 @@ impl ArithSolver {
             // satisfied (see `Simplex::delta_instantiation`).
             //
             // CHECKED (the wide-LP build): the instantiation sum can leave
-            // `i64` width — e.g. a variable resting on the strict bound
+            // `i64` width – e.g. a variable resting on the strict bound
             // `-2^63 - δ` instantiates to `-2^63 - δ₀`, beyond `i64::MIN`.
             // The unchecked form PANICKED in debug and WRAPPED in release
             // (a dishonest witness at +2^63 that the model certifier then
@@ -2851,20 +2851,20 @@ impl ArithSolver {
         }
     }
 
-    /// The EXACT (`BigRational`) value of a term's variable — the
+    /// The EXACT (`BigRational`) value of a term's variable – the
     /// publication channel for wide values.
     ///
     /// A wide basic whose exact value does not fit `Rational64` (and
     /// therefore `value`'s honest `None`) still has it exactly, from the
     /// wide store's own re-derivation.  Int-sorted terms publish only
     /// INTEGRAL exact values (a fractional one means the branch-and-bound
-    /// has not resolved them — publishing would fabricate integrality).
+    /// has not resolved them – publishing would fabricate integrality).
     pub fn value_exact(&self, term: TermId) -> Option<num_rational::BigRational> {
         let &var = self.term_to_var.get(&term)?;
         // The branch-and-bound snapshot wins for integer variables: it is
         // the INTEGRAL leaf value, exact at any width, and it survives the
         // branch scopes' pop (the live exact read below would see the
-        // fractional pre-dive point — see `value`'s snapshot note).
+        // fractional pre-dive point – see `value`'s snapshot note).
         if let Some(v) = self.lia_model.get(&var) {
             return Some(v.clone());
         }
@@ -2872,16 +2872,16 @@ impl ArithSolver {
         // row and a wide point value (a non-basic snapped to a wide
         // bound).  The δ-instantiation for a value carrying an
         // infinitesimal substitutes the EXACT `δ₀`
-        // (`delta_instantiation_exact` — the narrow one declines on wide
+        // (`delta_instantiation_exact` – the narrow one declines on wide
         // states), so a published witness satisfies its strict bounds at
         // any width.
         let exact = self.simplex.point_value_exact(var)?;
         if self.int_vars.contains(&var) {
             // Integer rounding over the exact parts (the `value` rounding
-            // applied in `BigRational` — the ±1 shift at the walls is
+            // applied in `BigRational` – the ±1 shift at the walls is
             // representable here), and only INTEGRAL results publish (a
             // fractional exact means branch-and-bound has not resolved
-            // the variable — publishing would fabricate integrality).
+            // the variable – publishing would fabricate integrality).
             let rounded = if exact.delta.is_positive() {
                 if exact.real.fract().is_zero() {
                     exact.real.clone()
@@ -2929,8 +2929,8 @@ impl ArithSolver {
     pub fn check_bound_conflicts(&mut self) -> Result<TheoryResult> {
         // Row-driven schedule (NIXIE_ROWPROP=1): derive row consequences
         // HERE so crossings surface at ASSERTION time instead of
-        // final-check.  Amortized by the derivation stamps — only rows
-        // whose variables' bound versions changed re-derive — and it keeps
+        // final-check.  Amortized by the derivation stamps – only rows
+        // whose variables' bound versions changed re-derive – and it keeps
         // `check`'s discipline verbatim: discard any stale pending
         // crossing first, then tighten, then consume only what THIS
         // tighten planted (reason ids recycle across pops; no pop runs
@@ -3056,7 +3056,7 @@ impl ArithSolver {
         let &var = self.term_to_var.get(&term)?;
         let cv = Rational64::from_integer(const_value);
         // `x < cv` probe row needs `-cv`: at `cv = i64::MIN` the negation
-        // does not fit — decline (None = no reason derived, always sound).
+        // does not fit – decline (None = no reason derived, always sound).
         checked_neg_r64(cv)?;
         let base = self.reasons.len();
         let mut collected: Vec<TermId> = Vec::new();
@@ -3160,29 +3160,29 @@ impl ArithSolver {
     /// branching is CDCL-visible, so learned clauses prune the tree and a
     /// per-check budget hands off to a smarter outer loop; this internal
     /// search has no such pruning and a cut budget only converts solvable
-    /// instances to `Unknown` — the wide-literal bnb snapshot pin measures
+    /// instances to `Unknown` – the wide-literal bnb snapshot pin measures
     /// exactly that at >512 nodes.)
     const LIA_MAX_NODES: usize = 20_000;
     /// The node budget at which the CDCL-visible branch REQUEST fires when
     /// the channel is armed (see `bnb_search`'s budget check): a short
     /// internal walk, then the case split belongs to CDCL.  Dosed on the
     /// fixed-seed corpus and 10 fresh seeds (dose curve 1/8/64 flat at
-    /// 61–63s vs the 200s walk; the matched null — same cadence, the
-    /// branch point perturbed off the fractional vertex — reproduces the
+    /// 61–63s vs the 200s walk; the matched null – same cadence, the
+    /// branch point perturbed off the fractional vertex – reproduces the
     /// full cost win, so the COST is the cadence and the RECOVERY is the
     /// semantic branch; both recorded in the campaign study).
     const LIA_REQUEST_NODES: usize = 64;
     /// Gomory (GMI) cut rounds run at the root of the branch-and-bound
     /// search before branching starts.  Z3's `int_solver::check` cascade
     /// fires Gomory on a PERIOD (every `m_int_gomory_cut_period`-th check
-    /// call, default 4) and generates at most `get_gomory_cuts(2)` — two
-    /// cuts per firing — falling through to branching otherwise.  The
+    /// call, default 4) and generates at most `get_gomory_cuts(2)` – two
+    /// cuts per firing – falling through to branching otherwise.  The
     /// historical 24×16 grind poisoned the tableau: every round re-
     /// feasilibilizes through cut rows whose denominators multiply the
     /// entries, and the exact-rational blowup measured on the CAV family
     /// (wide-store migration at ~700 pivots) starts exactly there.
     const LIA_MAX_CUT_ROUNDS: usize = 24;
-    /// Per-round cap on cuts — Z3's `get_gomory_cuts(2)`.
+    /// Per-round cap on cuts – Z3's `get_gomory_cuts(2)`.
     const LIA_MAX_CUTS_PER_ROUND: usize = 2;
     /// Coefficient magnitude guard for cuts: numerators/denominators beyond
     /// this would blow up every later pivot on the cut row, so the cut is
@@ -3229,7 +3229,7 @@ impl ArithSolver {
     /// **Default ON since the rung-3 campaign passed its pre-registered go
     /// bar** (12 seeds × 3 arms: 42 genuine recoveries, all 40 sat models
     /// z3-validated by binding + negation, zero wrong verdicts, the matched
-    /// null dominated 42-vs-28, armed differentials clean — see
+    /// null dominated 42-vs-28, armed differentials clean – see
     /// `docs/studies/2026-09-20-lia-branch-lemma-channel.md`).  Set
     /// `NIXIE_LIA_BRANCH_LEMMA=0` to restore the unarmed search (the
     /// pre-flip default).
@@ -3248,7 +3248,7 @@ impl ArithSolver {
     const MAX_LIA_BRANCH_REQUESTS: usize = 512;
 
     /// Record a CDCL-visible branch request at the internal search's
-    /// budget decline (the ray signature — see `LiaBranchRequest`).
+    /// budget decline (the ray signature – see `LiaBranchRequest`).
     /// Skipped unless the channel is armed, the fractional var's form is
     /// representable (integer coefficients over user terms, an
     /// i64-representable branch point, a non-`exact` row), or the queue is
@@ -3270,7 +3270,7 @@ impl ArithSolver {
         // or an atom row's recorded slack form (`(>= sum(coef·term) rhs+k)`).
         // NOTE: `var_to_term` is push-ordered by TERM intern, not indexed by
         // var id (slack vars interleave in the same id space), so the var's
-        // term is found through `term_to_var` — never by indexing.
+        // term is found through `term_to_var` – never by indexing.
         let term_of_var = self
             .var_to_term
             .iter()
@@ -3281,14 +3281,14 @@ impl ArithSolver {
         } else if let Some(form) = self.slack_forms.get(&var) {
             // `exact` rows are fine here: the minter builds an ATOM (a
             // manager term whose constant is an exact `IntConst`), never a
-            // narrow re-intern — the `-rhs` wrap corner does not apply.
+            // narrow re-intern – the `-rhs` wrap corner does not apply.
             (form.lhs.clone(), form.rhs)
         } else {
             return;
         };
         // Integer coefficients only: the minted atom must spell a linear
         // polynomial the parser can rebuild into the same row (fractional
-        // coefficients would need `(/ c d)` spelling — a later rung).
+        // coefficients would need `(/ c d)` spelling – a later rung).
         if lhs.iter().any(|(_, c)| c.denom() != &1) {
             return;
         }
@@ -3296,7 +3296,7 @@ impl ArithSolver {
             .push(LiaBranchRequest { lhs, rhs, k });
     }
 
-    /// The pending (undrained) request count — diagnostics only.
+    /// The pending (undrained) request count – diagnostics only.
     pub fn lia_branch_requests(&self) -> &[LiaBranchRequest] {
         &self.lia_branch_requests
     }
@@ -3322,10 +3322,10 @@ impl ArithSolver {
             // branch bounds when they fit `i64`.
             // The EXACT read (wide rows, wide points, narrow assignment
             // alike): a variable is RESOLVED exactly when its value is an
-            // integer — integral real part AND no infinitesimal (an `Int`
+            // integer – integral real part AND no infinitesimal (an `Int`
             // variable resting at `r − δ` under a strict bound is NOT at
             // `r`; reading only the real part snapshot-published `r` as a
-            // model value that violates the very bound — the wall cases
+            // model value that violates the very bound – the wall cases
             // where the `k ± 1` tightening could not run).  Otherwise the
             // branch bounds are the exact floor/ceil at any width: the
             // `Underivable` class narrows to "no exact value at all".
@@ -3351,7 +3351,7 @@ impl ArithSolver {
                     // CHECKED subtraction: on wide-literal instances the
                     // stored bounds straddle ±2^62, the difference leaves
                     // `i64` (num-rational's `sub` PANICS under
-                    // debug-assertions and WRAPS in release — a wrapped
+                    // debug-assertions and WRAPS in release – a wrapped
                     // range silently misranks the branch variable).  The
                     // range only RANKS candidates (any branch choice is
                     // sound), so a non-representable range ranks this
@@ -3359,7 +3359,7 @@ impl ArithSolver {
                     // unbounded-vars fallback ordering.  Found by the
                     // rehome canary's debug run after the derivation
                     // stamps changed which fractional variable the search
-                    // visits first — the site is trajectory-independent
+                    // visits first – the site is trajectory-independent
                     // (any B&B visit of a straddling pair hits it).
                     match num_traits::CheckedSub::checked_sub(&hi, &lo) {
                         Some(range) => {
@@ -3444,16 +3444,16 @@ impl ArithSolver {
     /// The leaf tripwire's check, callable at any search point (env-gated;
     /// `tag` names the call site in the fire line).
     fn leaf_tripwire_check(&self, tag: &str) {
-        // Leaf tripwire (env `NIXIE_LEAF_TRIPWIRE=1`, release-runnable —
+        // Leaf tripwire (env `NIXIE_LEAF_TRIPWIRE=1`, release-runnable –
         // the NIXIE_BOUND_TRIPWIRE precedent): at the dive's leaf, every
         // live atom row's slack entry must equal its KEY form evaluated at
         // the current exact points.  A divergence here is FORM CORRUPTION
-        // (the definitional invariant holds — entry == own row — while the
+        // (the definitional invariant holds – entry == own row – while the
         // row no longer entails the atom's constraint): the search's Sat
         // then rests on a system that silently dropped a committed
         // constraint, and the downstream gates catch it only as a
         // refuted-candidate `unknown` (item 93's proof chain: absent at
-        // check() entry, present at the leaf — the corruption window is
+        // check() entry, present at the leaf – the corruption window is
         // the dive's branch-bound pushes and their re-feasibility pivots;
         // the victims include wide slacks).
         if std::env::var("NIXIE_LEAF_TRIPWIRE").is_ok() {
@@ -3465,7 +3465,7 @@ impl ArithSolver {
                     continue;
                 }
                 // Class #4: a slack that left the basis (no defining row) or a
-                // row whose exact evaluation declines cannot be compared — the
+                // row whose exact evaluation declines cannot be compared – the
                 // constraint is enforced by the bound plus the pivot's
                 // (form-preserving, verified) reparametrization.
                 if !self.simplex.has_defining_row(slack)
@@ -3552,7 +3552,7 @@ impl ArithSolver {
             // The honest NARROW integral value: the exact point value
             // rounded by the infinitesimal's sign (an `Int` variable at
             // `r ± δ` models at `r ± 1`), narrowed when representable.
-            // The old body snapshotted the RAW real part — for a variable
+            // The old body snapshotted the RAW real part – for a variable
             // resting on a strict bound that published `r` itself, a
             // witness violating the bound (the `i64::MIN`-corner class
             // where the `k ± 1` tightening cannot run).  A value beyond
@@ -3579,14 +3579,14 @@ impl ArithSolver {
                 exact.real.clone()
             };
             if !rounded.fract().is_zero() {
-                // Fractional exact value: unresolved — do not publish.
+                // Fractional exact value: unresolved – do not publish.
                 continue;
             }
             // Store the integral leaf value EXACTLY (`BigRational`, any
             // width): the branch scopes pop right after this snapshot, and
             // the live reads would report the fractional pre-dive point.
             // The old narrow-only store left beyond-width leaf values to
-            // `value_exact`'s live read — which declined on the popped
+            // `value_exact`'s live read – which declined on the popped
             // state, the model builder defaulted the variable to `0`, and
             // the evaluator refuted a genuine leaf model (the J5 class).
             self.lia_model.insert(var, rounded);
@@ -3596,7 +3596,7 @@ impl ArithSolver {
         // that may RE-VIOLATE strict bounds the leaf satisfied (a basic
         // resting at its strict bound's real part with no infinitesimal),
         // and the δ-instantiation computed over the popped state declines
-        // — every real then published the sort default `0` and the
+        // – every real then published the sort default `0` and the
         // evaluator refuted the candidate (the J5 residual's real half).
         // Instantiating δ HERE, inside the leaf's scopes, yields the
         // concrete witness the leaf actually rests at.
@@ -3624,21 +3624,21 @@ impl ArithSolver {
     /// Hermite (column-echelon) solve: `Infeasible` is a proof that the
     /// subsystem (and hence the whole problem) has no integer solution;
     /// `Incumbent` carries a concrete witness with free variables set to
-    /// zero — lossless, because in column-echelon form the pivot variables
+    /// zero – lossless, because in column-echelon form the pivot variables
     /// are uniquely determined by their predecessors, so the witness exists
     /// iff any integer solution exists.
     ///
     /// This subsumes the historical GCD/fraction-free-Gaussian one-sided
     /// check: it resolves everything that check could (e.g.
     /// `y = 2x ∧ y = 2z + 1` ⇒ `2x − 2z = 1`) and additionally produces
-    /// satisfying assignments for feasible systems — the class
+    /// satisfying assignments for feasible systems – the class
     /// branch-and-bound cannot close (unbounded pure-equality systems such
     /// as the parity obligations; see
     /// `docs/studies/2026-09-06-mixed-parity-lia-equality-gap.md`).
     ///
     /// A pure function of `int_equalities`; callers memoize via
     /// [`ArithSolver::int_eq_cache`].  Guards (system size,
-    /// intermediate magnitude) return `GiveUp` — never a wrapped verdict.
+    /// intermediate magnitude) return `GiveUp` – never a wrapped verdict.
     fn compute_int_eq_verdict(&self) -> IntEqVerdict {
         if self.int_equalities.is_empty() {
             return IntEqVerdict::GiveUp;
@@ -3671,7 +3671,7 @@ impl ArithSolver {
 
         match super::lia::solve_integer_eq_system(&mat, &rhs) {
             // Map the row-lineage core to its reason terms; an unmappable
-            // row (stale index — cannot happen while rows and reasons are
+            // row (stale index – cannot happen while rows and reasons are
             // pushed/truncated in lockstep) falls back to the full core.
             super::lia::EqSolution::Infeasible(core) => {
                 let terms: Option<Vec<TermId>> = core
@@ -3740,7 +3740,7 @@ impl ArithSolver {
     /// for every covered variable, inside its own simplex scope, exactly
     /// like a branch bound).  If the LP accepts the pins and every integer
     /// variable lands integral, `lia_cuts_then_bnb` snapshots the model and
-    /// reports `Sat` — a genuine model of *all* active rows (the pins
+    /// reports `Sat` – a genuine model of *all* active rows (the pins
     /// enforce the witness; the LP enforces everything else).  Any other
     /// outcome pops the scope and the caller falls back honestly: the
     /// witness is one lattice point, not a characterization, when rows
@@ -3751,7 +3751,7 @@ impl ArithSolver {
             self.simplex.set_lower(var, value, BRANCH_REASON);
             self.simplex.set_upper(var, value, BRANCH_REASON);
         }
-        // Lean probe — one LP re-solve plus an integrality scan, no cut
+        // Lean probe – one LP re-solve plus an integrality scan, no cut
         // rounds: this runs at theory-check frequency during search, and a
         // doomed pinning (rows beyond the equalities reject the witness)
         // must cost one simplex pass, not a full cuts+B&B pipeline
@@ -3781,12 +3781,12 @@ impl ArithSolver {
     fn lia_branch_and_bound(&mut self) -> Result<TheoryResult> {
         // Eager Diophantine refutation: when the Hermite solve of the
         // recorded equalities (assertion rows plus search-propagated
-        // equality atoms — the cache invalidates on every assert_eq/pop)
+        // equality atoms – the cache invalidates on every assert_eq/pop)
         // already proves integer-infeasibility, return the conflict NOW.
         // This is the leaf-firing mechanism: at a search leaf the
         // propagated link equalities make the system parity-inconsistent,
         // and without this check the refutation only surfaces AFTER
-        // branch-and-bound burns LIA_MAX_NODES at that check — which
+        // branch-and-bound burns LIA_MAX_NODES at that check – which
         // starves CDCL of the fast conflict loop it needs to learn the
         // parity clauses (the mixed-parity study's honest-timeout class).
         // Only the Infeasible direction is eager: an accepted incumbent
@@ -3806,7 +3806,7 @@ impl ArithSolver {
         // The search gave up (unbounded variables, or its node/depth budget).
         // The complete Diophantine verdict upgrades the historical one-sided
         // check: `Infeasible` is a proof (converting a would-be `Unknown`
-        // into a proven `Unsat` — everything the old GCD-elimination fallback
+        // into a proven `Unsat` – everything the old GCD-elimination fallback
         // resolved, e.g. `y = 2x ∧ y = 2z + 1`), and `Incumbent` is re-pinned
         // through a scoped LP re-solve that respects every other active row;
         // acceptance yields a genuine integral model where branch-and-bound
@@ -3844,7 +3844,7 @@ impl ArithSolver {
                 }
             }
             let int_vars = self.interned_int_vars();
-            // Z3 `patch_basic_columns` — the cheap integrality move FIRST
+            // Z3 `patch_basic_columns` – the cheap integrality move FIRST
             // (before any cut/branch): move nonbasic integer columns so
             // fractional integer basics land on integers, bounds kept, no
             // pivots.  On the equality-chain / random-LP families this
@@ -3861,7 +3861,7 @@ impl ArithSolver {
                 return Ok(TheoryResult::Sat);
             }
             if self.find_fractional_int_var(&int_vars).is_none() {
-                // Cuts closed the integrality gap outright — every integer
+                // Cuts closed the integrality gap outright – every integer
                 // variable's value is derivably integral (the tri-state
                 // read treats an underivable wide-basic value as NOT
                 // integral, so this acceptance never rests on a fabricated
@@ -4105,7 +4105,7 @@ impl ArithSolver {
             // Which finite bound the non-basic rests at (needed to form the
             // non-negative slack y_j).  Resting at none ⇒ no sound cut.
             // A WIDE resting bound has no `i64` algebra for the GMI
-            // formulas below — the cut is declined (an optimization;
+            // formulas below – the cut is declined (an optimization;
             // branch-and-bound stays complete).
             let narrow_real = |b: &super::simplex::Bound| b.value.narrow().map(|v| v.real);
             let (at_lower, bound) = if lo.is_some_and(|b| narrow_real(b) == Some(vj)) {
@@ -4149,7 +4149,7 @@ impl ArithSolver {
                 && bound.value.narrow().is_some_and(|b| b.real.is_integer());
             // CHECKED GMI coefficient arithmetic: `fj / f0` (and the
             // siblings below) PANICKED in debug and silently WRAPPED in
-            // release on the dillig wide-bound family — and a wrapped
+            // release on the dillig wide-bound family – and a wrapped
             // coefficient is not merely a bad cut, it is an UNSOUND LEMMA
             // asserted into the tableau. Declining the cut is always sound
             // (cuts are an optimization; branch-and-bound remains
@@ -4168,7 +4168,7 @@ impl ArithSolver {
             // `x_B = b̄ − Σ ā_j y_j` textbook orientation `bar_a` carries):
             // `γ_j = ā_j / f0 ≥ 0`.  The previous `-bar_a / f0` here flipped
             // the sign for every non-negative coefficient, emitting a
-            // negative γ — the derived cut then excluded genuine integer
+            // negative γ – the derived cut then excluded genuine integer
             // points (a satisfiable four-constraint QF_LIA system was
             // refuted `unsat` once a second cut round used the first round's
             // continuous cut slacks; caught by the arith incremental-vs-
@@ -4263,18 +4263,18 @@ impl ArithSolver {
         let (var, floor, ceil) = match self.find_fractional_int_var(int_vars) {
             Some(FracVar::Branch { var, floor, ceil }) => (var, floor, ceil),
             // No honest value and no representable branch bounds: the dive
-            // cannot proceed soundly — decline (the ordinary search will
+            // cannot proceed soundly – decline (the ordinary search will
             // surface the decline as `Unknown`).
             Some(FracVar::Underivable) => return false,
             None => {
-                // Fully integral — and FEASIBLE: the dive's base case can run
+                // Fully integral – and FEASIBLE: the dive's base case can run
                 // right after a failed sibling's scope pop, whose persisted
                 // pivots left basic values outside their (restored, wider)
                 // windows.  Snapshotting that state publishes a model that
                 // violates asserted atoms, so gate on a fresh feasibility
                 // probe (re-derives the stale assignment first); an infeasible
                 // state declines the dive and lets the ordinary branch-and-
-                // bound — whose every node re-solves — handle it.
+                // bound – whose every node re-solves – handle it.
                 if !self.simplex.state_feasible() {
                     return false;
                 }
@@ -4283,7 +4283,7 @@ impl ArithSolver {
                 // entries the scan read (a stale integral-looking entry
                 // whose row-true value is fractional).  The snapshot
                 // publishes the re-derived values, so integrality must be
-                // established for THOSE — the same
+                // established for THOSE – the same
                 // re-scan-after-the-feasibility-probe discipline the B&B
                 // leaf and `try_eq_incumbent` apply.
                 if self.find_fractional_int_var(int_vars).is_some() {
@@ -4320,7 +4320,7 @@ impl ArithSolver {
         struct Node {
             var: VarId,
             /// The node's exact up-branch bound (`ceil` of the exact
-            /// fractional value, captured at node creation — see the
+            /// fractional value, captured at node creation – see the
             /// unwind loop for why it is not re-read from the assignment).
             /// An integral `BigRational`: the exact channel at any width.
             ceil: num_rational::BigRational,
@@ -4339,7 +4339,7 @@ impl ArithSolver {
             unknown: &mut bool,
         ) -> bool {
             // The EXACT branch bound (an integral `BigRational`): the
-            // widened store takes it at any width — the `Underivable`
+            // widened store takes it at any width – the `Underivable`
             // decline exists now only for a value with no exact read.
             let bound = super::delta::BigDeltaRational::real_only(bound);
             s.simplex.push();
@@ -4370,7 +4370,7 @@ impl ArithSolver {
 
         let mut stack: Vec<Node> = Vec::new();
         loop {
-            // ===== one node body =====
+            // ======== one node body ========
             if stack.is_empty() {
                 // Integral dive (once per bnb_search, at the root).  The
                 // LP's fractional vertex sits on rays whose endpoints are
@@ -4392,7 +4392,7 @@ impl ArithSolver {
                 }
             }
             // The branch REQUEST's node budget: with the channel ARMED the
-            // request fires after a SHORT walk (Z3's shape —
+            // request fires after a SHORT walk (Z3's shape –
             // `branch_infeasible_int_var` internalizes one case-split
             // lemma per fractional vertex and returns to CDCL; the case
             // exploration belongs to CDCL, not to an internal tree).  The
@@ -4404,7 +4404,7 @@ impl ArithSolver {
             // per seed, timeouts 39 → 15) and recovers the ray members the
             // walk never closes.  With the channel OFF (the
             // `NIXIE_LIA_BRANCH_LEMMA=0` opt-out) the request does
-            // nothing, so the budget stays at the full walk — the opt-out
+            // nothing, so the budget stays at the full walk – the opt-out
             // must keep the unarmed search's strength.
             let node_budget = if Self::lia_branch_channel_on() {
                 Self::LIA_REQUEST_NODES
@@ -4414,7 +4414,7 @@ impl ArithSolver {
             if stack.len() > Self::LIA_MAX_DEPTH || *nodes > node_budget {
                 // Item 96's ray class: the internal walk cannot close this
                 // search (measured budget-immune).  Hand the fractional
-                // variable to the CDCL-visible branch channel — a REQUEST,
+                // variable to the CDCL-visible branch channel – a REQUEST,
                 // not a constraint; the verdict is still `Unknown` for
                 // THIS check either way.
                 self.note_lia_branch_request(int_vars);
@@ -4430,8 +4430,8 @@ impl ArithSolver {
                 Some(FracVar::Underivable) => {
                     // An integer variable with no honest value AND no exact
                     // floor/ceil (a wide-basic whose row cannot even be
-                    // evaluated exactly — a stale reference): no sound
-                    // acceptance and no sound branch exist — the search
+                    // evaluated exactly – a stale reference): no sound
+                    // acceptance and no sound branch exist – the search
                     // declines honestly rather than snapshot a fabricated
                     // value.
                     for _ in 0..stack.len() {
@@ -4440,11 +4440,11 @@ impl ArithSolver {
                     return Ok(TheoryResult::Unknown);
                 }
                 None => {
-                    // A fully integral candidate — see the dive's base case
+                    // A fully integral candidate – see the dive's base case
                     // for why a fresh feasibility pass is required before a
                     // snapshot is trusted: sibling pops leave the flag down,
                     // and `state_feasible`'s re-derivation (a bound-snap
-                    // `crash_basis`, a CRUDE point — not the search's
+                    // `crash_basis`, a CRUDE point – not the search's
                     // feasible vertex) can land outside the windows even
                     // though the LP this node branched into was feasible.
                     // The old code read that crude point's violation as
@@ -4452,7 +4452,7 @@ impl ArithSolver {
                     // `Unknown`; the honest reading is "the leaf needs a
                     // repair": re-solve (the repair from the crude point
                     // converges when the node's LP is feasible), and treat a
-                    // refutation as a DEAD BRANCH — the backtrack loop then
+                    // refutation as a DEAD BRANCH – the backtrack loop then
                     // tries the siblings, and an all-dead tree is `Unsat`
                     // (the `11·xi = 7` gap class: three-disjunct div/mod
                     // unsat-side members answered `unknown` here).
@@ -4464,7 +4464,7 @@ impl ArithSolver {
                             // onto a possibly DIFFERENT vertex than the one
                             // `find_fractional_int_var` scanned.  Accepting
                             // on feasibility alone certified the crude
-                            // point's integrality, not the snapshot's —
+                            // point's integrality, not the snapshot's –
                             // the wide-constant mod false-`sat` (2026-09-19,
                             // mixed fuzz 20262113 instance 41: with
                             // `mod(−2y + 2^62, 4) > 2` committed, the re-solve
@@ -4578,7 +4578,7 @@ impl ArithSolver {
                 TheoryResult::Unsat(self.bnb_unsat_core())
             };
 
-            // ===== deliver `outcome` up through the ancestor frames =====
+            // ======== deliver `outcome` up through the ancestor frames ========
             loop {
                 let Some(mut frame) = stack.pop() else {
                     return Ok(outcome); // root concluded
@@ -4593,7 +4593,7 @@ impl ArithSolver {
                     // node was created (re-reading `value(var)` here would
                     // consult the raw assignment entry, which for a
                     // wide-basic variable is only its exact value while
-                    // that value narrows — a fabricated re-read otherwise).
+                    // that value narrows – a fabricated re-read otherwise).
                     let ceil_v = frame.ceil.clone();
                     let mut saw = frame.saw_unknown;
                     if take_branch(self, frame.var, ceil_v, false, &mut saw) {
@@ -4673,7 +4673,7 @@ impl Theory for ArithSolver {
         self.lia_model.clear();
         // Slice 6 cadence: the tighten runs at every final-check round (the
         // only place wide rows from earlier rounds exist). A pending
-        // crossing planted by an EARLIER round is discarded first — reason
+        // crossing planted by an EARLIER round is discarded first – reason
         // ids recycle across pops, so a stale id list can map to wrong
         // terms (an invalid clause, a false `unsat`); only a crossing
         // planted by THIS check's own tighten is consumed, and no pop
@@ -4701,9 +4701,9 @@ impl Theory for ArithSolver {
         // still satisfy `slack = r · (key form)` AT THE CURRENT POINT for
         // some positive scalar r (the intern's rescale-into-width mode
         // mints r = 1/λ; Eq rows' sign normalization allows r < 0).  A
-        // detached row — the pivot zoo's corruption, observed as an
+        // detached row – the pivot zoo's corruption, observed as an
         // equality's row reduced to a trivial variable while the
-        // candidate violated the atom by 34 — yields r = 0 or an
+        // candidate violated the atom by 34 – yields r = 0 or an
         // inconsistent r, and fires loudly.
         #[cfg(all(debug_assertions, feature = "std"))]
         {
@@ -4711,13 +4711,13 @@ impl Theory for ArithSolver {
             use std::fmt::Write as _;
             let mut broken = String::new();
             // Freshness gate: a stale assignment vector makes every basic
-            // entry unreliable — the canary's evidence must come from a
+            // entry unreliable – the canary's evidence must come from a
             // current state (the third false-positive class).
             if self.simplex.assignment_is_current() {
                 for ((key, reason), &slack) in self.atom_rows.iter() {
                     // Only rows whose CONSTRAINT is live at this scope can
                     // detach: rows are search-global, but the bound on the
-                    // slack comes and goes with the asserting polarity — a
+                    // slack comes and goes with the asserting polarity – a
                     // popped atom's row legitimately rests anywhere (the
                     // false-positive class of the canary's first version).
                     if !self.simplex.has_live_bound(slack) {
@@ -4725,7 +4725,7 @@ impl Theory for ArithSolver {
                     }
                     // A key over a CONSTANT COLUMN (the big-const abstraction)
                     // is only equivalent to its row while the column's PIN is
-                    // live — a floating column's stale entry poisons the key
+                    // live – a floating column's stale entry poisons the key
                     // form's evaluation (the second false-positive class).
                     let mut floating_column = false;
                     for &(term, _) in &key.terms {
@@ -4833,7 +4833,7 @@ impl Theory for ArithSolver {
         if !self.is_integer() {
             // Model-value availability gate: a TERM-BACKED variable whose
             // defining row is wide and whose exact value does not narrow
-            // has NO honest witness value — the model layer would print the
+            // has NO honest witness value – the model layer would print the
             // stale `assignment` entry (a fabricated value violating the
             // very row that defines it).  Integer variables are covered by
             // the branch-and-bound path below (its value reads are
@@ -4931,7 +4931,7 @@ impl Theory for ArithSolver {
         // follows this reset re-interns terms through the sort-blind
         // `assert_*` paths – `intern` consults this registry to re-mark.
         // (The former sticky `unrepresentable_row_assert` flag lived here
-        // too; the wide-LP build retired it — every `assert_*` entry now
+        // too; the wide-LP build retired it – every `assert_*` entry now
         // interns its row exactly, so there is no dropped atom to remember.)
         self.var_to_term.clear();
         self.reason_counter = 0;
@@ -5028,7 +5028,7 @@ impl TheoryCombination for ArithSolver {
 impl ArithSolver {
     /// Whether some TERM-BACKED variable's exact value is unavailable: its
     /// defining row lives in the wide store and its exact value does not
-    /// narrow.  Such a variable has no honest witness value — the model
+    /// narrow.  Such a variable has no honest witness value – the model
     /// layer would print the stale `assignment` entry (a fabricated value
     /// violating the row that defines the variable: the wide-coefficient
     /// false-`sat` class of 2026-09-15, where `v1` printed `0` against a row
@@ -5084,7 +5084,7 @@ impl ArithSolver {
                 let _ = idx; // suppress warning
                 // Wide-aware read: a variable whose honest value does not
                 // narrow (wide basic / wide point) is SKIPPED, never read
-                // from the stale narrow entry — a fabricated `0` would
+                // from the stale narrow entry – a fabricated `0` would
                 // merge two such variables into a phony equality.
                 let dval = self.simplex.delta_value_exact(var)?;
                 Some((dval, var, term))
@@ -5297,7 +5297,7 @@ impl ArithSolver {
     /// Memoization stamp for [`Self::derive_expr_bound_reasons`]: the
     /// wrapping sum of every referenced variable's prop-tracker and simplex
     /// bound versions.  The derivation is a pure function of those bounds
-    /// (values, reasons, aux-reason lists — all rewritten only through the
+    /// (values, reasons, aux-reason lists – all rewritten only through the
     /// versioned write sites), so an unchanged sum means an unchanged
     /// result.  A wrapping-sum collision needs two changes that cancel
     /// exactly; a hit would surface as counter drift in the A/B identity
@@ -5336,7 +5336,7 @@ impl ArithSolver {
     /// Debug: a compact kind tag for one term (the reason-id resolver in
     /// the derive trace).
     /// Debug: replay `derive_expr_bound_reasons`'s per-term bound choice
-    /// (side, value, reason ids) for both directions — the value-level
+    /// (side, value, reason ids) for both directions – the value-level
     /// trace for the `NIXIE_APROP_VERIFY` oracle.
     #[doc(hidden)]
     pub fn debug_derive_trace(&self, terms: &[(TermId, Rational64)]) -> String {
@@ -5558,13 +5558,13 @@ impl ArithSolver {
             //   `reason` is complete;
             // - simplex bounds can be row-derived (`slice6` machinery), whose
             //   justification is the union of the contributing endpoints'
-            //   reasons — `all_reasons()` (primary + aux), the same
+            //   reasons – `all_reasons()` (primary + aux), the same
             //   collection `derive_var_bound_big_parts` audits.  Taking only
             //   the primary `reason` here was the insufficient-subset hole
             //   that kept the propagator gated to the difference-logic
             //   family; the old both-sides `aux_reasons` shotgun compensated
-            //   only partially (it could cite the UNUSED side's reasons —
-            //   sound but bloated — and never the primary of a side whose
+            //   only partially (it could cite the UNUSED side's reasons –
+            //   sound but bloated – and never the primary of a side whose
             //   value came from the tracker).
             let bound = if coef.is_positive() {
                 // needs lower(var): tracker first, then simplex
@@ -5575,7 +5575,7 @@ impl ArithSolver {
                             b.value.narrow().and_then(|v| {
                                 // Map reason ids to their atom TERMS; a
                                 // dangling id (scope-recycled index) declines
-                                // the bound — citing a possibly-aliased atom
+                                // the bound – citing a possibly-aliased atom
                                 // is exactly the invalid-clause shape.
                                 let mut ts = SmallVec::<[TermId; 4]>::new();
                                 for r in b.all_reasons() {
@@ -5593,7 +5593,7 @@ impl ArithSolver {
                             b.value.narrow().and_then(|v| {
                                 // Map reason ids to their atom TERMS; a
                                 // dangling id (scope-recycled index) declines
-                                // the bound — citing a possibly-aliased atom
+                                // the bound – citing a possibly-aliased atom
                                 // is exactly the invalid-clause shape.
                                 let mut ts = SmallVec::<[TermId; 4]>::new();
                                 for r in b.all_reasons() {
@@ -5638,7 +5638,7 @@ impl ArithSolver {
                             b.value.narrow().and_then(|v| {
                                 // Map reason ids to their atom TERMS; a
                                 // dangling id (scope-recycled index) declines
-                                // the bound — citing a possibly-aliased atom
+                                // the bound – citing a possibly-aliased atom
                                 // is exactly the invalid-clause shape.
                                 let mut ts = SmallVec::<[TermId; 4]>::new();
                                 for r in b.all_reasons() {
@@ -5656,7 +5656,7 @@ impl ArithSolver {
                             b.value.narrow().and_then(|v| {
                                 // Map reason ids to their atom TERMS; a
                                 // dangling id (scope-recycled index) declines
-                                // the bound — citing a possibly-aliased atom
+                                // the bound – citing a possibly-aliased atom
                                 // is exactly the invalid-clause shape.
                                 let mut ts = SmallVec::<[TermId; 4]>::new();
                                 for r in b.all_reasons() {
@@ -5815,7 +5815,7 @@ mod fuzz_incremental;
 /// decline-note records nothing regardless of state (the default-off
 /// inertness the landing's bit-identity bar measures end-to-end); the
 /// queue round-trips push/take and `reset` clears it.  (The ARMED
-/// recording path — form selection, `k = ceil(exact)` at any width — is
+/// recording path – form selection, `k = ceil(exact)` at any width – is
 /// pinned end-to-end by the armed-verdict regression over a recovered
 /// survey instance; the recording fires only at a budget decline, which
 /// at unit scale means constructing the branch-walk ray itself.)
@@ -5825,7 +5825,7 @@ fn lia_branch_request_queue_and_default_off_inertness() {
     let mut s = ArithSolver::lia();
     let t = |i: u32| TermId::new(i);
     let r = Rational64::from_integer;
-    // Any state — the unarmed note must record nothing.
+    // Any state – the unarmed note must record nothing.
     s.assert_eq(&[(t(1), r(2))], r(-1), t(100));
     let vars: Vec<VarId> = s.term_to_var.values().copied().collect();
     let _ = s.check();
@@ -5890,7 +5890,7 @@ mod strict_stranding_regressions {
     /// Item 75's targeted reproducer (the handoff's open item: the strict
     /// rehome was screened by differentials only).  A STRICT `<` atom whose
     /// defining row is consumed by a pivot must re-home through the STRICT
-    /// interning path (`cached_row_slack_strict` — no normalizer sign flip)
+    /// interning path (`cached_row_slack_strict` – no normalizer sign flip)
     /// and re-assert its OWN STRICT zero bound `slack < 0`: the delta
     /// encoding survives, never weakened to `<= 0`, never flipped to a
     /// lower bound.  Pre-item-75 (strict forms never recorded) this fails
@@ -5925,7 +5925,7 @@ mod strict_stranding_regressions {
         );
         assert!(
             narrow.delta < Rational64::zero(),
-            "STRICT upper (slack < 0): delta < 0 — a weakened <= 0 (delta == 0) is the regression"
+            "STRICT upper (slack < 0): delta < 0 – a weakened <= 0 (delta == 0) is the regression"
         );
         assert!(
             s.simplex.get_lower(fresh).is_none(),
@@ -5959,7 +5959,7 @@ mod strict_stranding_regressions {
         let _ = s.check();
         s.pop();
         // The post-pop re-check re-derives the assignment and pivots the
-        // now-unpinned Gt slack out of the basis — the stranding event.
+        // now-unpinned Gt slack out of the basis – the stranding event.
         let _ = s.check();
 
         let (_old, fresh) = strand_and_rehome(&mut s, t(100));
@@ -5977,7 +5977,7 @@ mod strict_stranding_regressions {
         );
         assert!(
             narrow.delta > Rational64::zero(),
-            "STRICT lower (slack > 0): delta > 0 — a weakened >= 0 (delta == 0) is the regression"
+            "STRICT lower (slack > 0): delta > 0 – a weakened >= 0 (delta == 0) is the regression"
         );
         assert!(
             s.simplex.get_upper(fresh).is_none(),

@@ -43,7 +43,7 @@ pub(crate) enum TrailOp {
     /// emitted into the *current* SAT scope) by
     /// `ensure_numeric_equality_splits`.  A `pop` removes the clause with the
     /// scope, so the dedup entry must go too or the pair is never re-emitted
-    /// after the pop — leaving the equality atom a free Boolean and losing
+    /// after the pop – leaving the equality atom a free Boolean and losing
     /// disequality reasoning (found via upstream v0.3.3's recfun port: a
     /// `push / check-sat / pop / assert / check-sat` sequence answered a
     /// refuted goal `sat`).
@@ -354,15 +354,15 @@ impl super::Solver {
             fp_constraint_cache: _, // INVARIANT: keyed by assertion term
             encode_depth_exceeded: _, // SNAPSHOT
             ff_certificate: _, // RESULT: cleared with the cached verdict by
-            // `invalidate_results` — the certificate belongs to the check
+            // `invalidate_results` – the certificate belongs to the check
             // that produced it, exactly as the model does.
             set_terms_unconstrained: _, // SNAPSHOT
-            // PERSISTED: minted-atom suppression entries survive pops —
+            // PERSISTED: minted-atom suppression entries survive pops –
             // they only ever suppress witnesses, a re-asserted equality
             // is user-written and exempt, so a stale entry cannot change
             // a verdict (see the field's doc on `Solver`).
             bag_minted_eq_atoms: _,
-            // PERSISTED: declined-fold ids survive pops — the model pass
+            // PERSISTED: declined-fold ids survive pops – the model pass
             // skips ids no longer in the assertions, so a stale entry
             // cannot degrade a later `sat` (see the field's doc).
             bag_declined_folds: _,
@@ -462,12 +462,12 @@ impl super::Solver {
             eq_collision_verifies: _, // EVALUATION-LOCAL: saved/restored
             certify_delta0: _,    // EVALUATION-LOCAL: same lifetime as the flag above
             // around each certificate evaluation, never read across checks.
-            // clauses like case-split lemmas — retracted by `pop` — and the
+            // clauses like case-split lemmas – retracted by `pop` – and the
             // memo is cleared at `check_core` entry with the rounds counter
             // (`check_core` owns both; see `MAX_LIA_BRANCH_ROUNDS`).
             lia_branch_rounds: _,   // PER-SEARCH: same lifetime as the memo
             nl_algebraic_values: _, // RESULT: cleared with the cached verdict by
-            // `invalidate_results` — the channel belongs to the check that
+            // `invalidate_results` – the channel belongs to the check that
             // populated it, exactly as the model does.
             #[cfg(test)]
                 repair_paths_saw_model: _, // INVARIANT: test-only event log,
@@ -480,7 +480,7 @@ impl super::Solver {
             // per-search: a second `check` must keep downgrading over the
             // first one's still-live restrictions).
             model_blocks_nongenuine: _, // SNAPSHOT: same lifetime as
-            // `model_blocking_active` — the clauses the count describes are
+            // `model_blocking_active` – the clauses the count describes are
             // retracted by the same `sat.pop()`.
             congruence_gap_repair_rounds: _, // PER-CHECK: budget of the lazy congruence-gap repair
             arrangement_rounds: _,           // PER-SEARCH: mirrors `case_split_rounds`;

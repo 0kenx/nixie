@@ -8,8 +8,8 @@
 //! half in the Bool view (xor chains over `b_e`) and half in the Int view
 //! (vertex equations `Σ i_e − 2·k_v = c_v`), linking the two with
 //! `i_e = (ite b_e 1 0)` or an exact `div`/`mod` chain over such an `ite`.
-//! The theory side is leaf-complete — with every `b_e` fixed at level 0 the
-//! Hermite view refutes instantly — but during search the Int view's parity
+//! The theory side is leaf-complete – with every `b_e` fixed at level 0 the
+//! Hermite view refutes instantly – but during search the Int view's parity
 //! constraint never reaches the CDCL core as learnable structure, so the
 //! mixed instances stall at `unknown`/timeout where z3 answers in seconds.
 //!
@@ -26,7 +26,7 @@
 //! 2. **Mod-2 consequences.** A GF(2) Gaussian elimination over the rows'
 //!    parity reductions (each row `Σ a_i·x_i = b` implies
 //!    `Σ_{a_i odd} x_i ≡ b (mod 2)`) yields row combinations
-//!    `Σ x_j ≡ r (mod 2)` — integer summation followed by reduction mod 2.
+//!    `Σ x_j ≡ r (mod 2)` – integer summation followed by reduction mod 2.
 //! 3. **Literal images.** A column `T` is *image-determined* when its value
 //!    is fixed under both phases of a single Boolean condition `c`: `T` is
 //!    (or chains, through exact Euclidean `div`/`mod` by constants, down to)
@@ -39,7 +39,7 @@
 //!    either a literal (`T ≡ c` or `T ≡ ¬c`, when the parities differ) or a
 //!    constant (when they agree).  A column needing two distinct conditions,
 //!    or any non-evaluable term, is not image-determined and is *eliminated*
-//!    in step 2 instead of interpreted — a derivation that cannot reach
+//!    in step 2 instead of interpreted – a derivation that cannot reach
 //!    image-determined columns simply emits nothing.
 //! 4. **Lemma.** Substitute the images into a mod-2 consequence: the result
 //!    `xor(l_1 … l_k) = c` is a consequence of the input.  Assert it as a
@@ -52,18 +52,18 @@
 //! `Σ_{cross} i_e ≡ Σ_I c_v (mod 2)` (interior edges and `2·k_v` slack have
 //! even coefficients and vanish mod 2), the link rows and image evaluation
 //! turn `i_e` into `b_e`, and the lemma handed to CDCL is exactly
-//! `xor(Σ_{cross} b_e) = Σ_I c_v (mod 2)` — the missing half of the parity
+//! `xor(Σ_{cross} b_e) = Σ_I c_v (mod 2)` – the missing half of the parity
 //! argument, which the Bool side's xor chains then contradict.
 //!
 //! # Timing
 //!
 //! Derived once per *assertion generation* (bumped by `assert` /
-//! `assert_named` / `pop`), consumed at the next `check_core` entry — never
+//! `assert_named` / `pop`), consumed at the next `check_core` entry – never
 //! per theory check.  Per-check recomputation is the measured failure mode
 //! (see `docs/studies/2026-09-06-mixed-parity-lia-equality-gap.md`).
 //!
 //! Every quantity is bounded (row/column/lemma/width caps, evaluation depth
-//! cap); exceeding a cap emits nothing — a missed lemma is the status quo,
+//! cap); exceeding a cap emits nothing – a missed lemma is the status quo,
 //! never a wrong answer.
 
 use nixie_core::ast::{TermId, TermKind, TermManager};
@@ -146,7 +146,7 @@ fn gf2_xor(row: &mut Gf2Row, other: &Gf2Row) {
 ///
 /// Method: forward elimination pivoting on bad columns only.  A row is
 /// first reduced against every existing pivot whose column it contains,
-/// then — if a bad column remains — installed as that column's pivot
+/// then – if a bad column remains – installed as that column's pivot
 /// (echelon position); otherwise it is emitted.  The emitted rows therefore
 /// have zero bad support, and together with the echelon pivot rows they
 /// span the original space, so every zero-bad-support vector of the space
@@ -215,7 +215,7 @@ struct ImageEval<'a> {
 
 impl<'a> ImageEval<'a> {
     /// Exact value of `term` under `phase` (the truth value assigned to the
-    /// single recorded condition).  `None` = not exactly evaluable (bail —
+    /// single recorded condition).  `None` = not exactly evaluable (bail –
     /// the caller treats the column as bad and eliminates it instead).
     fn value(&mut self, term: TermId, phase: bool, depth: u32) -> Option<i128> {
         if depth > MAX_IMAGE_EVAL_DEPTH {
@@ -257,7 +257,7 @@ impl<'a> ImageEval<'a> {
                 }
                 // SMT-LIB Int `div`/`mod` are Euclidean (Rust's `div_euclid` /
                 // `rem_euclid` match exactly).  A zero divisor is uninterpreted
-                // per SMT-LIB, so no value exists to evaluate to — bail.  The
+                // per SMT-LIB, so no value exists to evaluate to – bail.  The
                 // Real-sorted `Div` (true division) never occurs under an
                 // Int-sorted equality but is excluded by sort as well.
                 TermKind::Div(m, n) if node.sort == int_sort => {
@@ -318,7 +318,7 @@ pub(crate) fn classify_column(
 
 /// Try to record the Int-sorted linear equality `lhs = rhs` as a
 /// [`ParityRow`].  Returns `None` (and records nothing) unless the equation
-/// is linear with purely integral coefficients and constant — a non-integral
+/// is linear with purely integral coefficients and constant – a non-integral
 /// row has no well-defined mod-2 reduction, and silently dropping it only
 /// forfeits lemmas.
 fn parity_row_of(
@@ -376,7 +376,7 @@ fn parity_row_of(
         }
         if coef.denom() != &1 {
             // Non-integral coefficient: the row has no mod-2 image.  Bail
-            // on the whole row — keeping the integral part would fabricate
+            // on the whole row – keeping the integral part would fabricate
             // a consequence the equation does not state.
             return None;
         }
@@ -384,7 +384,7 @@ fn parity_row_of(
         // integral coefficient: in mixed-integer mode an equality between
         // an `Int`-sorted term and a `Real`-sorted one (e.g. `x:Int =
         // f(y:Real)`) parses with integral coefficients, but a real-valued
-        // column has no parity — reasoning mod 2 over it would fabricate a
+        // column has no parity – reasoning mod 2 over it would fabricate a
         // lemma the equation does not entail.  (A too-big `IntConst` column
         // is integer-valued in truth, so it keeps its parity.)
         let col_is_int = manager.get(term).is_some_and(|n| {
@@ -418,7 +418,7 @@ impl Solver {
             return;
         }
 
-        // ---- 1. Harvest new rows from the un-walked assertions. ----
+        // ======== 1. Harvest new rows from the un-walked assertions. ========
         // Conjuncts of top-level `and`s count (ite elimination packs the
         // link equalities and side conditions into one conjunction);
         // everything else (implications, negations, quantifiers, …) does
@@ -468,7 +468,7 @@ impl Solver {
             return;
         }
 
-        // ---- 2. Build the GF(2) system (deterministic column order). ----
+        // ======== 2. Build the GF(2) system (deterministic column order). ========
         let mut col_ids: Vec<TermId> = self
             .parity_rows
             .iter()
@@ -512,13 +512,13 @@ impl Solver {
             });
         }
 
-        // ---- 3. Eliminate non-image-determined columns. ----
+        // ======== 3. Eliminate non-image-determined columns. ========
         let derived = gf2_eliminate_bad_columns(rows, &bad);
         if derived.is_empty() {
             return;
         }
 
-        // ---- 4. Translate each consequence into a ground xor lemma. ----
+        // ======== 4. Translate each consequence into a ground xor lemma. ========
         let mut emitted = 0usize;
         'row: for row in derived {
             if emitted >= MAX_PARITY_LEMMAS {
@@ -574,11 +574,11 @@ impl Solver {
 /// Build the Bool term `xor(l_1, …, l_k) = c`.  `lits` carries
 /// `(term, negate)` pairs.
 ///
-/// An empty chain is the empty xor — semantically `false` — so the lemma
+/// An empty chain is the empty xor – semantically `false` – so the lemma
 /// is `false = c`: trivially `true` when `c` is false, the genuine
 /// contradiction constant when `c` is true.  Returning the *bare*
 /// constant `c` here instead (the old behaviour) asserted `false`
-/// outright whenever the folded image left no literal — and an
+/// outright whenever the folded image left no literal – and an
 /// image-determined column whose branches agree in parity (both even,
 /// e.g. `ite(cond, 2, 0)`) folds to exactly that: its image is the
 /// constant `false`, it merges into the rhs, and
@@ -608,7 +608,7 @@ fn build_xor_lemma(lits: &[(TermId, bool)], c: bool, manager: &mut TermManager) 
 pub(super) mod tests {
     use super::*;
 
-    // ---- GF(2) elimination --------------------------------------------
+    // ======== GF(2) elimination ========
 
     #[test]
     fn gf2_elimination_recovers_the_parity_row() {
@@ -684,7 +684,7 @@ pub(super) mod tests {
         assert!(gf2_eliminate_bad_columns(rows, &bad).is_empty());
     }
 
-    // ---- column classification ----------------------------------------
+    // ======== column classification ========
 
     fn test_manager() -> TermManager {
         TermManager::new()
@@ -804,7 +804,7 @@ pub(super) mod tests {
         );
     }
 
-    // ---- lemma construction --------------------------------------------
+    // ======== lemma construction ========
 
     #[test]
     fn xor_lemma_folds_duplicates_and_polarity() {
@@ -816,14 +816,14 @@ pub(super) mod tests {
         let expect = m.mk_eq(c, m.mk_bool(true));
         assert_eq!(lemma, expect);
         // Empty fold: the empty xor is `false`, so the lemma is
-        // `false = c` — `true` when `c` is false (a vacuous
+        // `false = c` – `true` when `c` is false (a vacuous
         // consequence, never a unit `false`), and the genuine
         // contradiction constant when `c` is true.
         assert_eq!(build_xor_lemma(&[], false, &mut m), m.mk_true());
         assert_eq!(build_xor_lemma(&[], true, &mut m), m.mk_false());
     }
 
-    // ---- solver-level: the fuzzer's mixed-parity shapes ----------------
+    // ======== solver-level: the fuzzer's mixed-parity shapes ========
 
     use super::super::Solver;
 

@@ -501,7 +501,7 @@ impl EufSolver {
                     // `diseq_pair_counts` hit implies a live diseq whose
                     // endpoints are `(new_root, far)`-classes, and every live
                     // diseq watches its endpoint classes (the migration above
-                    // keeps watches and cached pairs in lockstep) — so an
+                    // keeps watches and cached pairs in lockstep) – so an
                     // empty `diseq_watch[new_root]` makes the hash hit
                     // impossible.  On bit-blasted workloads (BV gate
                     // equalities) this gate removed the dominant EUF cost:
@@ -541,7 +541,7 @@ impl EufSolver {
             // Declared once outside the loop so each SmallVec's heap backing
             // (if it ever spills past the inline capacity of 4) is allocated
             // at most once per merge event rather than once per use-list
-            // entry — both the raw argument copy and the canonical form.
+            // entry – both the raw argument copy and the canonical form.
             let mut args_buf: SmallVec<[u32; 4]> = SmallVec::new();
             let mut canon_buf: SmallVec<[u32; 4]> = SmallVec::new();
 
@@ -581,7 +581,7 @@ impl EufSolver {
                 // absent" implies "signature absent" and the match can be
                 // skipped.  On hit, scan the (small) fingerprint bucket and
                 // compare each node's CURRENT signature (`node_sig_key`)
-                // directly — content-identical to probing `sig_table` with a
+                // directly – content-identical to probing `sig_table` with a
                 // freshly cloned `(func, args)` key, without building or
                 // hashing that key on this hot path.  A bucket node whose
                 // signature has since changed simply fails the exact

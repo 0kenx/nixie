@@ -7,7 +7,7 @@
 //! a factor raised to a power above one: over the rationals that needs a root,
 //! not a division, and there is no exact rational `e`-th root to divide by.
 //! Over the *integers* there is a perfectly exact answer, and it is worth
-//! having — without it `x * x = 2` is unrefutable, because nothing else ever
+//! having – without it `x * x = 2` is unrefutable, because nothing else ever
 //! puts a finite bound on `x`.
 //!
 //! What this module adds is the one-factor case `v = x^e`. That is the shape
@@ -23,7 +23,7 @@
 //! For even `e` the map is symmetric: `x^e ≤ U` with `U ≥ 0` gives
 //! `|x| ≤ ⌊U^{1/e}⌋`, an interval. The dual, `x^e ≥ L` with `L > 0`, gives
 //! `|x| ≥ ⌈L^{1/e}⌉`, which is a *disjunction* (`x ≤ -c ∨ x ≥ c`) and not
-//! representable as one interval, so it is not derived here — the engine's
+//! representable as one interval, so it is not derived here – the engine's
 //! sign split is what turns that case into two interval cases.
 //!
 //! Every root is computed on [`BigInt`] by binary search, so nothing wraps.
@@ -56,7 +56,7 @@ fn nth_root_floor(n: &BigInt, e: u32) -> BigInt {
         return n.clone();
     }
     // `2^(bits/e + 1)` raised to `e` is at least `2^(bits + 1)`, which exceeds
-    // any value of `bits` bits — so it is a valid strict upper bound to search
+    // any value of `bits` bits – so it is a valid strict upper bound to search
     // down from.
     let bits = n.bits() as usize;
     let mut lo = BigInt::zero();

@@ -1,4 +1,4 @@
-//! Elimination of unconstrained variables — the Z3 `elim-uncnstr` port.
+//! Elimination of unconstrained variables – the Z3 `elim-uncnstr` port.
 //!
 //! A variable that occurs in **exactly one** place of a formula is
 //! *unconstrained* at that site: whenever the surrounding application is
@@ -19,7 +19,7 @@
 //! The rewrite is **satisfiability-preserving, not equivalence-preserving**:
 //! `F[x]` with `x` occurring nowhere else is equisatisfiable with `F[u]`,
 //! because the recorded definition `x := def(u)` is chosen so that `def`
-//! reproduces the projection — a model of either side extends to a model of
+//! reproduces the projection – a model of either side extends to a model of
 //! the other (eliminated variable from the fresh one; fresh variable from
 //! the original operand value).  Two consequences shape the integration:
 //!
@@ -28,7 +28,7 @@
 //! * a `Sat` verdict must *reconstruct* values for the eliminated variables
 //!   from the fresh ones (`defs` below, defaulted where the model has no
 //!   opinion: an unconstrained variable's value is chosen, not searched)
-//!   and survive certification against the original assertions — the eager
+//!   and survive certification against the original assertions – the eager
 //!   QF_BV dispatch's [`crate::solver::Solver::model_certifies_assertions`]
 //!   gate is exactly that check.
 //!
@@ -36,7 +36,7 @@
 //! [`crate::solver::dispatch_pure_bv`] where both halves exist.  It must
 //! never be asserted "alongside" the originals like the
 //! equivalence-preserving preprocessor: a non-implied rewrite would refute
-//! satisfiable goals — precisely the ring-elimination lesson of
+//! satisfiable goals – precisely the ring-elimination lesson of
 //! `docs/studies/2026-09-07-bv-dispatch-unification.md`.
 //!
 //! # Deviations from Z3 (each with its surjectivity argument)
@@ -82,7 +82,7 @@ const MAX_ROUNDS: usize = 1000;
 /// at this threshold: `brummayerbiere4/unconstrained*` collapses to a
 /// handful of free atoms (~5 %), while goals where the pass mostly renames
 /// existing structure (`tacas07/BBB-32`: 138 eliminations, essentially the
-/// same DAG) stay near 1.0 — and those are exactly the goals whose
+/// same DAG) stay near 1.0 – and those are exactly the goals whose
 /// *existing* route (unified general path or eager CEGAR dispatch) already
 /// solved them; diverting them measured `sat` verdicts regressing to
 /// `unknown`.
@@ -171,7 +171,7 @@ pub(super) fn elim_uncnstr_assertions(
 fn collect_unconstrained(assertions: &[TermId], manager: &TermManager) -> FxHashSet<TermId> {
     // Per-pop counting for variables: hash-consing makes every occurrence
     // site of the same variable the same `TermId`, and the DAG walk pushes
-    // it once per parent — so each pop is one occurrence (Z3 `collect_occs`
+    // it once per parent – so each pop is one occurrence (Z3 `collect_occs`
     // marks `more_than_once` on exactly the revisit).  Compound terms are
     // walked once; their occurrence count is irrelevant to the rules.
     let mut occurrences: FxHashMap<TermId, u32> = FxHashMap::default();
@@ -350,7 +350,7 @@ impl Round<'_> {
             TermKind::BvExtract { high, low, arg } => manager.mk_bv_extract(high, low, kid(&arg)),
             // Leaves, quantifiers, foreign theories: keep the node (for
             // compound kinds without a builder entry above, keeping the
-            // original node drops the children's rewrites — always sound:
+            // original node drops the children's rewrites – always sound:
             // the kept children are the original ones, hash-consed intact,
             // and a dropped rewrite only forfeits an elimination).
             _ => term,
@@ -370,7 +370,7 @@ impl Round<'_> {
         let is_bool_sort = manager.sorts.get(sort).is_some_and(|s| s.is_bool());
         let width = manager.sorts.get(sort).and_then(|s| s.bitvec_width());
         match data.kind {
-            // ================= Bool core (Z3 process_basic_app) ==========
+            // ======== Bool core (Z3 process_basic_app) ========
             TermKind::Ite(c, t, e) => {
                 let t_sort = manager.get(t).map(|td| td.sort)?;
                 if self.uncnstr(t, manager) && self.uncnstr(e, manager) {
@@ -480,7 +480,7 @@ impl Round<'_> {
                 Some(u)
             }
 
-            // ================= BV (Z3 process_bv_app) ====================
+            // ======== BV (Z3 process_bv_app) ========
             // `x + t -> u`, `x := u - t` (Z3 process_add).
             TermKind::BvAdd(a, b) => {
                 let w = width?;

@@ -7,28 +7,28 @@ remaining extraction blindness: **XOR/XNOR parity gates**.
 
 ## The correction first
 
-The SSR study's headline — "the remaining 16–36× is pure search quality" —
+The SSR study's headline – "the remaining 16–36× is pure search quality" –
 was wrong. The missing control: kissat on our residual with
 `--congruence=0` needs 766K conflicts (≈ us), with `--preprocess=0` still
-only 10.5K — kissat's IN-SEARCH congruence re-collapses our residual
+only 10.5K – kissat's IN-SEARCH congruence re-collapses our residual
 (20,742 more merges + 65,145 gate-subsumed clauses there). The gap was
 still structural, and the residual's 60,602 exact duplicate clauses (our
 fold rewrites clauses onto representatives but never deduplicates across
 clauses; the elim-phase subsume round cleans 46K of them at conflicts=
-2000 — transient, not the difference) were a red herring.
+2000 – transient, not the difference) were a red herring.
 
 ## The blindness
 
-The raw bv_ILA file contains **2,534 complete parity 4-clause sets** — but
+The raw bv_ILA file contains **2,534 complete parity 4-clause sets** – but
 the XOR arm found **zero** gates (the trace's `xor=0` against kissat's
 7,530). Two compounding causes, both found the hard way:
 
 1. **Extraction polarity**: the scan checked the input signs *as they
-   appear in the base clause* — one of four sign presentations. A
+   appear in the base clause* – one of four sign presentations. A
    definition whose o-form clauses negate an input (every XNOR shape) is
    invisible. Fix: iterate all four input-sign combinations per base
    (clause-literal polarity is a red herring I tripped on three separate
-   times this arc — first in the ITE canonicalization, then in a python
+   times this arc – first in the ITE canonicalization, then in a python
    checker that "proved" zero XOR sets existed, then in my own regression
    tests' break clauses).
 
@@ -39,10 +39,10 @@ the XOR arm found **zero** gates (the trace's `xor=0` against kissat's
    56-clause pinned regression):
    - keying the affine relation over **all three gate vars**: one parity
      definition reads three ways (any var as output), all sharing the
-     signature — merging inputs with outputs (`37 ≡ 41 ≡ 122 ≡ 123` from
+     signature – merging inputs with outputs (`37 ≡ 41 ≡ 122 ≡ 123` from
      a single definition; false UNSAT on Iter22 at 0 conflicts);
    - **parity-folding** the input signs into one key: a definition's `o`
-     and `¬o` readings then share the key — merging `o ≡ ¬o`, an instant
+     and `¬o` readings then share the key – merging `o ≡ ¬o`, an instant
      contradiction class.
    The sound shape keys the **signed inputs** only; duplicate polarity
    readings then land pos-of-one on neg-of-the-other and self-cancel.
@@ -53,10 +53,10 @@ the XOR arm found **zero** gates (the trace's `xor=0` against kissat's
 
 | instance | before | after | |
 |---|---|---|---|
-| bv_ILA_Piccolo | 302,978 conflicts / ~100 s | **15,144 / 6.0 s** | 0.05×; kissat is 9,465 — parity reached |
+| bv_ILA_Piccolo | 302,978 conflicts / ~100 s | **15,144 / 6.0 s** | 0.05×; kissat is 9,465 – parity reached |
 | b21 | 157,666 | 172,092 | 1.09× (noise band) |
 | s38584 | 15,159 | 16,241 | 1.07× |
-| Iter22 / Carry / x9 / frb35 / SCPC / circuit | — | — | bit-identical (inert band) |
+| Iter22 / Carry / x9 / frb35 / SCPC / circuit | – | – | bit-identical (inert band) |
 
 ## Soundness
 
@@ -79,9 +79,9 @@ per-family gaps from the handover: oddball (25×) untouched, hwmcc-6s299
 against the new congruence. Named next slices, in measured order:
 
 1. **Gate-based subsumption** (kissat's `forward_subsume_matching_clauses`
-   over repr-canonicalized literals — 65K clauses on our residual, 108K
+   over repr-canonicalized literals – 65K clauses on our residual, 108K
    on the raw file) plus the post-fold dedup (60K duplicates today).
 2. **The armed composition** (SSR + pre-search arm) re-measured on top of
-   the XOR closure — the BVE interaction may have changed now that the
+   the XOR closure – the BVE interaction may have changed now that the
    fold collapses 5× more.
-3. The n-ary gates (arity ≤4 XOR, n-ary AND) — still lower priority.
+3. The n-ary gates (arity ≤4 XOR, n-ary AND) – still lower priority.

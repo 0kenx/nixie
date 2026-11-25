@@ -4,23 +4,23 @@
 //! linking to the next `check`, where the preprocessor's rewritten set
 //! becomes the *only* circuit source (menu item 4, "blast rewritten-only").
 //! The flag is net-negative on the 509-file corpus (301 vs 308 parallel,
-//! zero flips) but structurally closes `s3_srvr_1_alt` — the last
-//! parser-macro cell — which no other mechanism reaches.
+//! zero flips) but structurally closes `s3_srvr_1_alt` – the last
+//! parser-macro cell – which no other mechanism reaches.
 //!
 //! These tests pin the three model-path invariants the prototype needed:
 //!
 //! 1. **Multi-check sequences** (assert/check/assert/check/push/assert/
-//!    check/pop/check) — the deferral flush, the stage-4 re-emission, and
+//!    check/pop/check) – the deferral flush, the stage-4 re-emission, and
 //!    the push/pop pending-flush must produce the same verdict sequence as
 //!    the assert-time path.
-//! 2. **Eliminated variables in `Sat` models** — the rewritten-only core
+//! 2. **Eliminated variables in `Sat` models** – the rewritten-only core
 //!    leaves solve-eqs-eliminated variables unconstrained; their values
 //!    must be *replayed* from the recorded eliminations before the
 //!    model-validation gate (otherwise the gate refutes the ORIGINAL
 //!    assertions with defaulted values and blocks into `Unknown`), and the
 //!    replay must clear the sort-default completion `build_model` installs
 //!    first.
-//! 3. **Model records win over defaulted bits** — an explicit model entry
+//! 3. **Model records win over defaulted bits** – an explicit model entry
 //!    (a replayed definition) must not be shadowed by "determined" bits
 //!    that are merely the adopted assignment's all-false default for a
 //!    never-constrained variable.
@@ -72,7 +72,7 @@ fn deferred_incremental_sequence_matches() {
 
 /// A solve-eqs-eliminated variable (`x := 7`): the deferred `sat` must
 /// survive the model-validation gate via the elimination replay, and
-/// `get-value` must report the replayed definition value — not the sort
+/// `get-value` must report the replayed definition value – not the sort
 /// default.
 #[test]
 fn deferred_sat_replays_eliminated_variable() {

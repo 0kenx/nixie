@@ -366,14 +366,14 @@ impl Monomial {
                 // the SMALLER exponent is greater. Sparse merge walk:
                 // when the sides name different variables, the side whose
                 // variable is HIGHER has a positive exponent where the
-                // other has zero — that is the highest difference, so the
+                // other has zero – that is the highest difference, so the
                 // higher-variable side is smaller. (The first version of
                 // this walk ordered by the variable index without that
                 // inversion, which is not grevlex and not a term order:
                 // leading terms selected with it break the termination
                 // argument of Gröbner reduction, and any system whose
-                // monomials' top variables differ — six-plus random
-                // quadratics — looped until budget death.)
+                // monomials' top variables differ – six-plus random
+                // quadratics – looped until budget death.)
                 let mut i = self.vars.len();
                 let mut j = other.vars.len();
 

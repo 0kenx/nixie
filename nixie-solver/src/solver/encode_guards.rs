@@ -34,7 +34,7 @@ impl Solver {
         // A parse that failed on COEFFICIENT width leaves its atom with no
         // constraint registration at all (the encode bails before
         // `var_to_constraint` is populated), so the loop below cannot see
-        // it — the recorded `arith_parse_overflow` reasons are the only
+        // it – the recorded `arith_parse_overflow` reasons are the only
         // witness. Without this check such an atom is a free Boolean the
         // SAT core satisfies at will: observed as a wrong `sat` on
         // `(= v0 (+ (* 9223372036854775808 v1) 1))` (v0 = 0, v1 > 0 is
@@ -246,7 +246,7 @@ impl Solver {
                 TermKind::Neg(a) | TermKind::Not(a) => stack.push(*a),
                 // Transcendental functions are never linear-representable:
                 // the linear parser has no row for them, so an atom carrying
-                // one is a free Boolean to the SAT core — the honesty gate
+                // one is a free Boolean to the SAT core – the honesty gate
                 // must answer `unknown` unless the delta-ICP dispatcher
                 // (`check_trans`) took the goal.  Without this arm a
                 // `(= (exp x) 2.0)` answered a spurious `sat`.
@@ -333,8 +333,8 @@ impl Solver {
     /// (`fold_ground`); rung 2 is the iterative, memoized BOTTOM-UP
     /// simplify (`TermManager::simplify`: explicit heap stack, so it is
     /// depth-safe where `ctx_simplify`'s native mutual recursion is not).
-    /// Rung 2 carries the guard-equality elimination — `eq_ite_rules`
-    /// fires in `simplify`'s `Eq` arm as well — which collapses the
+    /// Rung 2 carries the guard-equality elimination – `eq_ite_rules`
+    /// fires in `simplify`'s `Eq` arm as well – which collapses the
     /// nec-smt priority-select ite spines the ground fold cannot touch
     /// (a spine that folds to `false` answers `unsat` through the
     /// constant gate; one that folds to any shallow term proceeds
@@ -377,9 +377,9 @@ impl Solver {
         // explicit worklist) does not consume depth budget here: that walk
         // is iterative, so a 5000-deep left-nested `and` chain (the SAL /
         // Fischer industrial translations) is encoded natively and must not
-        // be diverted to `Unknown`.  Only the non-skeleton leaves — the
+        // be diverted to `Unknown`.  Only the non-skeleton leaves – the
         // terms the recursive Tseitin encoder and the other native-recursive
-        // pre-processing passes actually descend into — are measured against
+        // pre-processing passes actually descend into – are measured against
         // [`ENCODE_DEPTH_LIMIT`](super::ENCODE_DEPTH_LIMIT).
         let mut best: FxHashMap<TermId, u32> = FxHashMap::default();
         let mut skeleton: Vec<(TermId, bool)> = vec![(root, true)];
@@ -425,18 +425,18 @@ impl Solver {
     /// The measured depth follows the *native-recursion frontier*, not
     /// total structural depth.  **Bit-vector operation nodes are depth
     /// terminals**: the Tseitin encoder mint-a-var-and-stops on them (only
-    /// Bool connectives recurse — see `encode_depth_uncached`), and their
+    /// Bool connectives recurse – see `encode_depth_uncached`), and their
     /// subtrees are consumed by the *iterative* circuit builders
     /// (`encode_bv_term_recursive`, `assert_formula_true`, the unified
     /// link pass), so a 2500-deep `bvadd`/`bvshl`/extract chain costs no
     /// recursion budget anywhere.  Counting it anyway made every deep
-    /// bit-vector expression trip the guard — SAGE-style reference chains
+    /// bit-vector expression trip the guard – SAGE-style reference chains
     /// (`sage/app7/bench_4443`, depth 2481), `bmc-bv/ex49` (1009), wide
-    /// `smulov`/`umulov` overflow checks — and a measured 51 corpus files
+    /// `smulov`/`umulov` overflow checks – and a measured 51 corpus files
     /// answered an instant, spurious `Unknown` at assert time.
     ///
     /// Every other kind keeps the full structural accounting: datatype
-    /// constructor/tester/selector chains (the datatype passes recurse —
+    /// constructor/tester/selector chains (the datatype passes recurse –
     /// pinned by `depth_guard_measures_datatype_constructor_chains`),
     /// `match`, `let`, string/FP/arith/array structure (conservative: the
     /// guard protects every walk between assert and verdict, and only the
@@ -457,7 +457,7 @@ impl Solver {
                 _ => {}
             }
             best.insert(t, depth);
-            // Bit-vector operation node — and a *bit-vector-sorted*
+            // Bit-vector operation node – and a *bit-vector-sorted*
             // `ite` (the multiplexer chains of the LLBMC-style bmc
             // encodings, a thousand deep): iterative territory, no
             // recursion budget below it.  A Bool-sorted `ite` stays
@@ -476,7 +476,7 @@ impl Solver {
         false
     }
 
-    /// Whether `kind` is a bit-vector *operation* node — the set the
+    /// Whether `kind` is a bit-vector *operation* node – the set the
     /// Tseitin encoder mint-a-var-and-stops on and the iterative BV
     /// circuit builders own.  Bit-vector *comparisons* are deliberately
     /// absent: they are Bool-sorted atoms the encoder also stops at, but

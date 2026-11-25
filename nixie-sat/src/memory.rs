@@ -224,7 +224,7 @@ const COMPACT_MIN_WASTED: usize = 64 * 1024;
 ///
 /// 8 (2026-09-05, was 3): every compaction ends in `shrink_to_fit`, so a
 /// tighter gate keeps the arena's *capacity* (Vec doubling overshoot, which
-/// RSS pays for) close to live data between reduce rounds — on
+/// RSS pays for) close to live data between reduce rounds – on
 /// worker-class instances the measured end-of-run slack was ~220 MB
 /// (537 MB cap vs 317 MB live) with waste crossing live/3 only twice in a
 /// 30 s solve. Compaction remains trajectory-neutral by construction
@@ -238,7 +238,7 @@ const TRIM_MIN_SLACK: usize = 16 << 20;
 /// Growth-slack trim gate divisor: the Vec-doubling overshoot (capacity −
 /// used) must reach `used / TRIM_SLACK_DIV` before a trim fires. With the
 /// margin below this bounds total trim-copy work at ~`(1 + margin)·div`×
-/// the bytes the database ever retains — see [`ClauseArena::trim_slack`].
+/// the bytes the database ever retains – see [`ClauseArena::trim_slack`].
 const TRIM_SLACK_DIV: usize = 2;
 /// Headroom kept by [`ClauseArena::trim_slack`]: the trimmed capacity is
 /// `used + used/8`, so ordinary post-trim learning fits without an
@@ -2077,7 +2077,7 @@ mod tests {
             let r = ClauseRef::from_byte_offset(off).expect("in range");
             assert!(b.get(r).is_some_and(|c| c.lits.len() == 3));
         }
-        // (A small *slack* never fires — covered by `a` above; the floor
+        // (A small *slack* never fires – covered by `a` above; the floor
         // bounds the reclaim, not the arena size.)
     }
 

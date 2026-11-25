@@ -16,7 +16,7 @@
 //! inside a region (a function's arguments), so a goal that orders two `Real`
 //! bound variables (`x ≤ y`, which the fragment admits for its monotone
 //! projection) keeps the monotone one, `π(v) = max{s ∈ S : s ≤ v}`, which
-//! preserves every non-strict bound, equality and strict upper bound — and is
+//! preserves every non-strict bound, equality and strict upper bound – and is
 //! declined (the caller keeps its ordinary path, never a `sat`) only when one
 //! of its `Real` guards holds on an interval open at its lower end (`x > g`,
 //! `x ≠ g`), the one shape neither projection preserves for it.
@@ -112,8 +112,8 @@ enum Polarity {
 /// Those are the only guard atoms the monotone projection `π(v) = max{s ∈ S :
 /// s ≤ v}` does not preserve over `Real` (no finite set has a point in
 /// `(g, v]` for every `v > g`): a non-strict bound, an equality and a strict
-/// upper bound are preserved by it — `π(v) ≤ v`, and every guard ground and
-/// `g - 1` is in the relevant set — so a goal ordering two `Real` bound
+/// upper bound are preserved by it – `π(v) ≤ v`, and every guard ground and
+/// `g - 1` is in the relevant set – so a goal ordering two `Real` bound
 /// variables keeps the monotone projection, and is certifiable, unless one of
 /// these occurs (`03_monotonicity`: `0 ≤ x ≤ 100 ∧ 0 ≤ y ≤ 100 ∧ x ≤ y`).
 fn holds_on_an_open_lower_interval(

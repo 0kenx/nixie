@@ -8,7 +8,7 @@ guarded transitions) must accept every positive word and reject every
 negative word. Z3 has no FSM theory, so its file uses the layered
 one-hot reachability encoding with bounded epsilon relaxation
 (|Q| monotone iterations; the layering makes the biconditional system
-acyclic, hence exact — the same construction as nixie-solver's
+acyclic, hence exact – the same construction as nixie-solver's
 independent-encoding test oracle).
 
 Deterministic given --seed. Output: <outdir>/{nixie,z3}/<name>.smt2 plus

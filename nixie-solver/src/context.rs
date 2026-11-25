@@ -155,7 +155,7 @@ pub struct Context {
     logic: Option<String>,
     /// Whether `set-logic` was already issued (SMT-LIB permits it once;
     /// a second call is a command error, and silently replacing live
-    /// engine configuration — the old behavior — is the hazard).
+    /// engine configuration – the old behavior – is the hazard).
     logic_was_set: bool,
     /// A logic-contract violation found by the last `check_sat` (body
     /// requires capabilities the declared header forbids); surfaced as a
@@ -175,12 +175,12 @@ pub struct Context {
     /// parser inlines every in-script use of the name as the body, so these
     /// add no constraint; they exist so `(get-model)` lists the name with
     /// its defined value (resolved under the current model at each `sat`
-    /// verdict — see [`Self::resolve_define_fun_aliases`]).
+    /// verdict – see [`Self::resolve_define_fun_aliases`]).
     define_fun_aliases: Vec<(TermId, TermId)>,
     /// Body values of [`Self::define_fun_aliases`] under the model of the
     /// most recent `sat` verdict (`TermId`s of closed constants; cleared on
     /// every check).  Entries exist only where the evaluation reduced to a
-    /// constant — an unevaluable body keeps the default listing.
+    /// constant – an unevaluable body keeps the default listing.
     alias_model_values: crate::prelude::FxHashMap<TermId, TermId>,
     /// Declared functions
     declared_funs: Vec<DeclaredFun>,
@@ -495,7 +495,7 @@ impl Context {
         // the name, so an invented name could partially install a backend
         // (or suppress one) while still being accepted.
         //
-        // A `HO_`-prefixed name (CVC5's higher-order spelling — the only
+        // A `HO_`-prefixed name (CVC5's higher-order spelling – the only
         // surface under which `cvc5` accepts function symbols as operator
         // arguments, e.g. `(bag.map f b)`) resolves as its base logic:
         // nixie has no function sorts, so the prefix carries no extra
@@ -577,7 +577,7 @@ impl Context {
         // structurally and are never validated against a spec.  The check
         // runs over the assertions as written (pre-purification) and is
         // skipped when the structural walk itself cannot classify a term
-        // (unknown kinds) — refusing to guess is the documented behavior.
+        // (unknown kinds) – refusing to guess is the documented behavior.
         if let Some(name) = self.logic.as_deref()
             && let Ok(Some(spec)) = crate::solver::logic_contract::lookup(name)
         {
@@ -789,7 +789,7 @@ impl Context {
     pub fn check_sat(&mut self) -> SolverResult {
         // FSM declarations must be live before solving; a registration
         // failure cannot be silent (unconstrained acceptance constants
-        // would admit false `sat`) — surface it as an honest Unknown.
+        // would admit false `sat`) – surface it as an honest Unknown.
         if let Err(e) = self.ensure_fsm_registered() {
             self.pending_contract_error = Some(format!("{e}"));
             return SolverResult::Unknown;
@@ -857,7 +857,7 @@ impl Context {
         for (name, body) in &aliases {
             // Substitute the model's assignments for the body's free
             // variables, then fold (`Model::eval` has no bit-vector operator
-            // arms, so compound BV bodies would echo unreduced through it —
+            // arms, so compound BV bodies would echo unreduced through it –
             // the same reason `get-value` substitutes first).  A body whose
             // variables are not all pinned stays open and is skipped.
             let mut vars = nixie_core::ast::traversal::collect_free_vars(*body, &self.terms);
@@ -874,7 +874,7 @@ impl Context {
             // Keep only real values: a constant body (whose evaluation is
             // itself) is a perfectly good value, while a body still
             // mentioning free variables is neither a value nor honest to
-            // echo — the listing then falls back to the ordinary completion
+            // echo – the listing then falls back to the ordinary completion
             // arms.
             if self.is_closed_constant(simplified) {
                 self.alias_model_values.insert(*name, simplified);
@@ -883,7 +883,7 @@ impl Context {
         self.define_fun_aliases = aliases;
     }
 
-    /// Whether `term` is a constant leaf (no free variables) — the only
+    /// Whether `term` is a constant leaf (no free variables) – the only
     /// shape admissible as a `get-model` value.
     fn is_closed_constant(&self, term: TermId) -> bool {
         nixie_core::ast::traversal::collect_free_vars(term, &self.terms).is_empty()
@@ -1791,7 +1791,7 @@ impl Context {
                 Command::Unsupported(name) => {
                     // SMT-LIB's observability contract (z3's exact
                     // behavior): an unrecognized command is *answered*,
-                    // not silently swallowed — a script whose only
+                    // not silently swallowed – a script whose only
                     // `(check-sat)` sat inside a stray form used to
                     // execute nothing and exit 0 with no output at all.
                     output.push(format!("unsupported (command {name})"));
@@ -1826,7 +1826,7 @@ impl Context {
                     // Eager validation: references must name a declared
                     // automaton with in-range indices, and acceptance
                     // result names must be fresh. (The registration rebuild
-                    // re-validates independently — defense in depth.)
+                    // re-validates independently – defense in depth.)
                     if let Command::DeclareFsm {
                         name,
                         states,
@@ -2078,7 +2078,7 @@ impl Context {
                     // Simplify and output the term.  The output is
                     // LET-SHARED: a simplified result can carry DAG sharing
                     // whose tree unfolding is exponentially larger (the
-                    // nec-smt let-chain residual unfolds to ~10^16 nodes —
+                    // nec-smt let-chain residual unfolds to ~10^16 nodes –
                     // printing it unshared never finishes;
                     // `2026-09-19-smt-perf-gap-attribution.md`'s printer
                     // addendum).  `share_for_printing` lifts the
@@ -2094,7 +2094,7 @@ impl Context {
                     // bindings' openings, then the body, then one closer
                     // per binding.  (The previous per-binding
                     // `text = format!("(let … {text})")` rebuild copied
-                    // the whole accumulated text once per binding —
+                    // the whole accumulated text once per binding –
                     // O(L²) on the 10k+-binding residuals.)
                     let mut text = String::new();
                     for (name, rhs) in bindings.iter().rev() {
@@ -2207,7 +2207,7 @@ impl Context {
                         // The parser already inlined every in-script
                         // reference to `name` directly as `body` (see
                         // `nixie_core`'s `define-fun` handling), so the
-                        // definition adds no constraint — z3 treats nullary
+                        // definition adds no constraint – z3 treats nullary
                         // `define-fun` as a pure macro.  The historical
                         // implementation asserted `(= name body)` here so the
                         // name would appear in `get-model`; on macro-heavy
@@ -2215,7 +2215,7 @@ impl Context {
                         // of thousands of nullary definitions, each body
                         // referencing earlier bodies) that ran the full
                         // per-assert preprocessing+blasting pipeline over
-                        // every chained body — quadratic ingestion — and
+                        // every chained body – quadratic ingestion – and
                         // left the unified core carrying tens of thousands
                         // of definitional clauses the search never needed.
                         // Instead: declare the constant (so introspection
@@ -2249,7 +2249,7 @@ impl Context {
                         // substitution the parser performs at call sites),
                         // so it needs the full `(parameters, body)` pair.
                         // The parameter variables are rebuilt by
-                        // name+sort — hash-consing makes them the very
+                        // name+sort – hash-consing makes them the very
                         // variables the parser bound.
                         if !params.is_empty() {
                             let mut param_vars: Vec<TermId> = Vec::with_capacity(params.len());
@@ -2956,7 +2956,7 @@ mod tests {
         // Parity infeasibility is outside both independent verifiers
         // (LP-feasible, invisible to congruence closure), so certified
         // mode must fail closed. (Linear bound contradictions moved to
-        // the accepting side with the LP-lemma verifier, 2026-09 — see
+        // the accepting side with the LP-lemma verifier, 2026-09 – see
         // `certified_mode_lp_refutable_unsat_accepts` below.)
         let mut ctx = Context::new();
         let output = ctx
@@ -3039,7 +3039,7 @@ mod tests {
         );
     }
 
-    // ----- FSM command surface (docs/FSM.md) -----
+    // ======== FSM command surface (docs/FSM.md) ========
 
     /// A full synthesis script: positive and negative examples over a
     /// stay/move automaton, solved through the SMT-LIB command surface,
@@ -3239,7 +3239,7 @@ mod tests {
             (assert w)\n\
             (check-sat)\n";
         let output = ctx.execute_script(script).expect("script executes");
-        // sat; sat (g false); unsat (w and not w — w is still defined by
+        // sat; sat (g false); unsat (w and not w – w is still defined by
         // the re-registered constraints, so the contradiction is caught).
         assert_eq!(output, vec!["sat", "sat", "unsat"]);
     }

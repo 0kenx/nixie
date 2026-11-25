@@ -77,18 +77,18 @@ No partial timeout counters enter the table.
 | history-32 | 22.171 [22.157–22.189] | 452.765 [452.765–452.766] | 20.42× |
 | append-128 | 3.011 [3.009–3.013] | 8.590 [8.590–8.590] | 2.85× |
 | tail-128 | 3.055 [3.015–3.055] | 44104.587 [44104.558–44104.617] | 14475.75× |
-| split-128 | 3.115 [3.080–3.120] | timeout | — |
+| split-128 | 3.115 [3.080–3.120] | timeout | – |
 | history-128 | 255.054 [254.486–255.742] | 31839.852 [31839.850–31839.853] | 124.83× |
 | append-512 | 4.159 [4.158–4.165] | 8.590 [8.590–8.590] | 2.07× |
-| tail-512 | 4.142 [4.139–4.181] | timeout | — |
-| split-512 | 4.663 [4.627–4.669] | timeout | — |
-| history-512 | 28860.809 [28694.080–29754.025] | timeout | — |
+| tail-512 | 4.142 [4.139–4.181] | timeout | – |
+| split-512 | 4.663 [4.627–4.669] | timeout | – |
+| history-512 | 28860.809 [28694.080–29754.025] | timeout | – |
 | empty | 2.538 [2.500–2.540] | 8.491 [8.491–8.491] | 3.36× |
 | concat-disequality | 3.195 [3.191–3.198] | 15.283 [15.283–15.284] | 4.78× |
 | nested-congruence | 2.759 [2.758–2.800] | 8.557 [8.557–8.558] | 3.09× |
-| symbolic-append | unknown | 8.525 [8.525–8.526] | — |
-| symbolic-read | unknown | 37.586 [37.586–37.587] | — |
-| symbolic-word-equation | unknown | 11.004 [11.004–11.005] | — |
+| symbolic-append | unknown | 8.525 [8.525–8.526] | – |
+| symbolic-read | unknown | 37.586 [37.586–37.587] | – |
+| symbolic-word-equation | unknown | 11.004 [11.004–11.005] | – |
 
 The boundary cases include process startup and mostly trivial simplification;
 their roughly 3–5× instruction ratios should not be read as sequence-search

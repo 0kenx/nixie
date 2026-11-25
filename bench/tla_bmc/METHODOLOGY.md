@@ -1,4 +1,4 @@
-# TLA+ bounded model checking — methodology
+# TLA+ bounded model checking – methodology
 
 ## What this measures
 
@@ -35,7 +35,7 @@ the formula it was handed can still answer a question nobody asked.
 
 A TLA+ specification is claimed to hold **under its assumptions**, which are
 usually the only thing pinning down a `CONSTANT`. Ignoring them turns "this
-invariant holds for the intended parameters" into "…for every value of `N`" — a
+invariant holds for the intended parameters" into "…for every value of `N`" – a
 strictly harder claim that fails on correct specifications. The resulting
 `Violation` is a real model of the encoded formula and a false alarm about the
 specification.
@@ -43,7 +43,7 @@ specification.
 `Bmc` asserts every `ASSUME`. One it cannot lower, type or encode is **dropped
 and counted**, never approximated: dropping weakens the search, so it can
 manufacture a counterexample but never hide one. `dropped_assumptions()`
-surfaces the count — and since the honesty gates (below) a violation found
+surfaces the count – and since the honesty gates (below) a violation found
 under a dropped assumption is `Unknown`, never exit 12. Fully ground
 assumptions are evaluated rather than asserted, and a false one aborts the
 check by name.
@@ -74,8 +74,8 @@ the same direction:
   array, admitting behaviours the specification does not have;
 * TLA+ function equality compares domains and the values on them, while array
   equality compares every index, so array equality is **stricter**. In a
-  positive position that costs nothing — the out-of-domain entries are free
-  variables and the solver picks witnesses that agree — but under a negation it
+  positive position that costs nothing – the out-of-domain entries are free
+  variables and the solver picks witnesses that agree – but under a negation it
   lets two TLA+-equal functions be told apart.
 
 So a `Violation` may be spurious and `NoViolationWithin` stays sound, the same
@@ -87,7 +87,7 @@ a verdict was reached through it.
 An invariant must be a **state** predicate. `UnchangedAsInv1663.tla` has
 `Inv == UNCHANGED x`, an *action*. Encoded at depth 0 with no transition
 asserted, the next-state value is unconstrained, so `~Inv` is trivially
-satisfiable and the checker reported a violation — a faithful reading of the
+satisfiable and the checker reported a violation – a faithful reading of the
 formula and a meaningless statement about the specification.
 
 `Bmc::prepare` now rejects it: `Init` and `Inv` must be at most `State`, `Next`
@@ -108,7 +108,7 @@ cargo run --release -p nixie-tla-check --example bmccheck -- $(find ../temp/tlap
 The harness **sorts its input paths**, and `Bmc::prepare` sorts the names it
 declares, so two runs over the same corpus are byte-identical. Neither was true
 at first: `find` returns directory order, which is not stable between
-invocations, and `Inference::free_names` comes off a `HashMap` — between them
+invocations, and `Inference::free_names` comes off a `HashMap` – between them
 every `SortId`, `TermId` and reported example shifted from run to run. The
 counts were in fact stable throughout, but that is something to *establish*
 rather than assume; a measurement that cannot be reproduced byte for byte
@@ -124,7 +124,7 @@ for exactly that reason.
 
 The `Bags` standard-module vocabulary (`SetToBag`, `EmptyBag`, `BagToSet`,
 `BagIn`, `CopiesIn`, `(+)`, `(-)`, `\sqsubseteq`) lowers to the module's own
-definitions (`Bags.tla`) as kernel function expressions — a bag *is* a
+definitions (`Bags.tla`) as kernel function expressions – a bag *is* a
 function whose range is the positive naturals, which is also exactly how the
 evaluator and TLC represent one. What that means for BMC:
 
@@ -133,8 +133,8 @@ evaluator and TLC represent one. What that means for BMC:
 | ground construction (`SetToBag({1,2})`, `EmptyBag` in `Init`) | encodes |
 | symbolic reads (`CopiesIn(e, token)`, `BagIn(e, token)`, `token[e]`) | encodes |
 | ground algebra in invariants (`(+)`, `(-)`, `\sqsubseteq` over ground bags) | encodes |
-| **updates** of a state bag (`token' = token (-) SetToBag({e})`) | **encodes** (issue #20 step 5) — the function definition over `DOMAIN token` instantiates over the domain's **key universe**, each candidate guarded by `k \in DOMAIN token@step`; see `frames.rs` `fun_universe` |
-| quantifiers over `DOMAIN` of a symbolic bag | **encodes** — same key universe, same guard |
+| **updates** of a state bag (`token' = token (-) SetToBag({e})`) | **encodes** (issue #20 step 5) – the function definition over `DOMAIN token` instantiates over the domain's **key universe**, each candidate guarded by `k \in DOMAIN token@step`; see `frames.rs` `fun_universe` |
+| quantifiers over `DOMAIN` of a symbolic bag | **encodes** – same key universe, same guard |
 
 Both former declines are closed (issue #20 step 5): a function-valued state
 variable now gets a **domain-key universe** from its assignment sites
@@ -148,10 +148,10 @@ recorded above them; the *kernel* shape the chains lower to is closed.
 
 The remaining vocabulary (`BagCardinality`'s `Sum`, `SubBag`, `BagUnion`,
 `BagOfAll`) is TLC-exact in the *evaluator* (semantic parity covers it) and
-stays opaque to the encoder — their definitions need `CHOOSE` or recursion,
+stays opaque to the encoder – their definitions need `CHOOSE` or recursion,
 and are declined by name.
 
-Corpus reality check: bag usage in `tlaplus-examples` + Apalache is thin —
+Corpus reality check: bag usage in `tlaplus-examples` + Apalache is thin –
 7 files mention the vocabulary, 1 has the Init/Next/Inv triple (`Nano.tla`,
 blocked on PlusCal lowering, not on bags). TLA+-lowered specs are therefore
 not yet a bag-theory workload at any useful scale; the bag-theory corpus
@@ -164,8 +164,8 @@ value when the operator's n-fold composition commutes (associative and
 commutative in the usual case). Apalache documents the same requirement and
 does not enforce it; Nixie enforces it, because the encoder folds in
 candidate order while the evaluator folds in ascending order, and the two
-answered differently on `F(a, b) == (a + 1) * (b + 1)` over `{3, 2}` — `15`
-versus `16` — with the disagreement surfaced as "possibly spurious" rather
+answered differently on `F(a, b) == (a + 1) * (b + 1)` over `{3, 2}` – `15`
+versus `16` – with the disagreement surfaced as "possibly spurious" rather
 than refused.
 
 **Decision.** The encoder classifies the lowered operator before folding
@@ -175,12 +175,12 @@ whose composition provably commutes:
 * the element parameter unused (the operator is `g(acc)`; iterating one
   function is order-free);
 * homogeneous `+` / `*` chains with the accumulator as a bare leaf at most
-  once — `a + b + c`, the `Sum`/counting idiom;
+  once – `a + b + c`, the `Sum`/counting idiom;
 * `\cup` / `\cap` / `/\` / `\/` chains over bare accumulator leaves
-  (idempotent, so repeats are harmless) — `FoldSetSet`'s `p \cup q`;
+  (idempotent, so repeats are harmless) – `FoldSetSet`'s `p \cup q`;
 * `Max`/`Min`-shaped conditionals;
 * the function-update idiom `[f EXCEPT ![x] = e]` where the index is the
-  element itself and the accumulator is read only as `f[x]` — every element
+  element itself and the accumulator is read only as `f[x]` – every element
   writes its own index once, so every read sees the original value
   (`Antipatterns`' `addOneInCdm`, `FoldSetFun`).
 
@@ -188,15 +188,15 @@ Anything else over a set with more than one member **declines** (exit 75):
 an answer that depends on the order the members happen to be written in is
 not a property of the specification. A set expression with at most one
 member as written (`{}` or `{e}`) folds any operator, every order being the
-same order; `ApaFoldSeqLeft` is exempt — a sequence's order *is* specified.
+same order; `ApaFoldSeqLeft` is exempt – a sequence's order *is* specified.
 
 **Corpus effect.** None. Every corpus specification whose fold the audit
 classifies keeps its verdict (`FoldSetFun`, `FoldSetFunBad`, `FoldSetSet`,
 `FoldSetSetBad`, `ERC20`); every one it declines was already declined for an
 unrelated reason: `FoldSetSeq`/`FoldSetSeqBad` (which fold with `Append`,
 genuinely order-dependent) were already blocked by "a set and a non-set were
-compared" — the fold-base sort defect — and `Antipatterns`/`FoldSetInInit`
-by a non-literal range and by `SUBSET`. `FoldSetSeq.tla` — "the result is one of the six permutations" —
+compared" – the fold-base sort defect – and `Antipatterns`/`FoldSetInInit`
+by a non-literal range and by `SUBSET`. `FoldSetSeq.tla` – "the result is one of the six permutations" –
 would decline even with the base sort fixed, which is the honest reading of
 that invariant: no tool should answer an order-exposing claim from an
 arbitrary order, and the *bad* twin (which Apalache answers 12, from its own
@@ -208,7 +208,7 @@ one fixed order) is a known divergence, not a hidden one.
 read back as TLA+ values and replayed end to end by `nixie-tla`'s evaluator.
 Three provisional outcomes become `Outcome::Unknown` (exit 255) instead:
 
-* a search that ran with dropped assumptions — the count is in the reason;
+* a search that ran with dropped assumptions – the count is in the reason;
 * a model that could not be decoded;
 * a trace that decodes but does not replay (the encoding and the evaluator
   disagree, which is a defect report, not a verdict).
@@ -216,8 +216,8 @@ Three provisional outcomes become `Outcome::Unknown` (exit 255) instead:
 A contradictory assumption set is its own outcome, `AssumptionsUnsatisfiable`
 (also exit 255): `NoViolationWithin` over an empty behaviour set would read as
 "the invariant holds" when in fact there was nothing to check. Fully ground
-assumptions are *evaluated* at prepare time on the substituted constants — a
-false one aborts with `assumption violated`, a true one asserts nothing — and
+assumptions are *evaluated* at prepare time on the substituted constants – a
+false one aborts with `assumption violated`, a true one asserts nothing – and
 membership over a standard infinite set (`N \in Nat \ {0}`, the `EWD840`
 shape) now encodes structurally instead of dropping.
 

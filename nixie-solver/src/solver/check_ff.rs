@@ -3,7 +3,7 @@
 //! handing every field's literal slice to
 //! [`nixie_theories::ff_theory::check_conjunction`], modelled on
 //! `dispatch_nl_solver`. Goals with Boolean structure beyond a
-//! conjunction of literals are *declined* here (`None`) — the CDCL(T)
+//! conjunction of literals are *declined* here (`None`) – the CDCL(T)
 //! path takes them (Phase 4), and its honesty gate answers `Unknown`
 //! for the FF atoms it does not own.
 
@@ -30,7 +30,7 @@ impl Solver {
     }
 
     /// The set of distinct fields the assertions mention (a mixed-field
-    /// goal checks each field's slice independently — no inference
+    /// goal checks each field's slice independently – no inference
     /// relates 𝔽_p and 𝔽_q).
     fn goal_fields(&self, manager: &TermManager) -> Vec<FieldId> {
         let mut fields: Vec<FieldId> = Vec::new();
@@ -74,7 +74,7 @@ impl Solver {
     ///
     /// Returns `None` when the goal is not this dispatcher's to answer:
     /// no FF structure, quantifiers present, or an assertion that is not
-    /// (a conjunction of) FF literals — those fall through to CDCL(T),
+    /// (a conjunction of) FF literals – those fall through to CDCL(T),
     /// whose honesty gate keeps the answer `Unknown` until Phase 4.
     pub(super) fn dispatch_ff_solver(&mut self, manager: &mut TermManager) -> Option<SolverResult> {
         if !self.goal_uses_finite_fields(manager) {
@@ -84,7 +84,7 @@ impl Solver {
             return None;
         }
         // `QF_UFFF` (Phase 6 remainder): an uninterpreted application
-        // with an FF result sort is not pure-FF structure — route the
+        // with an FF result sort is not pure-FF structure – route the
         // whole goal to the polite-combination loop (FF ⊕ EUF), which
         // owns both the congruence reasoning and the arrangement search
         // over the shared FF-sorted terms. The pure paths below are
@@ -111,7 +111,7 @@ impl Solver {
         let mut has_structure = false;
         for &a in &self.assertions {
             let term = manager.get(a)?;
-            // A literal is exactly {true, false, `=`, `not =`} — anything
+            // A literal is exactly {true, false, `=`, `not =`} – anything
             // else (including `not (distinct ...)`, which is a
             // *disjunction* of equalities) is Boolean structure for the
             // DPLL(T) path.
@@ -139,7 +139,7 @@ impl Solver {
                 // Structure is allowed only over FF atoms; verify the
                 // whole sub-DAG before committing (a mixed leaf under
                 // the structure would otherwise be abstracted into a
-                // free Boolean — exactly the false-`sat` shape).
+                // free Boolean – exactly the false-`sat` shape).
                 if !dag_is_ff_boolean(a, manager) {
                     return None;
                 }
@@ -199,7 +199,7 @@ impl Solver {
             match outcome {
                 FfOutcome::Model(model) => {
                     // Step 5: validate, always. A failing validation is an
-                    // internal error — fall through to the honest Unknown
+                    // internal error – fall through to the honest Unknown
                     // of the CDCL path, never a `Sat`.
                     if validate_model(manager, field, &slice, &model).is_err() {
                         return None;
@@ -211,7 +211,7 @@ impl Solver {
                 }
                 FfOutcome::Unsat(ff_core) => {
                     // Map the slice indices back to the global literal list
-                    // — the certificate's literal indices remap the same
+                    // – the certificate's literal indices remap the same
                     // way, so the stored object stays verifiable against
                     // the literals it names.
                     for &i in &ff_core.fact_indices {
@@ -261,7 +261,7 @@ impl Solver {
                                 }
                             }
                             // The case tree's atoms are the replayed
-                            // generator list of the SLICE — the slice
+                            // generator list of the SLICE – the slice
                             // itself is carried as the certificate's
                             // literal list, so no remapping is needed.
                             tree @ nixie_theories::ff_theory::FfCertificate::CaseTree { .. } => {
@@ -328,7 +328,7 @@ fn term_uses_ff(root: TermId, manager: &TermManager) -> bool {
     super::ff_presence::contains(&[root], manager)
 }
 
-/// Whether a term is an FF literal: `=`, `not =`, `true`, `false` — the
+/// Whether a term is an FF literal: `=`, `not =`, `true`, `false` – the
 /// signature has exactly one predicate.
 fn is_ff_literal(lit: TermId, manager: &TermManager) -> bool {
     let Some(term) = manager.get(lit) else {
@@ -359,7 +359,7 @@ fn is_ff_literal(lit: TermId, manager: &TermManager) -> bool {
 }
 
 /// Whether a term is built ONLY from FF structure (no foreign-theory
-/// leaves) — an `=` mixing an FF side with a non-FF side is a type error
+/// leaves) – an `=` mixing an FF side with a non-FF side is a type error
 /// the parser rejects, so this is a shape guard, not a semantic one.
 fn is_pure_ff(root: TermId, manager: &TermManager) -> bool {
     let mut visited: FxHashSet<TermId> = FxHashSet::default();
@@ -436,7 +436,7 @@ fn literal_mentions_field(lit: TermId, field: FieldId, manager: &TermManager) ->
     false
 }
 
-// ================= Phase 4: lazy DPLL(T) over FF atoms =================
+// ======== Phase 4: lazy DPLL(T) over FF atoms ========
 //
 // Goals with Boolean structure over FF atoms: Tseitin-abstract each FF
 // equality into a SAT variable, solve the propositional skeleton with
@@ -445,7 +445,7 @@ fn literal_mentions_field(lit: TermId, field: FieldId, manager: &TermManager) ->
 // refuted assignment contributes a blocking clause over its atom
 // polarities; finitely many assignments terminate the loop.
 //
-// This is the CDCL(T) shape with the FF theory as a black-box leaf — the
+// This is the CDCL(T) shape with the FF theory as a black-box leaf – the
 // full incremental theory-solver trail is Phase 5+, and the design
 // explicitly allows the eager whole-problem form for `check`.
 
@@ -456,7 +456,7 @@ impl Solver {
         // Cardinality guard (§7) BEFORE the distinct terms are expanded
         // into pairwise disequalities (after expansion the count is
         // invisible): k pairwise-distinct terms of 𝔽_p need k ≤ p.
-        // SOUND ONLY on the asserted conjunct spine — a `distinct` under
+        // SOUND ONLY on the asserted conjunct spine – a `distinct` under
         // `or`/`not` is a SAT decision, not a fact, and refuting it would
         // refute goals like `(not (distinct x y z))` over 𝔽₂ (satisfiable
         // by any repeated assignment). Off-spine distincts are handled by
@@ -543,7 +543,7 @@ impl Solver {
             match sat.solve() {
                 nixie_sat::SolverResult::Unsat => {
                     // Every Boolean assignment is refuted: UNSAT. (No
-                    // traced core on this path — Phase 6.)
+                    // traced core on this path – Phase 6.)
                     return Some(SolverResult::Unsat);
                 }
                 nixie_sat::SolverResult::Unknown => return None,
@@ -569,7 +569,7 @@ impl Solver {
                                 // Unassigned atom: unconstrained by the
                                 // skeleton; treat as true for the theory
                                 // check (any value works for a full
-                                // assignment — but the blocking clause
+                                // assignment – but the blocking clause
                                 // must not assume it, so this arm is
                                 // conservative: include it positively and
                                 // block on it too).
@@ -644,7 +644,7 @@ impl Solver {
 
 /// The cardinality guard's DPLL-side arm: a `distinct` over more terms
 /// than its field's order, reachable only through the asserted conjunct
-/// spine (top-level assertions and their `and` conjuncts — never under
+/// spine (top-level assertions and their `and` conjuncts – never under
 /// `or`/`not`/`ite`, where the distinct's truth is undecided).
 fn asserted_spine_distinct_exceeds_field(
     manager: &TermManager,
@@ -721,7 +721,7 @@ fn collect_ff_atoms(root: TermId, manager: &TermManager, atoms: &mut Vec<TermId>
 }
 
 /// Whether a whole Boolean DAG is built only from FF atoms and Boolean
-/// structure — the DPLL(T) precondition (a foreign leaf would become a
+/// structure – the DPLL(T) precondition (a foreign leaf would become a
 /// free Boolean: a false-`sat` factory).
 fn dag_is_ff_boolean(root: TermId, manager: &TermManager) -> bool {
     let mut visited: FxHashSet<TermId> = FxHashSet::default();
@@ -856,7 +856,7 @@ impl<'a> FfTseitin<'a> {
                         }
                         // Combine frames record their arity; the operands
                         // are taken from `results` (the operand stack) at
-                        // combine time — children popped in order.
+                        // combine time – children popped in order.
                         TermKind::Not(_) => {
                             stack.push(Frame::Combine(CombineKind::Not, 1));
                             stack.push(Frame::Expand(term_arg(term, 0)?));
@@ -1034,7 +1034,7 @@ fn term_arg(term: &nixie_core::ast::Term, i: usize) -> Option<TermId> {
 
 use smallvec::SmallVec;
 
-// ============ Phase 6 remainder: `QF_UFFF` (FF ⊕ EUF) ============
+// ======== Phase 6 remainder: `QF_UFFF` (FF ⊕ EUF) ========
 //
 // Polite combination over shared FF-sorted terms (FF_THEORY_DESIGN §7).
 // EUF is smooth and finitely witnessable, so `T_FF ⊕ EUF` is decided by
@@ -1042,7 +1042,7 @@ use smallvec::SmallVec;
 // architecture, layered on the Phase-4 lazy DPLL(T):
 //
 //   * the SAT skeleton abstracts every FF equality atom (Tseitin, as in
-//     `dpll_ff`) — including equalities whose sides mention uninterpreted
+//     `dpll_ff`) – including equalities whose sides mention uninterpreted
 //     applications with FF result sorts;
 //   * per Boolean model, a batch congruence closure
 //     (`nixie_theories::ff_euf`) merges the asserted equalities and
@@ -1051,18 +1051,18 @@ use smallvec::SmallVec;
 //     sees each application as an opaque variable;
 //   * the FF procedure's model induces an arrangement of the shared
 //     terms. If that arrangement violates function-hood (equal argument
-//     values, different results) the search SPLITS — the valid
-//     disjunction `f(a) = f(b) ∨ ⋁ᵢ aᵢ ≠ bᵢ` — and backtracks through
+//     values, different results) the search SPLITS – the valid
+//     disjunction `f(a) = f(b) ∨ ⋁ᵢ aᵢ ≠ bᵢ` – and backtracks through
 //     the cases with an explicit stack (never native recursion);
 //   * a node whose FF slices are UNSAT refutes the Boolean model
 //     (every literal fed to the slices is a consequence of the model's
-//     atoms plus the node's case assumptions) — the assignment gets a
+//     atoms plus the node's case assumptions) – the assignment gets a
 //     blocking clause, and exhausting the skeleton is UNSAT;
 //   * cardinality is guarded at both ends: the spine guard below (a
 //     top-level `distinct` over more terms than the field's order, with
 //     its pigeonhole certificate) and, per Boolean model, the interface
 //     guard (a `distinct` whose entire pairwise disequality set the
-//     model asserts, over k > p terms — the polite-combination clause
+//     model asserts, over k > p terms – the polite-combination clause
 //     `k pairwise-distinct shared terms need k ≤ p`, vacuous at ZK
 //     primes, decisive at 𝔽₂/𝔽₃).
 //
@@ -1073,7 +1073,7 @@ use smallvec::SmallVec;
 // VERIFIED congruence-blocking loop, so pure-congruence refutations
 // certify through that; refutations that need the field arithmetic (or
 // the interface pigeonhole off-spine) have nothing to check and
-// downgrade to `unknown` — by design, exactly as for Phase 4's pure-FF
+// downgrade to `unknown` – by design, exactly as for Phase 4's pure-FF
 // Boolean path.
 
 /// Total case-tree node budget per `check`, shared across every Boolean
@@ -1084,7 +1084,7 @@ const FF_UFFF_TOTAL_NODES: u64 = 256;
 
 /// Per-node FF conjunction budget for the combination loop. The eager
 /// path's full [`FF_BUDGET_STEPS`] buys Gröbner cascades the arrangement
-/// search cannot amortize — one node's algebra is re-done per case, so a
+/// search cannot amortize – one node's algebra is re-done per case, so a
 /// node that grinds starves every other Boolean assignment. This cap
 /// keeps a node's algebra bounded; the goals that need more degrade to
 /// an honest `unknown` (the pure-`QF_FF` path still runs at full
@@ -1125,13 +1125,13 @@ enum UfffNode {
     /// The literals plus this node's assumptions are jointly unsat. The
     /// hint (root nodes only, where the path is empty and the refuted
     /// FF core names only assignment literals) is the subset of the
-    /// assignment's literals the core actually used — a conflict clause
+    /// assignment's literals the core actually used – a conflict clause
     /// that small keeps the SAT loop from enumerating assignments one
     /// Hamiltonian path at a time.
     Refuted {
         /// Assignment literals sufficient for the refutation (`None`
         /// when the refutation leaned on case assumptions or derived
-        /// literals — block on the whole assignment then).
+        /// literals – block on the whole assignment then).
         hint: Option<Vec<TermId>>,
     },
     /// Function-hood violated: try these case splits in order.
@@ -1154,7 +1154,7 @@ impl Solver {
         }
 
         // The spine cardinality guard (§7), BEFORE distinct expansion
-        // makes the count invisible — same contract as `dpll_ff`'s, with
+        // makes the count invisible – same contract as `dpll_ff`'s, with
         // the certificate the certified gate re-verifies.
         if let Some((distinct_term, field, k)) =
             asserted_spine_distinct_exceeds_field(manager, &self.assertions)
@@ -1263,7 +1263,7 @@ impl Solver {
                     match ufff_case_search(manager, &atoms, &slice, &mut node_budget) {
                         UfffSearch::Model(model) => {
                             // Completion (unconstrained terms get
-                            // function-hood-preserving defaults) — a
+                            // function-hood-preserving defaults) – a
                             // completion failure is an honest Unknown.
                             let completed = match ufff_complete(manager, &self.assertions, model) {
                                 Some(c) => c,
@@ -1293,7 +1293,7 @@ impl Solver {
                             // refutation named its literals; otherwise
                             // destructively minimize the assignment
                             // (each candidate subset is re-checked at
-                            // the ROOT — no case assumptions — so the
+                            // the ROOT – no case assumptions – so the
                             // surviving subset really does refute).
                             let minimized: Option<Vec<TermId>> = match &hint {
                                 Some(lits)
@@ -1428,12 +1428,12 @@ fn ufff_case_search(
 /// Destructive minimization of a root-level refutation: drop literals
 /// one at a time, keeping each drop whose remaining set still refutes
 /// at the ROOT (empty case path). Because every trial re-runs the full
-/// node check — closure, derivation, FF checks — on exactly the
+/// node check – closure, derivation, FF checks – on exactly the
 /// candidate set, the surviving subset is a genuine conflict clause,
 /// not an extrapolation (an unsound shrink here would block satisfying
 /// assignments and fabricate `unsat`). `None` when even the full set
-/// stops refuting (cannot happen — the caller only shrinks sets that
-/// just refuted — or the budget dies mid-shrink).
+/// stops refuting (cannot happen – the caller only shrinks sets that
+/// just refuted – or the budget dies mid-shrink).
 fn ufff_shrink_refutation(
     manager: &mut TermManager,
     atoms: &[TermId],
@@ -1444,7 +1444,7 @@ fn ufff_shrink_refutation(
     let mut i = 0usize;
     while i < cand.len() {
         if *node_budget == 0 {
-            // Budget out mid-shrink: return the full set — blocking on
+            // Budget out mid-shrink: return the full set – blocking on
             // it is always sound (it is the assignment itself).
             return Some(cand);
         }
@@ -1580,7 +1580,7 @@ fn ufff_solve_node(
     for field in fields {
         // The slice keeps provenance: `true` for entries that ARE
         // assignment literals (atoms or their negations), `false` for
-        // derived equalities and case assumptions — only the former can
+        // derived equalities and case assumptions – only the former can
         // feed a blocking hint.
         let slice: Vec<(TermId, bool)> = lits
             .iter()
@@ -1600,10 +1600,10 @@ fn ufff_solve_node(
                 model.per_field.push((field, map));
             }
             // The slice is a consequence set of (assignment ∧ path):
-            // unsat refutes the node — sound to backtrack. On the ROOT
+            // unsat refutes the node – sound to backtrack. On the ROOT
             // node (no case assumptions), when every core literal is an
             // assignment literal, the core is a conflict clause over the
-            // assignment — hand it up as the blocking hint. Multi-field
+            // assignment – hand it up as the blocking hint. Multi-field
             // caution: a derived equality in one field can rest on
             // another field's atoms through cross-field congruence, so
             // the hint is only built when the whole goal is single-field
@@ -1637,7 +1637,7 @@ fn ufff_solve_node(
     // 5. The function-hood scan over the candidate arrangement: two
     //    applications of one function whose KNOWN argument values the
     //    model makes equal must have equal results. A violation splits
-    //    on the valid disjunction `f(a) = f(b) ∨ ⋁ᵢ aᵢ ≠ bᵢ` — the
+    //    on the valid disjunction `f(a) = f(b) ∨ ⋁ᵢ aᵢ ≠ bᵢ` – the
     //    children force either the results to merge or some argument
     //    pair to differ, and the FF check constrains whichever it picks.
     model.apps = closure
@@ -1677,7 +1677,7 @@ fn ufff_solve_node(
                 };
                 // Results: both must be assigned (applications of atoms
                 // are always in some slice; a missing one means the atom
-                // set and the field routing disagree — decline).
+                // set and the field routing disagree – decline).
                 let (f1, r1) = match field_and_value(manager, &model, a1) {
                     Some(x) => x,
                     None => continue,
@@ -1836,7 +1836,7 @@ fn is_ff_combinand(root: TermId, manager: &TermManager) -> bool {
     true
 }
 
-/// Boolean DAG over FF-or-UF atoms — the `dpll_ufff` precondition (the
+/// Boolean DAG over FF-or-UF atoms – the `dpll_ufff` precondition (the
 /// same contract as [`dag_is_ff_boolean`], widened to applications).
 fn dag_is_ufff_boolean(root: TermId, manager: &TermManager) -> bool {
     let mut visited: FxHashSet<TermId> = FxHashSet::default();
@@ -1915,7 +1915,7 @@ fn collect_ff_distincts(root: TermId, manager: &TermManager, out: &mut Vec<Small
 /// `mk_eq(c₁, c₂) → false` means the pair is validly distinct (counts
 /// toward k, asserted by nothing); a pair folding to `true` makes the
 /// whole family impossible to assert (its Tseitin encoding is
-/// permanently false) — such families are dropped at construction and
+/// permanently false) – such families are dropped at construction and
 /// never reach this type.
 struct DistinctFamily {
     /// Whether k > p (the pigeonhole precondition; precomputed where
@@ -1929,7 +1929,7 @@ struct DistinctFamily {
 /// Build the guard's families from the goal's `distinct` terms
 /// (deterministic; pairs in index order). A family whose arguments are
 /// not all of one field, or which contains an always-equal pair, is
-/// dropped — the guard only reasons about pigeonhole, and an
+/// dropped – the guard only reasons about pigeonhole, and an
 /// always-equal pair refutes the distinct outright (the Tseitin
 /// encoding already makes its branch unreachable), which is not this
 /// guard's business.
@@ -1984,9 +1984,9 @@ fn ufff_distinct_families(
 /// The interface cardinality guard: some distinct family whose ENTIRE
 /// pairwise disequality set the current Boolean model asserts, over
 /// more terms than its field's order. Pigeonhole: k pairwise-distinct
-/// elements of 𝔽p need k ≤ p — vacuous at ZK primes, decisive at 𝔽₂/𝔽₃
-/// (where the alternative — the tiny-field enumerator finding it
-/// through k·(k−1)/2 witness generators — already works, but this
+/// elements of 𝔽p need k ≤ p – vacuous at ZK primes, decisive at 𝔽₂/𝔽₃
+/// (where the alternative – the tiny-field enumerator finding it
+/// through k·(k−1)/2 witness generators – already works, but this
 /// decides it before any algebra runs, and covers mid-size primes the
 /// enumerator cannot reach).
 fn ufff_interface_cardinality_refutes(families: &[DistinctFamily], lits: &[TermId]) -> bool {
@@ -2005,7 +2005,7 @@ fn ufff_interface_cardinality_refutes(families: &[DistinctFamily], lits: &[TermI
 /// Complete a candidate arrangement into a full model: unconstrained
 /// FF-sorted terms get values, preserving function-hood (equal argument
 /// values under one function symbol imply equal results). A completion
-/// the pass cannot build returns `None` — the caller answers `Unknown`,
+/// the pass cannot build returns `None` – the caller answers `Unknown`,
 /// never a broken model.
 fn ufff_complete(
     manager: &TermManager,
@@ -2031,7 +2031,7 @@ fn ufff_complete(
     terms.sort_unstable();
 
     // Which terms were absent from the FF models (unconstrained: they
-    // appear under no literal — validate_model guarantees every literal
+    // appear under no literal – validate_model guarantees every literal
     // leaf is assigned).
     let mut defaulted: FxHashSet<TermId> = FxHashSet::default();
     for &t in &terms {
@@ -2053,7 +2053,7 @@ fn ufff_complete(
     // Function-hood repair over defaulted terms: for same-function
     // application pairs with differing results and (now) equal
     // arguments, make the arguments differ by reassigning a DEFAULTED
-    // variable argument — defaulted terms are unconstrained, so moving
+    // variable argument – defaulted terms are unconstrained, so moving
     // them breaks nothing. Compound arguments whose leaves are all
     // model-assigned cannot be moved: such a pair would have been a
     // Split in the scan; if one shows up here anyway, decline.
@@ -2131,7 +2131,7 @@ fn ufff_complete(
                 let mut candidate = BigUint::from(0u8);
                 while used.contains(&candidate) {
                     if candidate >= modulus {
-                        // Field exhausted: cannot differ — refuted shape;
+                        // Field exhausted: cannot differ – refuted shape;
                         // decline (the SAT loop will block this assignment
                         // through the FF check on a re-run; here we can
                         // only be honest).
@@ -2151,7 +2151,7 @@ fn ufff_complete(
         }
     }
 
-    // Final gate — the completed arrangement must satisfy function-hood
+    // Final gate – the completed arrangement must satisfy function-hood
     // everywhere and every negative literal of the assignment (the FF
     // models did; the defaults could only collide application arguments,
     // which the repair pass above handled, and unconstrained variables,

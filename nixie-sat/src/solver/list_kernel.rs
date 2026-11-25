@@ -13,13 +13,13 @@ mod watch_cursor;
 use watch_cursor::WatchCursor;
 
 /// The kept-run block filter: how many of the next 4 entries have
-/// satisfied blockers — a leading run whose scalar action (`keep(None)`)
+/// satisfied blockers – a leading run whose scalar action (`keep(None)`)
 /// is semantically inert, so the cursor may skip them in bulk.
 ///
-/// AVX2 shape (where it pays — dense lists): one `vmovdqu` loads 4
+/// AVX2 shape (where it pays – dense lists): one `vmovdqu` loads 4
 /// watchers ({ref, blocker} pairs, 8 B each); `vpermd` extracts the 4
 /// blocker codes; the VALUE loads stay scalar (std::arch's gather family
-/// addresses through typed pointers — byte-indexed gathers do not exist
+/// addresses through typed pointers – byte-indexed gathers do not exist
 /// there, and the 4-byte-scaled form reads wild addresses: the fault
 /// storm the unit test caught); 4 branchless compares + a prefix mask
 /// give the run.  The win over the scalar loop is skipping its per-entry
@@ -29,7 +29,7 @@ mod block_filter {
     use super::Watcher;
 
     /// Leading run (0..=4) of entries whose blocker is TRUE.
-    /// Leading run (0..=len) of entries whose blocker is TRUE — safe,
+    /// Leading run (0..=len) of entries whose blocker is TRUE – safe,
     /// slice-based: the caller shortens the scan's input by this prefix,
     /// which `keep(None)` would leave untouched in place anyway.
     #[inline]
@@ -63,7 +63,7 @@ pub(super) trait ScanDest {
     /// A repair's dedup'd push to `key`.
     fn push_unique(&mut self, scanned_code: usize, key: Lit, watcher: Watcher);
     /// A kept-entry notification (the CSR-mirror modes; structural modes
-    /// no-op — their write-backs are commit-time).
+    /// no-op – their write-backs are commit-time).
     fn keep(&mut self, watcher: Watcher, blocker: Option<Lit>);
     /// A removed-entry notification (mirror / index maintenance).
     fn remove(&mut self, scanned_code: usize, r: ClauseRef);
@@ -152,7 +152,7 @@ impl<const MIRROR: bool> ScanDest for VecDest<'_, MIRROR> {
 /// The CSR-primary funnel (commit-B and the unified in-place arm): pushes
 /// append into the slack-CSR through the split context; the swapped-dual
 /// validation mode additionally pushes the `Vec` side (whose lists the
-/// drift oracle compares at rebuilds — including its dedup reader, kept
+/// drift oracle compares at rebuilds – including its dedup reader, kept
 /// on the `Vec` so the validated world stays exactly the validated one).
 pub(super) struct CsrPartsDest<'a, 'c> {
     pub(super) ctx: &'c mut crate::watched::ScanCtx<'a>,
@@ -261,8 +261,8 @@ pub(super) fn scan_list<D: ScanDest>(
     probes: &ScanProbes,
 ) -> ScanResult {
     // Kept-run prefilter (the safe form): the leading run of satisfied
-    // blockers needs no scalar work — keep(None) leaves those entries in
-    // place — so the scan starts after them and the write count carries
+    // blockers needs no scalar work – keep(None) leaves those entries in
+    // place – so the scan starts after them and the write count carries
     // the prefix.  The pre-read of blockers is monotone-safe: values only
     // go undefined -> true/false within a scan, so a blocker already true
     // cannot become false before the scan would have reached it.
@@ -333,7 +333,7 @@ fn use_simd_prefilter() -> bool {
 /// binary-heavy instances the scans are tiny and the two probe reads were
 /// a measurable prologue share (7% of a solved satcomp instance's CPU;
 /// scan #3 item #7).  The env gates are frozen at solver construction, so
-/// a snapshot taken then is equivalent for the solver's lifetime — and the
+/// a snapshot taken then is equivalent for the solver's lifetime – and the
 /// per-scan calls disappear.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ScanProbes {
@@ -385,7 +385,7 @@ fn scan<const COMPACT: bool, D: ScanDest>(
 ) -> ScanEnd {
     let scanned_code = (!false_lit).index();
     // The per-scan `OnceLock` reads this used to do (the `NIXIE_CWRITE`
-    // trace target) are snapshotted per solver now — see `ScanProbes`.
+    // trace target) are snapshotted per solver now – see `ScanProbes`.
     let cwrite_probe = probes.cwrite;
     let mut watches = watches.into_local();
     while let Some(entry) = watches.next() {

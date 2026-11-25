@@ -60,7 +60,7 @@ Inv  == {body}
     assert!(bmc.check(0, &mut tm).is_err(), "`{body}` should decline");
 }
 
-// ---- positive existentials, in an asserted formula ----
+// ======== positive existentials, in an asserted formula ========
 
 /// The witness idiom where it is genuinely one: `Init`'s existential. The
 /// helper spec's `Init` is fixed, so the body here restates a witness form
@@ -69,7 +69,7 @@ Inv  == {body}
 fn a_positive_existential_over_nat_skolemizes() {
     // A **negated** existential in the invariant is the query's positive
     // existential (`~~E` in `~Inv`): skolemized and answered. `~\E y \in
-    // Nat : y < x` holds — no natural is below zero.
+    // Nat : y < x` holds – no natural is below zero.
     holds(r"~\E y \in Nat : y < x");
     // A negated existential over STRING, through the same shape.
     holds(r#"~\E s \in STRING : s # s"#);
@@ -101,7 +101,7 @@ Inv == x >= 1
     );
 }
 
-// ---- polarity ----
+// ======== polarity ========
 
 /// An existential under a negation is a universal: `~\E y \in Nat : y < x`
 /// with `x = 0` **holds**, and skolemizing it would answer the opposite.
@@ -127,7 +127,7 @@ fn an_invariants_universal_skolemizes_as_the_query_existential() {
 /// => \A y \in Nat : y > x)`'s universal sits under two negations and the
 /// claim is decidable via the finite reading; the infinite-set existential
 /// arm of an implication in an *invariant* is the query's universal and
-/// declines — pinned here so nobody "fixes" it into a wrong answer.
+/// declines – pinned here so nobody "fixes" it into a wrong answer.
 #[test]
 fn implication_arms_carry_polarity() {
     // The antecedent false makes the implication true at x = 0; the

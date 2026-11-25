@@ -2,7 +2,7 @@
 //!
 //! Without the file a `CONSTANT N` is an arbitrary integer, `1..N` has no
 //! enumerable member list, and the checker asks a strictly harder question
-//! than the author did. These pin what reading it changes — and, just as
+//! than the author did. These pin what reading it changes – and, just as
 //! important, what it must *not* silently change.
 
 use nixie_core::TermManager;
@@ -47,7 +47,7 @@ fn setup_err(src: &str, cfg: &str, init: &str, next: &str, inv: &str) -> SetupEr
         .expect("should not prepare")
 }
 
-// ---- CONSTANT assignments ----
+// ======== CONSTANT assignments ========
 
 /// The headline case. `1..N` has no candidate list while `N` is arbitrary; the
 /// `.cfg` is what makes it finite.
@@ -71,14 +71,14 @@ fn a_constant_assignment_makes_a_range_enumerable() {
 }
 
 /// …and without it, the specification as written leaves `N` arbitrary. The
-/// checker answers for that specification — and the answer is a violation,
+/// checker answers for that specification – and the answer is a violation,
 /// because the invariant only holds for the pinned `N` the author meant. The
 /// difference is *answered*, not papered over with an invented bound.
 #[test]
 fn without_the_assignment_the_same_spec_is_refused() {
     // Since range *membership* became a comparison (issue #22), an unpinned
     // `N` no longer makes the encoding refuse: the query is answered for the
-    // arbitrary `N` the specification actually leaves open — and the answer
+    // arbitrary `N` the specification actually leaves open – and the answer
     // is that the invariant does not hold (a small `N` breaks it), which is
     // the true verdict about the specification as written, not a guess.
     let parsed = nixie_tla_syntax::parse_file(BOUNDED).expect("parses");
@@ -136,7 +136,7 @@ Inv  == p \in Proc
     );
 }
 
-/// Model values are **distinct** — that is their whole content. A checker that
+/// Model values are **distinct** – that is their whole content. A checker that
 /// let two of them be equal would miss counterexamples that depend on telling
 /// processes apart.
 #[test]
@@ -206,11 +206,11 @@ Inv  == b /\ (s = "yes") /\ (x = 123456789012345678901234567890)
     );
 }
 
-// ---- replacements ----
+// ======== replacements ========
 
 /// `MCBallot <- …` is how a model-checking harness makes an infinite
 /// specification finite, and it is a rebinding of the name space rather than a
-/// substitution pass — which is why it works for a `CONSTANT` too.
+/// substitution pass – which is why it works for a `CONSTANT` too.
 #[test]
 fn a_replacement_rebinds_a_definition() {
     const R: &str = r"
@@ -255,7 +255,7 @@ Inv  == x = 0
 }
 
 /// A module-qualified replacement needs `INSTANCE` substitution, which the
-/// lowering does not do. Listed rather than treated as the unqualified form —
+/// lowering does not do. Listed rather than treated as the unqualified form –
 /// the two are different specifications.
 #[test]
 fn a_module_qualified_replacement_is_listed_not_applied() {
@@ -284,7 +284,7 @@ Inv  == x = 0
     assert!(bmc.unapplied_config()[0].contains("Voting"));
 }
 
-// ---- constraints ----
+// ======== constraints ========
 
 /// A `CONSTRAINT` bounds the state space the author intended. Asserting it
 /// *narrows* the search; ignoring it explores states outside the configured
@@ -306,7 +306,7 @@ Inv   == x < 3
         run(C, "INVARIANT Inv", "Init", "Next", "Inv", 5),
         Outcome::Violation { step: 3 }
     );
-    // The constraint excludes exactly that state — and, since the
+    // The constraint excludes exactly that state – and, since the
     // constrained behaviours all stop at `x = 2`, the deadlock check
     // (on since issue #26) reports the stuck state rather than a clean
     // bound. The *violation* is still excluded, which is the point.
@@ -316,7 +316,7 @@ Inv   == x < 3
     );
 }
 
-// ---- what must not change ----
+// ======== what must not change ========
 
 /// An empty configuration must leave the verdict exactly where it was: the
 /// `.cfg` path and the convention path are the same code, and a default
@@ -373,12 +373,12 @@ Perm == {}
     assert_eq!(bmc.unapplied_config(), ["SYMMETRY"]);
 }
 
-// ---- ConstInit ----
+// ======== ConstInit ========
 //
 // Apalache's `--cinit=CInit` convention pins the constants from inside the
 // module rather than from a `.cfg`. It is a **substitution** for exactly the
 // reason a `.cfg` assignment is: asserting `replicas = {"n1", "n2"}` reaches
-// the solver, but the encoder needs the members before the solver runs —
+// the solver, but the encoder needs the members before the solver runs –
 // `[replicas -> S]` has no candidate list until `replicas` is literally a set
 // of two things.
 
@@ -438,8 +438,8 @@ Inv  == x = "n1"
 
 /// Without the `ConstInit` the constant is arbitrary, which is a strictly
 /// harder question. Where the answer does not depend on *which* set it is, the
-/// harder question still has an answer — `x \in Nodes` holds for every
-/// `Nodes` — so the test uses a construct that genuinely needs the members: a
+/// harder question still has an answer – `x \in Nodes` holds for every
+/// `Nodes` – so the test uses a construct that genuinely needs the members: a
 /// quantifier is instantiated per candidate, and an opaque set has no
 /// candidates to instantiate over.
 #[test]
@@ -477,7 +477,7 @@ Inv  == \A n \in Nodes : n # "z"
 
 /// And the shape that found the congruence bug: `x \in Nodes` is preserved by
 /// a step that changes nothing, for *every* `Nodes`. This needs no
-/// `ConstInit` at all, and it used to be reported as violated at step 1 —
+/// `ConstInit` at all, and it used to be reported as violated at step 1 –
 /// membership was a free Boolean per element, so `x@1 = x@0` said nothing
 /// about it. See `nixie-solver`'s `equal_elements_are_in_the_same_sets`.
 #[test]

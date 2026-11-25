@@ -4,8 +4,8 @@
 //! Checked interval arithmetic over monics, with explanations.
 //!
 //! For a monic `v = x^a * y^b * ...` the linear relaxation knows nothing about
-//! the product, but bounds on the factors still constrain `v` and — when the
-//! cofactor is bounded away from zero — bounds on `v` constrain the factors.
+//! the product, but bounds on the factors still constrain `v` and – when the
+//! cofactor is bounded away from zero – bounds on `v` constrain the factors.
 //! That two-way propagation is what this module computes.
 //!
 //! # Explanations
@@ -18,7 +18,7 @@
 //! missing reason would.
 //!
 //! An endpoint justified by a tautology (`x^2 >= 0`) carries an empty reason
-//! set, which is correct — it depends on no assertion at all.
+//! set, which is correct – it depends on no assertion at all.
 //!
 //! # Overflow
 //!
@@ -85,7 +85,7 @@ pub(crate) enum PropOutcome {
     Progress,
     /// Nothing changed; the round is a no-op and iteration can stop.
     Fixpoint,
-    /// A derived interval is empty — the current bounds are inconsistent.
+    /// A derived interval is empty – the current bounds are inconsistent.
     Conflict,
     /// A coefficient could not be represented; nothing was written back.
     Overflow,
@@ -166,7 +166,7 @@ impl Interval {
     }
 }
 
-// --- extended endpoints -----------------------------------------------------
+// ======== extended endpoints ========
 
 /// An interval endpoint on the extended real line.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -261,7 +261,7 @@ fn ext_max(cands: &[Ext]) -> Ext {
     best
 }
 
-// --- forward: factors => product -------------------------------------------
+// ======== forward: factors => product ========
 
 /// The image of `a * b`. `None` on overflow.
 pub(crate) fn mul(a: &Interval, b: &Interval) -> Option<Interval> {
@@ -292,7 +292,7 @@ fn ext_pow(x: &Ext, e: u32) -> Option<Ext> {
 }
 
 /// The image of `a^e`, computed exactly rather than by repeated
-/// multiplication — `x * x` treats the two occurrences as independent and
+/// multiplication – `x * x` treats the two occurrences as independent and
 /// would lose the correlation (`[-1, 4]^2` would come out as `[-4, 16]`).
 ///
 /// An even exponent forces a non-negative lower bound. When the base straddles
@@ -354,7 +354,7 @@ pub(crate) fn forward(factors: &[(Interval, u32)]) -> Option<Interval> {
     Some(acc)
 }
 
-// --- backward: product / cofactor => factor ---------------------------------
+// ======== backward: product / cofactor => factor ========
 
 /// `1 / a`, for an interval that provably excludes zero.
 ///
@@ -413,7 +413,7 @@ pub(crate) fn backward(product: &Interval, cofactor: &Interval) -> Option<Interv
 ///
 /// No *unsound* bound is ever written: the coefficient that could not be
 /// represented is simply not turned into a bound. It does **not** mean the
-/// arguments are untouched — an overflow raised while building a cofactor
+/// arguments are untouched – an overflow raised while building a cofactor
 /// happens after the forward step has already tightened `product`, and any
 /// bound written before that point came from a successful, exact computation.
 /// A caller must therefore treat [`PropOutcome::Overflow`] as "partially

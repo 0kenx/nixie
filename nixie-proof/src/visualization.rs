@@ -20,7 +20,7 @@
 //! The right-hand column is per *frame*; the live heap is that times the stack
 //! height. Three of the walks stack one frame per node whose turn has not come
 //! yet, so their height is the number of un-rendered siblings along the current
-//! path — Theta(1) on a chain, Theta(d) on a binary tree of depth `d`, O(nodes)
+//! path – Theta(1) on a chain, Theta(d) on a binary tree of depth `d`, O(nodes)
 //! in general. [`VisualizationFormat::Json`] also stacks the closing `}` and
 //! `]` of every ancestor still open, so its height is Theta(d) in every shape.
 //!
@@ -31,8 +31,8 @@
 //!
 //! The quadratic *output* of the three tree formats is inherent to
 //! indent-by-depth rendering: a node `d` levels down prefixes every line it
-//! emits with `2*d` characters. That is output volume only — a caller
-//! streaming to a file or a pipe never holds it — and the only way to bound it
+//! emits with `2*d` characters. That is output volume only – a caller
+//! streaming to a file or a pipe never holds it – and the only way to bound it
 //! is to cap the indent, which changes the rendered format. The cost is
 //! documented here rather than silently changed.
 //!
@@ -40,12 +40,12 @@
 //! reconstructed from the depth: its prefix records, for each ancestor,
 //! whether that ancestor was a last child (`" "` vs `"\u{2502}"`), so each
 //! stacked frame owns its own grown copy. `Json` used to be quadratic-live for
-//! a different and avoidable reason — its delimiters were pre-rendered
+//! a different and avoidable reason – its delimiters were pre-rendered
 //! `String`s stacked below the child, which made even a *chain* quadratic; see
 //! the `JsonFrame` enum below.
 //!
 //! [`VisualizationFormat::Dot`] additionally keeps a `visited` set of every
-//! node it has emitted, so it is Theta(nodes) live regardless of shape — that
+//! node it has emitted, so it is Theta(nodes) live regardless of shape – that
 //! set is what lets it render the DAG once instead of re-expanding it.
 //!
 //! On a heavily *shared* DAG the three tree formats repeat each shared premise
@@ -103,7 +103,7 @@ impl JsonDelim {
 /// Every variant is `Copy` and fixed-size on purpose: a frame must not own an
 /// indent-bearing `String`. The delimiters used to be materialized eagerly
 /// with the full indent baked in and pushed *below* the child frame, so a
-/// chain of depth d kept three O(d)-length strings alive per ancestor level —
+/// chain of depth d kept three O(d)-length strings alive per ancestor level –
 /// Theta(d^2) live heap (~14 GB at depth 60,000), which no output sink could
 /// avoid. Storing `(indent, kind)` makes the retained stack Theta(d).
 #[derive(Debug, Clone, Copy)]
@@ -412,9 +412,9 @@ impl ProofVisualizer {
     /// always parseable.
     ///
     /// The stack keeps the closing `}` and `]` of every ancestor still open, so
-    /// it is Theta(depth) frames deep even on a chain. Each frame is O(1) —
+    /// it is Theta(depth) frames deep even on a chain. Each frame is O(1) –
     /// a delimiter carries an indent *level*, not a rendered indent string (see
-    /// [`JsonDelim`]) — so the live heap is Theta(depth), not Theta(depth^2).
+    /// [`JsonDelim`]) – so the live heap is Theta(depth), not Theta(depth^2).
     /// The output remains Theta(depth^2) bytes, as for every indent-by-depth
     /// format here.
     fn write_json_node<W: Write>(
@@ -1072,7 +1072,7 @@ mod tests {
     /// ids suppressed.
     ///
     /// Derived from the format, not from a recording, so it is sensitive to the
-    /// indent level of every line — including the delimiter lines, whose indent
+    /// indent level of every line – including the delimiter lines, whose indent
     /// is now computed at pop time. The `14 * indent` term is what a uniform
     /// off-by-one in a delimiter's indent would perturb.
     fn expected_chain_json_size(depth: usize) -> (usize, usize) {
@@ -1127,17 +1127,17 @@ mod tests {
     ///
     /// The closing `]` / `}` / `},` and the opening `{` used to be built as
     /// fully-indented `String`s and pushed *below* the child frame, so a chain
-    /// of depth d kept three O(d)-length strings alive per ancestor level —
+    /// of depth d kept three O(d)-length strings alive per ancestor level –
     /// about 6*d^2 bytes, or ~15 GB at depth 60,000. That is live heap no sink
     /// can avoid, and it is what drove a 32 GB test process.
     ///
     /// The depth here is deliberately moderate. The *output* is inherently
     /// Theta(depth^2) (about 1.4 GB at 10,000, streamed to the counting sink
     /// and discarded), so a depth of 60,000 would take tens of gigabytes of
-    /// formatting work no matter how little is retained — the quadratic that
+    /// formatting work no matter how little is retained – the quadratic that
     /// remains is documented at module level, not tested. What this test pins
-    /// is that the render completes, and that every line — delimiters included
-    /// — lands at exactly the indent the format calls for even 10,000 levels
+    /// is that the render completes, and that every line – delimiters included
+    /// – lands at exactly the indent the format calls for even 10,000 levels
     /// down. The absence of an owning frame is pinned separately, at compile
     /// time, by the `needs_drop` assertion on `JsonFrame`.
     #[test]

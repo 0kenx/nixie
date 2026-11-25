@@ -118,7 +118,7 @@ pub struct EnhancedBuchberger {
     /// Sugar degrees for polynomials
     sugar_degrees: Vec<usize>,
     /// Pairs whose S-polynomial PROVABLY reduces to zero (processed to
-    /// zero, product criterion, or a verified chain) — the sound chain
+    /// zero, product criterion, or a verified chain) – the sound chain
     /// criterion's bookkeeping. See `satisfies_chain_criterion`.
     zero_pairs: std::collections::HashSet<(usize, usize)>,
 }
@@ -157,11 +157,11 @@ impl EnhancedBuchberger {
         // Main loop
         while let Some(pair) = self.pairs.pop() {
             // Check degree bound. NOTE: a degree-bounded refusal leaves
-            // pairs unprocessed WITHOUT recording them as zero — the
+            // pairs unprocessed WITHOUT recording them as zero – the
             // returned basis is then partial; the caller must not treat
             // it as complete (the same honesty gap `grobner_basis`'s
             // iteration cap had; kept as-is here because this engine
-            // has no live callers — see the module's status header).
+            // has no live callers – see the module's status header).
             if let Some(max_deg) = self.config.max_degree
                 && pair.degree > max_deg
             {
@@ -252,10 +252,10 @@ impl EnhancedBuchberger {
     /// Check chain criterion (Buchberger's second criterion, SOUND
     /// form): (i, j) is discardable only when some k has
     /// `lm_k | lcm(lm_i, lm_j)` AND both (i,k) and (j,k) are in
-    /// `zero_pairs` — provably-zero pairs (processed to zero, product
+    /// `zero_pairs` – provably-zero pairs (processed to zero, product
     /// criterion, or a verified chain; a DAG by construction). The
     /// "For now, simplified check" this replaces (a bare divisibility
-    /// scan) is the unsound simplified criterion — the missed-refutation
+    /// scan) is the unsound simplified criterion – the missed-refutation
     /// class root-caused in the 𝔽_p engine on 2026-09-18 and pinned
     /// there by tests/ff_gb_seed_dedup_regression.rs.
     fn satisfies_chain_criterion(
@@ -285,7 +285,7 @@ impl EnhancedBuchberger {
 
     /// Gebauer-Möller installation strategy. The pair-REMOVAL this once
     /// performed (drop every pending pair whose lcm the new element's
-    /// lm divides) was the bare unsound form — removing pair (i, j) on
+    /// lm divides) was the bare unsound form – removing pair (i, j) on
     /// `lm_new | lcm(i,j)` requires the chain obligations (i, new) and
     /// (j, new) to be DISCHARGED, and at update time they are merely
     /// queued; the classical G-M rules encode that discipline, this did

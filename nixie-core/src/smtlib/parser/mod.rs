@@ -55,7 +55,7 @@ pub struct RecFunDecl {
     ///
     /// These are the only sound substitution keys for `body`: a `Var` minted
     /// later with the same name and sort is a *different* `TermId` only if
-    /// the manager interns by name+sort (it does) — but any other route to a
+    /// the manager interns by name+sort (it does) – but any other route to a
     /// "same" variable (a shadowed `let` binding, say) could substitute the
     /// wrong node. Holding the exact interned nodes keeps the substitution
     /// faithful.
@@ -72,7 +72,7 @@ pub struct RecFunDecl {
 pub enum Command {
     /// An unrecognized top-level command.  SMT-LIB consumers print
     /// `unsupported` for these (z3's observable behavior); nixie used to
-    /// skip them silently — a script whose `(check-sat)` nested inside a
+    /// skip them silently – a script whose `(check-sat)` nested inside a
     /// stray `(let …)` form (a command in term position, an easy authoring
     /// mistake) then executed NOTHING and exited 0 with no output at all,
     /// which is indistinguishable from success-with-no-queries.  The
@@ -632,7 +632,7 @@ mod tests {
     }
 
     /// `=` between different bit-vector widths is ill-typed (Z3: "Sorts
-    /// (_ BitVec 1) and (_ BitVec 128) are incompatible") — the sighting
+    /// (_ BitVec 1) and (_ BitVec 128) are incompatible") – the sighting
     /// that motivated the check: the term interned with the first
     /// operand's sort and no theory could honestly encode the comparison.
     #[test]
@@ -671,7 +671,7 @@ mod tests {
 
     /// The compatible cases must keep parsing: Bool conditions, same-width
     /// chains, integer numerals next to Real operands (SMT-LIB numerals
-    /// are polymorphic — `(> x 0)` with `x : Real`), and `to_real`-embedded
+    /// are polymorphic – `(> x 0)` with `x : Real`), and `to_real`-embedded
     /// Int variables (nixie represents `to_real n` as the Int-sorted
     /// variable itself, so a well-typed script mixes Int and Real sorts
     /// internally).
@@ -711,8 +711,8 @@ mod tests {
             (assert (= y (bvadd (_ bv7 8) a (bvmul (_ bv9 8) a))))
             (assert (= y (bvadd a)))
             ;; n-ary concat parses; the 24-bit result is compared against a
-            ;; 24-bit literal (`(= y ..)` here would be ill-typed — y is
-            ;; 8-bit — and is now rejected at parse time, as in Z3).
+            ;; 24-bit literal (`(= y ..)` here would be ill-typed – y is
+            ;; 8-bit – and is now rejected at parse time, as in Z3).
             (assert (= (concat a b c) (_ bv0 24)))
             (assert (= y (bvand a b c)))
             (assert (= y (bvudiv a b c)))
@@ -965,7 +965,7 @@ mod tests {
         // Unknown commands are skipped-and-CONTINUED, but observably:
         // they parse as `Command::Unsupported` so the consumer can answer
         // them per SMT-LIB (`unsupported`, z3's observable behavior)
-        // instead of the historical silent swallow — a script whose only
+        // instead of the historical silent swallow – a script whose only
         // `(check-sat)` sat inside a stray form used to execute nothing
         // and exit 0 with no output at all.
         let commands =

@@ -20,7 +20,7 @@
 //! (`theory_finite_set_size.cpp`). Neither shape fits an eager reduction, but
 //! the mathematics both exploit is the same, and it axiomatizes finitely:
 //!
-//! For a **cone** of set terms — every set under `set.card`/`set.choose`,
+//! For a **cone** of set terms – every set under `set.card`/`set.choose`,
 //! closed under the operands of `∪`/`∩`/`\`/`ite`/`~`, their *twins* (the
 //! `a ∩ b` of every `a ∪ b` and vice versa), and set-equality/subset
 //! neighbours:
@@ -33,10 +33,10 @@
 //!    *element* from counting twice. `slack_s` is the elements no ground term
 //!    mentions. When the members are statically confined to a known list
 //!    ([`super::support`] is `Some`), the sum is exact and the slack is
-//!    omitted — `{x} ∪ {y}` cannot secretly contain a third element.
+//!    omitted – `{x} ∪ {y}` cannot secretly contain a third element.
 //! 2. **Inclusion–exclusion.** `|a ∪ b| + |a ∩ b| = |a| + |b|` and
 //!    `|a \ b| + |a ∩ b| = |a|`: the twins exist so these are always
-//!    statable. `|ite c a b| = ite c |a| |b|` (exact — no counting equation
+//!    statable. `|ite c a b| = ite c |a| |b|` (exact – no counting equation
 //!    of its own), `|∅| = 0`, `|{x}| = 1`.
 //! 3. **Slack lattice.** For the *implicit* subset relations among cone
 //!    terms (`a ∩ b ⊆ a`, `a ⊆ a ∪ b`, `a \ b ⊆ a`, …) the **slacks** are
@@ -45,7 +45,7 @@
 //!    the ground parts of the counts are already monotone pointwise (the
 //!    membership definitions make `e ∈ a ∩ b` imply `e ∈ a`), so without
 //!    tying the *slacks* the same way, a model can populate `a ∩ b` with an
-//!    element that is in neither `a` nor `b` — a wrong `sat` (two distinct
+//!    element that is in neither `a` nor `b` – a wrong `sat` (two distinct
 //!    members with `|a ∪ b| = 1`).
 //! 4. **Subset rules** for the *asserted* `set.subset` atoms in the cone:
 //!    the atom implies `|a| ≤ |b|`, and with equal cardinalities forces
@@ -60,13 +60,13 @@
 //!    the cone has no integer cardinality at all (every constraint on it is
 //!    unsatisfiable), which this encoding cannot derive, so it raises the
 //!    honesty gate instead of guessing.
-//! 7. **Choose**: `choose(s) ∈ s ↔ |s| ≥ 1` — CVC5's `SET_CHOOSE` axiom.
+//! 7. **Choose**: `choose(s) ∈ s ↔ |s| ≥ 1` – CVC5's `SET_CHOOSE` axiom.
 //!
 //! # Why that is enough (and not too much)
 //!
 //! Every clause above is a *valid* consequence of the theory of finite sets,
-//! so conjoining them preserves both `sat` and `unsat`. The converse — that
-//! any assignment satisfying the encoding realizes an actual set family —
+//! so conjoining them preserves both `sat` and `unsat`. The converse – that
+//! any assignment satisfying the encoding realizes an actual set family –
 //! holds because the constraints are exactly the characterization of
 //! *measures on a distributive lattice*: a monotone, modular, non-negative
 //! function on a `∪`/`∩`-closed family of sets is the restriction of a
@@ -82,7 +82,7 @@
 //! The cone is capped ([`MAX_CONE_SETS`]), and so is the element list that
 //! the counting sums run over ([`MAX_COUNT_ELEMENTS`]) because the
 //! de-duplication guards are quadratic in it. Overflowing a cap raises the
-//! honesty gate — the price of the bound is `Unknown`, never a silently
+//! honesty gate – the price of the bound is `Unknown`, never a silently
 //! weaker encoding.
 
 use crate::prelude::*;
@@ -98,7 +98,7 @@ fn max_cone_sets() -> usize {
 
 /// Cap on the number of ground elements the counting sums run over; the
 /// de-duplication guards are quadratic in this. Env-overridable and
-/// reported on firing — see [`crate::solver::caps`].
+/// reported on firing – see [`crate::solver::caps`].
 fn max_count_elements() -> usize {
     crate::solver::caps::cap("set_count_elements", 24)
 }
@@ -139,7 +139,7 @@ fn universe_of(sort: SortId, manager: &TermManager) -> Universe {
             Universe::Finite(BigInt::from(2).pow(*w))
         }
         nixie_core::SortKind::FloatingPoint { eb, sb } => {
-            // 2^(eb+sb) exactly — every bit pattern is one value.
+            // 2^(eb+sb) exactly – every bit pattern is one value.
             match u32::try_from(u64::from(*eb) + u64::from(*sb)) {
                 Ok(bits) => Universe::Finite(BigInt::from(2).pow(bits)),
                 Err(_) => Universe::Unknown,
@@ -226,7 +226,7 @@ impl Cone {
         }
     }
 
-    /// `slack(x) ≤ slack(y)` — the lattice constraint on the
+    /// `slack(x) ≤ slack(y)` – the lattice constraint on the
     /// no-ground-element regions, which is what keeps an element of `x` (as a
     /// subset of `y`) counted in `y`'s slack as well. Emitted only when both
     /// sides have a slack; an exact-count set has no region the constraint
@@ -269,7 +269,7 @@ pub(super) fn reduce(
             incomplete = true;
         }
 
-        // ---- the cone ----
+        // ======== the cone ========
         let mut cone = Cone {
             sets: Vec::new(),
             in_cone: FxHashSet::default(),
@@ -330,8 +330,8 @@ pub(super) fn reduce(
                 Shape::Empty | Shape::Univ | Shape::Singleton(_) | Shape::Opaque => {}
             }
             // Relation neighbours: a set joined to the cone by an asserted
-            // equality or subset — or by one of the implicit opaque pairs
-            // [`super::reduce`] relates — carries cardinality information
+            // equality or subset – or by one of the implicit opaque pairs
+            // [`super::reduce`] relates – carries cardinality information
             // across the relation, so it joins the cone (Z3's
             // `collect_subexpressions` walks eq/diseq watch lists for the
             // same reason). The implicit pairs matter as much as the
@@ -352,7 +352,7 @@ pub(super) fn reduce(
             continue;
         }
 
-        // ---- card and slack terms ----
+        // ======== card and slack terms ========
         for &set in &cone.sets {
             let existing = s
                 .cardinalities
@@ -366,7 +366,7 @@ pub(super) fn reduce(
             cone.card_of.insert(set, card);
         }
 
-        // ---- equality ⇒ equal cardinality ----
+        // ======== equality ⇒ equal cardinality ========
         //
         // Z3's `theory_finite_set_size::add_eq_axioms` ties the Boolean
         // abstractions of every asserted-equal pair together, which
@@ -395,7 +395,7 @@ pub(super) fn reduce(
             }
         }
 
-        // ---- the ground elements the sums run over ----
+        // ======== the ground elements the sums run over ========
         let empty_list: Vec<TermId> = Vec::new();
         let ground_elements: &[TermId] = elements.get(&elem_sort).unwrap_or(&empty_list);
         let cap = max_count_elements();
@@ -414,7 +414,7 @@ pub(super) fn reduce(
         // previous passes' own conjoined axioms) are surveyed; two counting
         // equations over different lists must not share a slack, or their
         // conjunction degenerates into "the newer elements contribute
-        // nothing" — a false `unsat` on the most ordinary input
+        // nothing" – a false `unsat` on the most ordinary input
         // (`|s| = 2` asserted before `1 \in s`).
         for &set in &cone.sets {
             if support(set, manager, 0).is_none()
@@ -456,7 +456,7 @@ pub(super) fn reduce(
                     Universe::Infinite | Universe::Unknown => {
                         // An infinite universe has no integer cardinality;
                         // any constraint on |U| is unsatisfiable, which this
-                        // encoding cannot derive — gate.
+                        // encoding cannot derive – gate.
                         incomplete = true;
                     }
                 },
@@ -476,7 +476,7 @@ pub(super) fn reduce(
                             // |~s| has no finite value over an infinite
                             // universe; every constraint on it is
                             // unsatisfiable, which this encoding cannot
-                            // derive — gate.
+                            // derive – gate.
                             incomplete = true;
                         }
                     }
@@ -513,7 +513,7 @@ pub(super) fn reduce(
                     let Some(cu) = cone.card_of.get(&u).copied() else {
                         continue;
                     };
-                    // |a| + |b| = |a ∪ b| + |a ∩ b| — the same formula the
+                    // |a| + |b| = |a ∪ b| + |a ∩ b| – the same formula the
                     // union arm states; hash-consing makes the duplicate
                     // harmless and the final dedup removes it.
                     let lhs = manager.mk_add([ca, cb]);
@@ -551,7 +551,7 @@ pub(super) fn reduce(
                         continue;
                     };
                     // Exact: |ite c a b| = ite c |a| |b|. No counting equation
-                    // and no slack — the set *is* one of the branches.
+                    // and no slack – the set *is* one of the branches.
                     let picked = manager.mk_ite(c, ca, cb);
                     axioms.push(manager.mk_eq(card, picked));
                 }
@@ -566,7 +566,7 @@ pub(super) fn reduce(
                 }
                 // `|a × b| = |a| · |b|`: the product pairs members exactly.
                 // Emitted only when the product's own support is not exact
-                // — an exact support's counting equation already pins the
+                // – an exact support's counting equation already pins the
                 // count, and the (nonlinear) multiplication would route the
                 // constraint through the arithmetic honesty gate for
                 // nothing. Where it IS emitted, that gate is the honest
@@ -583,7 +583,7 @@ pub(super) fn reduce(
                 // `|r ⨝ s| ≤ |r| · |s|`: every joined member consumes a
                 // connecting pair. Without this bound the join's slack was
                 // unconstrained above and `|J| = 2` with `|r| = |s| = 1`
-                // answered `sat` — a false `sat`, since `J` is determined
+                // answered `sat` – a false `sat`, since `J` is determined
                 // by its operands.
                 Shape::Join(r1, r2) => {
                     let c1 = manager.mk_set_card(r1);
@@ -603,7 +603,7 @@ pub(super) fn reduce(
             }
         }
 
-        // ---- asserted subset rules ----
+        // ======== asserted subset rules ========
         for &(atom, a, b) in &s.subsets {
             if cone.in_cone.contains(&a) && cone.in_cone.contains(&b) {
                 let (Some(ca), Some(cb)) =
@@ -626,7 +626,7 @@ pub(super) fn reduce(
             }
         }
 
-        // ---- the finite-universe bound ----
+        // ======== the finite-universe bound ========
         // |s₁ ∪ … ∪ sₖ| ≤ |U| over the chain union: by inclusion–exclusion
         // the chain's cardinality is the sum over exactly the non-empty Venn
         // regions, so this one bound is the whole "region counts fit the
@@ -663,7 +663,7 @@ pub(super) fn reduce(
             axioms.push(manager.mk_le(chain_card, total));
         }
 
-        // ---- choose ----
+        // ======== choose ========
         for &(choose, set) in &s.chooses {
             let Some(&card) = cone.card_of.get(&set) else {
                 continue;
@@ -745,7 +745,7 @@ fn counting_equation(
 /// assertions (and the previous passes' own conjoined axioms) are surveyed.
 /// Two counting equations over *different* lists must not share a slack:
 /// each equation says `|s| = Σ_list + slack`, and sharing would conjoin them
-/// into "the new elements contribute nothing" — a false `unsat` on the most
+/// into "the new elements contribute nothing" – a false `unsat` on the most
 /// ordinary input (`|s| = 2` then `1 ∈ s`).
 fn list_keyed_slack(set: TermId, list: &[TermId], manager: &mut TermManager) -> TermId {
     let mut name = nixie_core::reserved::reserved_name("set-card-slack", &set.0.to_string());

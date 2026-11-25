@@ -150,7 +150,7 @@ impl LiaSolver {
 
             // CHECKED coefficient arithmetic throughout: the divisions and
             // the `γ_j·bound` accumulation PANICKED in debug and silently
-            // WRAPPED in release on the QF_NIA/VeryMax family — and a
+            // WRAPPED in release on the QF_NIA/VeryMax family – and a
             // wrapped coefficient or rhs publishes a cut that is NOT
             // implied by its row (an unsound lemma). Declining the cut is
             // always sound (see the module doc: branch-and-bound stays

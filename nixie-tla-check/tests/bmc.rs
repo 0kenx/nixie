@@ -28,7 +28,7 @@ fn setup_err(src: &str, init: &str, next: &str, inv: &str) -> SetupError {
 }
 
 /// A counter that starts at 0 and increments. `x < 3` fails after three steps,
-/// and must be reported at exactly that depth — not earlier, not later.
+/// and must be reported at exactly that depth – not earlier, not later.
 const COUNTER: &str = r"
 ---- MODULE Counter ----
 EXTENDS Integers
@@ -84,7 +84,7 @@ Inv  == x >= 0 /\ x <= 5
     );
 }
 
-/// An action that does not mention `y'` leaves `y` free to take any value —
+/// An action that does not mention `y'` leaves `y` free to take any value –
 /// that is what TLA+ means, and encoding it as unchanged would hide real
 /// counterexamples.
 #[test]
@@ -210,7 +210,7 @@ Inv  == 2 \in s
     );
 }
 
-/// A set that **grows** across steps — the shape the arena cannot express at
+/// A set that **grows** across steps – the shape the arena cannot express at
 /// all, because `s@1`'s members depend on the action taken.
 #[test]
 fn a_growing_set_is_tracked_across_steps() {
@@ -251,7 +251,7 @@ Inv  == ~(2 \in s) \/ 2 = v
 }
 
 /// `ASSUME` constrains the `CONSTANT`s, and dropping it turns "holds for the
-/// intended parameters" into "holds for every value" — a strictly harder
+/// intended parameters" into "holds for every value" – a strictly harder
 /// claim that fails on correct specifications.
 ///
 /// Without the assumption `N > 0`, the solver is free to pick `N = 0`, and
@@ -301,8 +301,8 @@ Inv  == x < N
 ///
 /// The unsortable constant here has been chased twice. It was a tuple until
 /// tuples became datatypes, then a sequence until sequences got a sort. What
-/// is left is an **open record** — one where inference only ever saw a field
-/// access, so the value may carry fields the type does not list — which is
+/// is left is an **open record** – one where inference only ever saw a field
+/// access, so the value may carry fields the type does not list – which is
 /// refused on purpose, because a datatype over the known fields would make two
 /// records that differ only in the rest compare equal.
 #[test]
@@ -399,7 +399,7 @@ fn a_missing_named_constraint_is_an_error() {
 ///
 /// Found on Apalache's `UnchangedAsInv1663.tla`, where the checker happily
 /// reported a counterexample: with no transition asserted at depth 0, the
-/// An action-level invariant is no longer rejected — it is a legitimate
+/// An action-level invariant is no longer rejected – it is a legitimate
 /// question (issue #26: Apalache's `maybeActionInvariants`), checked over
 /// step pairs; the dedicated `tests/deadlock.rs` pins that machinery. What
 /// stays rejected here is the *temporal* level, which is a lasso question
@@ -494,7 +494,7 @@ Next == f' = [f EXCEPT ![k] = f[k] + 1]
 Inv  == f[k] < 3
 ====
 ";
-    // The counterexample at step 3 is found — the array reasoning works — but
+    // The counterexample at step 3 is found – the array reasoning works – but
     // the trace cannot be confirmed: `k` is only ever used as a function
     // index, so inference leaves it an unconstrained type variable, the sort
     // is an uninterpreted one, and no TLA+ value for it can be read back.
@@ -511,7 +511,7 @@ Inv  == f[k] < 3
     );
 }
 
-/// `EXCEPT` must leave other indices alone — the store/select axioms doing
+/// `EXCEPT` must leave other indices alone – the store/select axioms doing
 /// their job, which is what makes the array encoding faithful *inside* the
 /// domain.
 #[test]
@@ -567,7 +567,7 @@ Inv  == f[k] = 0
 
 /// What is still unmodelled, and must still say so: a function reached
 /// *through* an application. `f[a]` is a select, and its result is a bare
-/// array — the range sort carries no domain of its own — so `f[a][b]` leaves
+/// array – the range sort carries no domain of its own – so `f[a][b]` leaves
 /// TLA+'s undefinedness outside that inner domain unrepresented.
 #[test]
 fn a_nested_function_still_reports_an_unmodelled_domain() {
@@ -599,7 +599,7 @@ Inv  == f[k][k] = 0
 
 /// `Nat` is **not** an arbitrary set. Encoding it as an opaque set constant
 /// leaves it unconstrained, so the solver may decide `0 \notin Nat` and report
-/// `TypeOK == x \in Nat` violated in the initial state — a false
+/// `TypeOK == x \in Nat` violated in the initial state – a false
 /// counterexample, found on `AddTwo.tla`.
 ///
 /// Membership in the standard infinite sets is exactly expressible, so it is
@@ -661,10 +661,10 @@ TypeOK == x \in Int
     );
 }
 
-// ---- the PlusCal pipeline ---------------------------------------------------
+// ======== the PlusCal pipeline ========
 
 /// A small PlusCal algorithm, translated by `nixie_tla_syntax::pcal` and then
-/// bounded-model-checked unchanged — the path the handoff called "feed the
+/// bounded-model-checked unchanged – the path the handoff called "feed the
 /// existing pipeline unchanged". This pins it as a test: a regression in the
 /// translator that breaks parsing, lowering, typing or encoding of its own
 /// output fails here, not in a manual smoke run.
@@ -694,7 +694,7 @@ DoneBound == done <= 2
 ====
 ";
 
-/// The same algorithm with a per-process array variable — the standard
+/// The same algorithm with a per-process array variable – the standard
 /// PlusCal shape (`x[self] := …`), and the shape that made the array-alias
 /// soundness bug visible: the transition relation's disjunction puts every
 /// `pc' = [pc EXCEPT ![self] = …]` inside an `or`, and the fabricated
@@ -760,13 +760,13 @@ fn a_two_array_pluscal_spec_never_answers_a_false_clean() {
     // * After it, before the set-pair budget: honest `Unknown` (the `$dom`
     //      equality atoms tripped the set honesty gate at depth 4).
     // * After the budget, before the don't-care completion fix: a 4-step
-    //   `Violation` whose decoded trace the replay REJECTED — never-read
+    //   `Violation` whose decoded trace the replay REJECTED – never-read
     //   array points were completed independently of the taken branch.
     // * Now: a 4-step `Violation` that REPLAYS. The root cause turned out
     //   to sit one layer below the decoder: the array theory accepted
     //   committed-true equality sets that are jointly contradictory (two
     //   branch-update atoms simultaneously true through no-op writes,
-    //   with no select ever distinguishing them — a false `sat` class,
+    //   with no select ever distinguishing them – a false `sat` class,
     //   pinned in `nixie-solver`), the model builder then propagated one
     //   class-representative chain to every member, and the decoder had
     //   no consistent chain to read. With the theory refusing
@@ -792,7 +792,7 @@ fn a_pluscal_spec_is_safe_within_the_bound() {
 
 #[test]
 fn a_pluscal_bound_the_spec_cannot_exceed_holds() {
-    // `done` increments once per process, so `done <= 2` always holds —
+    // `done` increments once per process, so `done <= 2` always holds –
     // the checker must not invent a state past the bound.
     assert_eq!(
         pcal_check(RING, "DoneBound", 8),

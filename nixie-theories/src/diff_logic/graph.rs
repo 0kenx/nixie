@@ -1,4 +1,4 @@
-//! Constraint graph for difference logic — array-based adjacency.
+//! Constraint graph for difference logic – array-based adjacency.
 //!
 //! Represents difference constraints as a weighted directed graph:
 //! - Each variable is a node (`DiffVar`, a dense `u32` index).
@@ -8,7 +8,7 @@
 //! lists live in a flat `Vec<Vec<DiffEdge>>` indexed by node id (Z3's
 //! `dl_graph` layout: `vector<edge_id_vector> m_out_edges`), so hot-path
 //! traversals (`BellmanFord`/`Spfa`/seeded incremental checks) index memory
-//! instead of hashing — on the QF_IDL families the removed `HashMap`
+//! instead of hashing – on the QF_IDL families the removed `HashMap`
 //! operations were >50% of solver runtime.
 //!
 //! Term↔node interning stays in `FxHashMap`s (cold path: one lookup per
@@ -311,10 +311,10 @@ impl ConstraintGraph {
     }
 
     /// Push a new decision level.  The new level's rollback mark starts at
-    /// the CURRENT constraint count — the exact boundary a pop to this level
+    /// the CURRENT constraint count – the exact boundary a pop to this level
     /// must restore.  (It previously started at `0`, so popping back to a
     /// level that had seen no constraint additions truncated the constraint
-    /// list to zero — silently discarding every lower-level fact, up to and
+    /// list to zero – silently discarding every lower-level fact, up to and
     /// including level-0 units.  Under-constraining only: the solver missed
     /// conflicts, and once the sparse engine could own a verdict (the pure
     /// QF_IDL route) that became a false `sat` on `qlock-4-10-11.base`.)

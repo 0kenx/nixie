@@ -280,14 +280,14 @@ pub struct EufSolver {
     term_to_node: FxHashMap<TermId, u32>,
     /// Undo trail for `term_to_node` insertions: every intern that CREATES a
     /// node appends its term, so `pop()` removes exactly the entries the
-    /// index-based `retain` used to remove — O(inserted) instead of a full
+    /// index-based `retain` used to remove – O(inserted) instead of a full
     /// vocabulary scan on every node-creating backtrack (the retain was
     /// 67% of an MBQI-heavy quantified-UF profile; scan #2 item #1).
     ///
     /// Equivalence is exact: all three insert sites run only on a `get()`
     /// miss, every entry's index is `nodes.len()` at creation, nodes are
     /// LIFO-truncated, and nodes created before the first `push()` are never
-    /// truncated — so "node >= num_nodes at pop" and "inserted after this
+    /// truncated – so "node >= num_nodes at pop" and "inserted after this
     /// scope's push mark" name the same entries.  `pop()` debug-asserts the
     /// equivalence against the retain directly (dev oracle).
     term_to_node_trail: Vec<TermId>,
@@ -684,15 +684,15 @@ impl EufSolver {
     }
 
     /// Declare `term` (a floating-point literal) as a distinguished-value
-    /// constant keyed by its **bit pattern** — the SMT-LIB `=` on floats is
+    /// constant keyed by its **bit pattern** – the SMT-LIB `=` on floats is
     /// datum identity: `(_ +zero e s) ≠ (_ -zero e s)` (z3: `unsat` when they
     /// are asserted equal), two NaN spellings with different payloads are
     /// distinct datums, and the sole `(_ NaN e s)` literal is one datum equal
     /// to itself.
     ///
-    /// All spellings of one bit pattern — `FpLit` with those bits, the
+    /// All spellings of one bit pattern – `FpLit` with those bits, the
     /// dedicated `FpPlusZero` / `FpMinusZero` / … kinds, and a literal minted
-    /// later by the fp fold pass — share ONE value id, so same-value literals
+    /// later by the fp fold pass – share ONE value id, so same-value literals
     /// merge without conflict while any two different values can never land
     /// in one class.  The key map is symbol-level like the value-consts
     /// registry (`value_consts`):
@@ -702,7 +702,7 @@ impl EufSolver {
     /// that never rewinds within the solver's lifetime.
     ///
     /// The mark applies when the term is (re-)interned; a term already interned
-    /// without a mark keeps its current class summary — callers that need the
+    /// without a mark keeps its current class summary – callers that need the
     /// mark must declare before the first intern (the constant-interning leaf
     /// path and the fp fold pass both do).
     pub fn declare_fp_const(&mut self, term: TermId, key: (u32, u32, bool, u64, u64)) {
@@ -718,7 +718,7 @@ impl EufSolver {
     }
 
     /// The term of the distinguished-value member of `term`'s equivalence
-    /// class, if the class carries one — i.e. "the concrete constant this
+    /// class, if the class carries one – i.e. "the concrete constant this
     /// term's class is pinned to".  The witness term (not `term` itself) so
     /// callers can decode the constant's value; any member of the class
     /// denotes the same constant.  `None` when `term` is not interned or its
@@ -1126,7 +1126,7 @@ impl EufSolver {
     }
 
     /// Production accessor for the application-node indices (same set as
-    /// [`Self::debug_app_nodes`], available in release builds — the
+    /// [`Self::debug_app_nodes`], available in release builds – the
     /// congruence-gap repair walks it on the final candidate).
     pub fn app_nodes(&self) -> Vec<u32> {
         self.nodes
@@ -1144,7 +1144,7 @@ impl EufSolver {
 
     /// Record a `term_to_node` mapping.  The ONLY insert path (all former
     /// call sites are miss-guarded `get()` checks), so every insertion lands
-    /// on the undo trail exactly once — the invariant `pop()`'s trail unwind
+    /// on the undo trail exactly once – the invariant `pop()`'s trail unwind
     /// relies on.
     fn map_term_to_node(&mut self, term: TermId, idx: u32) {
         self.term_to_node.insert(term, idx);
@@ -1524,7 +1524,7 @@ impl Theory for EufSolver {
             // term maps to the node created for it (never to a borrowed congruent
             // one), nodes are truncated in LIFO order, and every insert is
             // miss-guarded, so the entries inserted inside this scope are
-            // EXACTLY the entries whose node index no longer exists — unwind
+            // EXACTLY the entries whose node index no longer exists – unwind
             // the insertion trail instead of scanning the whole vocabulary
             // (the full-map `retain` here was 67% of an MBQI-heavy
             // quantified-UF profile; scan #2 item #1).  A scope that created

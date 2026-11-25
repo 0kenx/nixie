@@ -105,8 +105,8 @@ the factored witnesses also satisfy every clause of the original circuit.
 | Factored circuit: cycles/conflict | 193113.508 | 174500.384 | 0.903616 |
 | Original si2: instructions | 27350367299 | 25881371428 | 0.946290 |
 | Original si2: cycles/conflict | 358651.148 | 272071.669 | 0.758597 |
-| Two-input geometric mean: instructions | — | — | **0.948671** |
-| Two-input geometric mean: cycles/conflict | — | — | **0.827937** |
+| Two-input geometric mean: instructions | – | – | **0.948671** |
+| Two-input geometric mean: cycles/conflict | – | – | **0.827937** |
 
 Instructions fall **5.13%** across the two inputs. Measured cycles/conflict
 fall **17.21%**, with non-increasing instructions on both and no si2

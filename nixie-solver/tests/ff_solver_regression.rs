@@ -1,4 +1,4 @@
-//! End-to-end `QF_FF` regressions through `Context::execute_script` — the
+//! End-to-end `QF_FF` regressions through `Context::execute_script` – the
 //! Phase-3/4 exit criteria from `docs/FF_THEORY_DESIGN.md` §11: conjunctive
 //! goals (Phase 3) and goals with Boolean structure over FF atoms
 //! (Phase 4, the lazy DPLL(T)), every `sat` carrying a model whose values
@@ -116,7 +116,7 @@ fn boolean_structure_or() {
 fn boolean_structure_unsat() {
     // The disjunction's both arms are refuted: 3 is a non-residue mod 97?
     // (2 IS a residue; use two non-residues to force unsat.) 97 ≡ 1 mod 8
-    // makes 2 a residue; non-residues: 5? — pin with a provable pair:
+    // makes 2 a residue; non-residues: 5? – pin with a provable pair:
     // x² = -1 (residue, p ≡ 1 mod 4) ∨ x² = 2, with x = 0 forced.
     let out = run(r#"
         (set-logic QF_FF)
@@ -162,7 +162,7 @@ fn bitsum_solves() {
 #[test]
 fn mixed_logic_is_rejected_by_the_contract() {
     // Phase-1-5 scope: `QF_FF` permits FF + Bool structure only, and the
-    // logic contract rejects arithmetic-in-FF inputs at assert time —
+    // logic contract rejects arithmetic-in-FF inputs at assert time –
     // the designed behaviour (docs/FF_THEORY_DESIGN.md §3.4), safer than
     // answering: a mixed goal can never be silently half-solved.
     let mut ctx = Context::new();
@@ -187,7 +187,7 @@ fn mixed_logic_is_rejected_by_the_contract() {
 #[test]
 fn open_logic_ff_goal_still_decides() {
     // Without set-logic (open logic), the dispatcher auto-detects FF
-    // structure — same behaviour as the nonlinear dispatch.
+    // structure – same behaviour as the nonlinear dispatch.
     let out = run(r#"
         (declare-const x (_ FiniteField 7))
         (assert (= (ff.mul x x) #f4m7))
@@ -251,7 +251,7 @@ fn push_pop_scope_is_recomputed() {
 #[test]
 fn cardinality_guard_toy_field_f2() {
     // The design's §7 regression: three pairwise-distinct terms over F_2
-    // (2 elements) is a pigeonhole UNSAT the guard answers immediately —
+    // (2 elements) is a pigeonhole UNSAT the guard answers immediately –
     // omitting it is the named false-`sat` class in the combination
     // setting, and here a potential grind through witness generators.
     let out = run(r#"
@@ -316,7 +316,7 @@ fn cardinality_distinct_under_boolean_structure() {
 fn negated_distinct_over_tiny_field_is_sat() {
     // The guard's soundness pin: a distinct UNDER `not` is not a fact.
     // Over F_2, `(not (distinct x y z))` is satisfiable (any assignment
-    // repeats a value) — an unconditional pigeonhole arm here would
+    // repeats a value) – an unconditional pigeonhole arm here would
     // answer a false `unsat`.
     let out = run(r#"
         (set-logic QF_FF)
@@ -332,7 +332,7 @@ fn negated_distinct_over_tiny_field_is_sat() {
     assert!(out[1].starts_with("(("), "model prints: {}", out[1]);
 }
 
-// ================= Certified mode (§8) =================
+// ======== Certified mode (§8) ========
 
 #[test]
 fn certified_ff_sat_is_model_certified() {
@@ -417,7 +417,7 @@ fn certified_ff_unsat_cardinality_certificate_accepts() {
 #[test]
 fn certified_ff_exhaustion_unsat_fails_closed() {
     // x² = 3 over F_7 (3 is a non-residue): refuted only by exhaustive
-    // enumeration — §8's branch-exhaustion case has NO checkable
+    // enumeration – §8's branch-exhaustion case has NO checkable
     // certificate, so certified mode must downgrade to unknown.
     let mut ctx = Context::new();
     ctx.require_certified_mode();
@@ -437,7 +437,7 @@ fn certified_ff_exhaustion_unsat_fails_closed() {
         "exhaustion UNSAT must be declined with a reason"
     );
     // The same goal uncertified answers unsat (the enumeration IS the
-    // proof there — sound, just not independently checkable).
+    // proof there – sound, just not independently checkable).
     let mut plain = Context::new();
     let out2 = plain
         .execute_script(
@@ -457,7 +457,7 @@ fn planted_bn254_sparse_8x12_is_never_unsat() {
     // The split-Gröbner capacity work's false-`unsat` reproducer: this
     // planted-satisfiable goal (the witness satisfies every constraint
     // by construction) came back `unsat` when the lazy round-robin
-    // horizon lost its honesty gate — the stack emptied over truncated
+    // horizon lost its honesty gate – the stack emptied over truncated
     // branches and posed as exhaustion. The tiny-prime oracle cannot
     // catch this class (p ≤ 256 never truncates); a planted goal at a
     // real prime can, and did. Any verdict but `unsat` is acceptable
@@ -481,7 +481,7 @@ fn planted_bn254_sparse_8x12_is_never_unsat() {
 #[test]
 fn all_big_solutions_stay_honest() {
     // x·z = 1, y·z = 1, x·y = (2^100)² over BN254: every solution has
-    // x = y = ±2^100 and z = ±2^−100 — values far beyond the lazy
+    // x = y = ±2^100 and z = ±2^−100 – values far beyond the lazy
     // round-robin's horizon. Whatever route the solver takes (algebraic
     // roots if the completion succeeds, honest truncation if not), the
     // answer must never be `unsat`.
@@ -504,7 +504,7 @@ fn all_big_solutions_stay_honest() {
 fn certified_branch_exhaustion_no_roots_accepts() {
     // x² = 3 over p = 2³¹−1 (3 is a nonresidue: p ≡ 7 mod 12): FindZero
     // branches on x² − 3, finds no roots, and the case tree is a single
-    // rootless branch — the §8 hard half's simplest shape, now
+    // rootless branch – the §8 hard half's simplest shape, now
     // certified (replay + membership + gcd(x^p−x, ·) = 1).
     let mut ctx = Context::new();
     ctx.execute_script("(set-logic QF_FF)").expect("parse");
@@ -522,7 +522,7 @@ fn certified_branch_exhaustion_no_roots_accepts() {
 #[test]
 fn certified_branch_exhaustion_case_tree_accepts() {
     // x² = 4 ∧ y² = x + 1 over p = 2³¹−1: the root branch on x² − 4 has
-    // two roots; x = 2 leaves y² = 3 and x = −2 leaves y² = −1 — both
+    // two roots; x = 2 leaves y² = 3 and x = −2 leaves y² = −1 – both
     // nonresidues (p ≡ 3 mod 4), so both children die rootless. A
     // two-level case tree: every branch step's root completeness and
     // every leaf's membership verified by replay.
@@ -546,7 +546,7 @@ fn certified_substituted_linear_core_refutation_accepts() {
     // x² = 4 ∧ y² = x + 2 ∧ y = 5: the linear core pivots y = 5, then
     // x = 23, and the substituted x² − 4 collapses to a nonzero
     // constant. The refutation used to certify over the REWRITTEN
-    // generator list — which the replay cannot reproduce — and every
+    // generator list – which the replay cannot reproduce – and every
     // such UNSAT silently downgraded (the composition bug found by the
     // case-tree probe, 2026-09-16). The rewriting now carries each
     // generator's expression over the originals.
@@ -569,7 +569,7 @@ fn certified_substituted_linear_core_refutation_accepts() {
 #[test]
 fn certified_linear_core_mixed_order_combo_accepts() {
     // x² = 2 ∧ x = 5 over p = 2³¹−1 (2 IS a residue there, but x = 5
-    // refutes): the generator list is [nonlinear, linear] — the shape
+    // refutes): the generator list is [nonlinear, linear] – the shape
     // where the linear core's combination bookkeeping once put the
     // identity coefficient at the linear-subsequence position instead
     // of the generator's true index, certifying the wrong generator.

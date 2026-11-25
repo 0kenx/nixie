@@ -124,10 +124,10 @@ impl Solver {
     /// The candidate is built by a small, independent **congruence closure**
     /// over the reachable ground terms:
     ///
-    /// * seed unions from the EUF congruence classes (pure candidate — a
+    /// * seed unions from the EUF congruence classes (pure candidate – a
     ///   wrong class can only fail certification, never pass it),
     /// * union both sides of equalities the assertions guarantee true
-    ///   (top level and through `and` conjuncts — an equality under `or`,
+    ///   (top level and through `and` conjuncts – an equality under `or`,
     ///   `not` or `ite` is not known true and is deliberately skipped),
     /// * close under congruence: applications of one function whose
     ///   arguments are class-equal are unioned, to fixpoint.
@@ -138,7 +138,7 @@ impl Solver {
     /// `ite`-over-uninterpreted-sort term the E-graph never interned): the
     /// asserted-equality seed unions it directly.
     ///
-    /// The closure is *candidate construction only* — the assertion
+    /// The closure is *candidate construction only* – the assertion
     /// evaluation and [`Self::check_application_congruence`] verify the
     /// result; an unsound closure can only make certification fail.
     fn complete_uninterpreted_witnesses(
@@ -149,7 +149,7 @@ impl Solver {
         use nixie_core::ast::traversal::get_children;
         use nixie_core::sort::SortKind;
 
-        // ---- 1. collect reachable terms (deterministic walk order) ----
+        // ======== 1. collect reachable terms (deterministic walk order) ========
         let mut terms: Vec<TermId> = Vec::new();
         let mut visited: FxHashSet<TermId> = FxHashSet::default();
         let mut stack: Vec<TermId> = self.certification_roots();
@@ -173,7 +173,7 @@ impl Solver {
                 .is_some_and(|s| matches!(s.kind, SortKind::Uninterpreted(_)))
         };
 
-        // ---- 2. union-find over the uninterpreted-sorted terms ----
+        // ======== 2. union-find over the uninterpreted-sorted terms ========
         // Parent map; a term absent from the map is its own root.
         let mut parent: FxHashMap<TermId, TermId> = FxHashMap::default();
         fn find(parent: &mut FxHashMap<TermId, TermId>, x: TermId) -> TermId {
@@ -229,7 +229,7 @@ impl Solver {
             }
         }
 
-        // Seed 2: equalities the assertions guarantee true — the roots
+        // Seed 2: equalities the assertions guarantee true – the roots
         // themselves and, recursively, the conjuncts of top-level `and`s.
         // An equality anywhere else (`or`, `not`, `ite`, …) is not known
         // true; skipping it can only lose coverage, never soundness.
@@ -256,7 +256,7 @@ impl Solver {
             }
         }
 
-        // Seed 3 / fixpoint: congruence — applications of one function
+        // Seed 3 / fixpoint: congruence – applications of one function
         // with class-equal argument tuples are unioned. Iterate until no
         // union fires (each pass is O(applies); the fixpoint is bounded by
         // the class count).
@@ -304,7 +304,7 @@ impl Solver {
             }
         }
 
-        // ---- 3. allocate one witness per class root ----
+        // ======== 3. allocate one witness per class root ========
         let mut witness_index: FxHashMap<TermId, u64> = FxHashMap::default();
         for &id in &terms {
             if let Some(term) = manager.get(id)
@@ -327,7 +327,7 @@ impl Solver {
     /// no role in the checked verdict (the Boolean fold short-circuits
     /// past unevaluated subterms), so skipping it is sound.
     ///
-    /// Values are keyed by their exact `Debug` form — for the `ModelValue`
+    /// Values are keyed by their exact `Debug` form – for the `ModelValue`
     /// variants this is injective (each variant is prefixed distinctly and
     /// the payloads print exactly), so equal keys mean equal values and the
     /// grouping is exact.
@@ -408,7 +408,7 @@ impl Solver {
         }
         // The finite-field ideal-membership / pigeonhole certificate
         // (FF design §8, the "easy half"): re-encode the named literals
-        // and re-multiply the cofactors in exact arithmetic — one pass,
+        // and re-multiply the cofactors in exact arithmetic – one pass,
         // independent of the Gröbner machinery that produced them. The
         // literals must each be conjuncts of the active assertions
         // (entailment); refuting them refutes the goal.
@@ -450,7 +450,7 @@ impl Solver {
 }
 
 /// Whether `needle` appears on the asserted conjunct spine of the
-/// assertion list (top-level assertions and their `and` conjuncts — the
+/// assertion list (top-level assertions and their `and` conjuncts – the
 /// positions whose truth the assertions guarantee).
 fn assertion_spine_contains(manager: &TermManager, assertions: &[TermId], needle: TermId) -> bool {
     let mut stack: Vec<TermId> = assertions.to_vec();
@@ -629,7 +629,7 @@ impl BooleanLratChecker {
             // `¬Eq` literals need the link `distinct ⇒ pairwise ¬Eq`, and the
             // pair atoms are the hash-consed `Eq` terms the lemma literals
             // use, so both sides unify on one Tseitin variable.  Forward
-            // direction only — sound for UNSAT certification, and exactly
+            // direction only – sound for UNSAT certification, and exactly
             // what a refutation consumes.  Handled before the general
             // combine match because building the pair atoms interns new
             // terms (needs `&mut manager`, incompatible with the `&Term`
@@ -749,7 +749,7 @@ impl BooleanLratChecker {
         // consumer does: the Tseitin walk emits one entry per *occurrence*,
         // and an `or`/`and` term with a repeated argument term (QG-class
         // inputs have them) otherwise lands duplicate literals in the
-        // canonical CNF. A tautology is trivially satisfied — dropping it
+        // canonical CNF. A tautology is trivially satisfied – dropping it
         // is sound (it never constrains).
         let mut clause: Vec<Lit> = Vec::new();
         for lit in lits {
@@ -789,7 +789,7 @@ impl BooleanLratChecker {
     ///
     /// A lemma that fails its verifier is **skipped, not fatal**: the
     /// verified clauses form a subset of the true constraint set, so a
-    /// refutation over them is sound regardless — and a refutation the
+    /// refutation over them is sound regardless – and a refutation the
     /// skipped lemma was needed for simply does not happen (the SAT solve
     /// finds the subset satisfiable and the certification fails closed to
     /// `unknown`). This keeps fragment gaps (disequality literals,
@@ -806,7 +806,7 @@ impl BooleanLratChecker {
             // non-arith non-Bool operands, Bool-sorted applications) go to
             // the congruence-closure verifier; all-arithmetic atoms
             // (linear (in)equalities over Int/Real) to the LP verifier.
-            // Mixed lemmas need interface reasoning (Nelson–Oppen) —
+            // Mixed lemmas need interface reasoning (Nelson–Oppen) –
             // declined (fail closed).
             let int_sort = manager.sorts.int_sort;
             let real_sort = manager.sorts.real_sort;
@@ -836,8 +836,8 @@ impl BooleanLratChecker {
                 }
             }
             let verified = if unclassifiable || (euf && arith) {
-                // Mixed lemmas need interface reasoning (Nelson–Oppen) —
-                // future work; unclassifiable atoms cannot be decoded —
+                // Mixed lemmas need interface reasoning (Nelson–Oppen) –
+                // future work; unclassifiable atoms cannot be decoded –
                 // skip either way.
                 false
             } else if arith {
@@ -866,7 +866,7 @@ impl BooleanLratChecker {
                     Ok(lit) => lit,
                     // A lemma atom the encoder rejects (should not happen:
                     // the recorder only accepts Eq/Apply/comparison atoms)
-                    // skips the lemma — same fail-closed semantics as a
+                    // skips the lemma – same fail-closed semantics as a
                     // failed verification.
                     Err(_) => {
                         skipped += 1;
@@ -888,11 +888,11 @@ impl BooleanLratChecker {
         assertions: &[TermId],
         manager: &mut TermManager,
     ) -> Result<(), String> {
-        // Phase 1 — verified model blocking. Solve the Boolean
+        // Phase 1 – verified model blocking. Solve the Boolean
         // abstraction; for each candidate model, hand the model's *true*
         // theory atoms to the independent verifiers (congruence closure
         // / exact LP). An infeasible atom conjunction yields a blocking
-        // clause that is valid by exactly that verified infeasibility —
+        // clause that is valid by exactly that verified infeasibility –
         // the gate never adds a clause it has not itself verified. A
         // theory-consistent model (or the iteration cap) fails closed.
         // Recorded lemmas (all independently verified as well) tighten
@@ -939,11 +939,11 @@ impl BooleanLratChecker {
             }
         }
 
-        // Phase 2 — transcript replay. Every clause (skeleton, verified
+        // Phase 2 – transcript replay. Every clause (skeleton, verified
         // recorded lemmas, verified blocking clauses) enters a fresh
-        // solver as an *original* in order — the LRAT original prefix is
+        // solver as an *original* in order – the LRAT original prefix is
         // sequential, which mid-stream additions after derived clauses
-        // cannot be — and the refutation is checked as usual.
+        // cannot be – and the refutation is checked as usual.
         let mut proof_solver = nixie_sat::Solver::with_config(nixie_sat::SolverConfig {
             enable_inprocessing: false,
             ..nixie_sat::SolverConfig::default()
@@ -1003,7 +1003,7 @@ impl BooleanLratChecker {
     /// theory atoms over the assertion DAG, hand the EUF atoms to
     /// congruence closure and the arithmetic atoms to the exact LP
     /// checker. An infeasible conjunction yields the blocking clause
-    /// (negations of exactly the witnessed atoms — valid by the verified
+    /// (negations of exactly the witnessed atoms – valid by the verified
     /// infeasibility, and it falsifies the model). `None` when neither
     /// verifier refutes the model (fail closed).
     fn block_theory_inconsistent_model(
@@ -1059,14 +1059,14 @@ impl BooleanLratChecker {
             if let Some(is_arith) = atom_kind
                 && let Some(&lit) = self.encoded.get(&id)
             {
-                // The model IS the full atom assignment — both polarities
+                // The model IS the full atom assignment – both polarities
                 // join the check. A TRUE atom is asserted in the
                 // conjunction (clause-literal polarity `false` = negative
                 // literal, and the blocking clause negates it); a FALSE
                 // atom contributes its negation (clause-literal polarity
                 // `true` = positive literal, and the blocking clause
                 // asserts it). Validity of the blocking clause is exactly
-                // the verified infeasibility of this full assignment —
+                // the verified infeasibility of this full assignment –
                 // including the case where congruence derives an equality
                 // the model denies.
                 match solver.model_value(lit.var()) {
@@ -1227,7 +1227,7 @@ mod tests {
 
     #[test]
     fn theory_semantic_unsat_fails_closed() {
-        // Parity infeasibility — outside the LP fragment (rational-
+        // Parity infeasibility – outside the LP fragment (rational-
         // feasible) and invisible to congruence closure. (The linear
         // bound contradiction formerly used here is LP-certifiable since
         // the 2026-09 LIA lemma verifier: `certified_mode_lp_refutable_
@@ -1507,8 +1507,8 @@ mod tests {
 
 // ======== Independent congruence-closure verification of EUF lemmas ========
 
-/// Check that a recorded lemma — a clause whose literals are `(Eq atom,
-/// literal polarity)` pairs — is a **valid** EUF consequence, by a fresh,
+/// Check that a recorded lemma – a clause whose literals are `(Eq atom,
+/// literal polarity)` pairs – is a **valid** EUF consequence, by a fresh,
 /// self-contained congruence closure over the lemma's ground subterm
 /// closure. The clause is valid iff its negation (the conjunction of the
 /// negated literals: a positive clause literal `Eq` becomes a *disequality*,
@@ -1519,7 +1519,7 @@ mod tests {
 /// * disequality literals (negated positive clause literals) become
 ///   pending,
 /// * the closure runs to fixpoint (applications of one function whose
-///   arguments are class-equal merge — the congruence axiom schema),
+///   arguments are class-equal merge – the congruence axiom schema),
 /// * the lemma verifies iff some pending pair ended up merged.
 ///
 /// Congruence closure is complete for ground EUF, so `false` is exactly
@@ -1534,7 +1534,7 @@ fn verify_euf_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
     }
 
     // Ground subterm closure of every atom's operands. `ite`-over-uninterpreted
-    // operands and nested applications are walked generically — no
+    // operands and nested applications are walked generically – no
     // assumption that the E-graph ever interned them (the addendum-7
     // candidate-bug class). Bool-sorted `Apply` atoms seed themselves (a
     // `f(x…)` atom is the equality `f(x…) = true/false`).
@@ -1668,7 +1668,7 @@ fn verify_euf_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
 
     // Contradiction = a pending disequality whose sides merged, OR the
     // Boolean constants merged (a Bool-sorted application forced both true
-    // and false — the eq_diamond reasoning shape).
+    // and false – the eq_diamond reasoning shape).
     find(&mut parent, true_term) == find(&mut parent, false_term)
         || pending
             .iter()
@@ -1707,8 +1707,8 @@ fn dump_gate_transcript(dir: &str, transcript: &nixie_sat::LratTranscript) -> st
 // ======== Independent LP verification of arithmetic lemmas ========
 //
 // The QF_LIA analogue of `verify_euf_lemma`: a recorded lemma whose atoms
-// are linear (in)equalities is valid iff its negation — the conjunction
-// of the negated literals — is infeasible. Each atom decodes into an
+// are linear (in)equalities is valid iff its negation – the conjunction
+// of the negated literals – is infeasible. Each atom decodes into an
 // exact `BigRational` linear constraint over the lemma's own variables;
 // strict bounds tighten over integer-valued expressions (`a < b ⟺ a ≤
 // b-1`); equalities substitute away; the remaining inequalities go
@@ -1717,7 +1717,7 @@ fn dump_gate_transcript(dir: &str, transcript: &nixie_sat::LratTranscript) -> st
 //
 // Completeness boundary (documented, fail-closed): rational infeasibility
 // only. Integer-only infeasibility (parity/divisibility conflicts) is
-// LP-feasible and returns `false` — the certification declines, never a
+// LP-feasible and returns `false` – the certification declines, never a
 // wrong verdict. Disequality literals (a positive `Eq` clause literal
 // negates to `≠`) make the conjunction disjunctive and are declined in
 // this slice.
@@ -1738,7 +1738,7 @@ impl LinExpr {
         }
     }
 
-    /// Add `factor * term` — false when the term is not linear.
+    /// Add `factor * term` – false when the term is not linear.
     fn add_term(&mut self, term: TermId, factor: &BigRational, manager: &TermManager) -> bool {
         if factor.is_zero() {
             return true;
@@ -1892,7 +1892,7 @@ fn minimize_verified_block(
 /// Disequality literals (a positive `Eq` clause literal negates to `≠`)
 /// split exactly over integer-valued expressions (`t ≠ k ⟺ t ≤ k-1 ∨
 /// t ≥ k+1`), so the check branches over every combination and requires
-/// **all** branches infeasible (capped at 5 disequalities — 32 branches;
+/// **all** branches infeasible (capped at 5 disequalities – 32 branches;
 /// beyond that the lemma is declined).
 fn verify_lia_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
     use num_traits::One;
@@ -1951,7 +1951,7 @@ fn verify_lia_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
             (Rel::Eq, false) => (None, false),
             // Negates to a disequality: disjunctive, but over an
             // integer-valued expression it splits exactly into two
-            // bounds — handled by branching after the decode.
+            // bounds – handled by branching after the decode.
             (Rel::Eq, true) => {
                 if !expr.integer_valued(manager) {
                     return false;
@@ -1966,7 +1966,7 @@ fn verify_lia_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
                 if strict {
                     // `expr < 0` / `expr > 0` over an integer-valued
                     // expression tightens to `≤ -1` / `≥ +1`; anything
-                    // else needs ε reasoning — decline.
+                    // else needs ε reasoning – decline.
                     if !expr.integer_valued(manager) {
                         return false;
                     }
@@ -2114,7 +2114,7 @@ fn lia_conjunction_infeasible(
         for u in &upper {
             for l in &lower {
                 // `v ≤ U` and `v ≥ L` combine to `L - U ≤ 0`. (Sign errors
-                // here make feasible systems derive contradictions — the
+                // here make feasible systems derive contradictions – the
                 // feasible-pair unit is the regression.)
                 let mut e = l.clone();
                 e.constant -= &u.constant;
@@ -2164,7 +2164,7 @@ mod euf_lemma_tests {
         let eq_ab = manager.mk_eq(a, b);
         let eq_fafb = manager.mk_eq(fa, fb);
         // Clause ¬(a=b) ∨ f(a)=f(b): negated conjunction a=b ∧ f(a)≠f(b)
-        // — the merge a=b congruence-merges f(a),f(b), violating the
+        // – the merge a=b congruence-merges f(a),f(b), violating the
         // pending disequality.
         let lemma = vec![(eq_ab, false), (eq_fafb, true)];
         assert!(verify_euf_lemma(&lemma, &manager));
@@ -2187,12 +2187,12 @@ mod euf_lemma_tests {
         let (mut manager, a, b, _c, fa, fb) = setup();
         let eq_ab = manager.mk_eq(a, b);
         let eq_fafb = manager.mk_eq(fa, fb);
-        // Clause: ¬(a=b) ∨ f(a)=f(b) — NOT valid (f may collapse a≠b).
+        // Clause: ¬(a=b) ∨ f(a)=f(b) – NOT valid (f may collapse a≠b).
         // Negated conjunction a=b ∧ f(a)≠f(b) IS contradictory... via
-        // congruence, so the flipped clause IS valid — the NON-valid one
+        // congruence, so the flipped clause IS valid – the NON-valid one
         // is (a=b) ∨ ¬(f(a)=f(b)) without the a=b side... use a genuinely
         // invalid shape: f(a)=f(b) ∨ f(a)≠f(b) is a tautology; instead
-        // take (f(a)≠f(b)) alone as a unit — not a consequence.
+        // take (f(a)≠f(b)) alone as a unit – not a consequence.
         let lemma = vec![(eq_fafb, false)];
         assert!(!verify_euf_lemma(&lemma, &manager));
         let _ = eq_ab;
@@ -2210,7 +2210,7 @@ mod euf_lemma_tests {
     }
 
     /// Deep congruence through an ite-over-uninterpreted-sort operand (the
-    /// not-EUF-interned class): `ite(p,a,b) = a ∧ a = b ∨ f(ite) ≠ f(b)` —
+    /// not-EUF-interned class): `ite(p,a,b) = a ∧ a = b ∨ f(ite) ≠ f(b)` –
     /// building the chain via the ite term.
     #[test]
     fn ite_operand_walks_generically() {
@@ -2233,10 +2233,10 @@ mod euf_lemma_tests {
     }
 
     /// Bool-sorted applications as lemma atoms: `(S)->Bool` function atoms
-    /// are equalities against the Boolean constants — `¬p(a) ∨ ¬p(b) ∨ a≠b`
+    /// are equalities against the Boolean constants – `¬p(a) ∨ ¬p(b) ∨ a≠b`
     /// hmm, directly: clause `p(a) ∨ p(b)` with a=b... the VALID lemma is
     /// `¬p(a) ∨ p(b) ∨ a≠b` (if a=b and p(a) then p(b)). Negated
-    /// conjunction: p(a) ∧ ¬p(b) ∧ a=b — congruence merges p(a),p(b), so
+    /// conjunction: p(a) ∧ ¬p(b) ∧ a=b – congruence merges p(a),p(b), so
     /// p(a)=true and p(b)=false merge the constants.
     #[test]
     fn bool_apply_congruence_verifies() {
@@ -2250,7 +2250,7 @@ mod euf_lemma_tests {
         let pa = manager.mk_apply("p", [a], manager.sorts.bool_sort);
         let pb = manager.mk_apply("p", [b], manager.sorts.bool_sort);
         let eq_ab = manager.mk_eq(a, b);
-        // Clause: ¬(a=b) ∨ ¬p(a) ∨ p(b) — entries in clause polarity.
+        // Clause: ¬(a=b) ∨ ¬p(a) ∨ p(b) – entries in clause polarity.
         // Negated conjunction: a=b ∧ p(a) ∧ ¬p(b); the merge a=b
         // congruence-merges p(a),p(b), colliding true with false.
         let lemma = vec![(eq_ab, false), (pa, false), (pb, true)];
@@ -2295,7 +2295,7 @@ mod euf_lemma_tests {
         // Clause ¬(x=1) ∨ ¬(x=2): negated conjunction x=1 ∧ x=2
         // (negative clause literals assert their atoms).
         assert!(verify_lia_lemma(&[(e1, false), (e2, false)], &m));
-        // Sanity: a positive (x=1) literal negates to a disequality —
+        // Sanity: a positive (x=1) literal negates to a disequality –
         // declined in this slice, which also fails.
         assert!(!verify_lia_lemma(&[(e1, true), (e2, false)], &m));
     }
@@ -2336,7 +2336,7 @@ mod euf_lemma_tests {
     #[test]
     fn lia_parity_boundary_declined() {
         // x = 2y+1 ∧ x = 2z is integer-infeasible but LP-feasible: the
-        // documented completeness boundary — must return false (fail
+        // documented completeness boundary – must return false (fail
         // closed), never a wrong acceptance.
         let (mut m, x, y, z) = lia_setup();
         let two = m.mk_int(2);
@@ -2351,8 +2351,8 @@ mod euf_lemma_tests {
 
     #[test]
     fn lia_two_var_substitution() {
-        // y ≥ x+2 ∧ x ≥ 5 ∧ y ≤ 6: substituting y: x+2 ≤ 6 ∧ x ≥ 5 —
-        // feasible (x=5,y=7? y≤6 violated... x+2≤6 → x≤4 ∧ x≥5 —
+        // y ≥ x+2 ∧ x ≥ 5 ∧ y ≤ 6: substituting y: x+2 ≤ 6 ∧ x ≥ 5 –
+        // feasible (x=5,y=7? y≤6 violated... x+2≤6 → x≤4 ∧ x≥5 –
         // infeasible). Conjunction: y ≥ x+2, x ≥ 5, y ≤ 6.
         let (mut m, x, y, _z) = lia_setup();
         let two2 = m.mk_int(2);
@@ -2370,7 +2370,7 @@ mod euf_lemma_tests {
 
     /// Disequality literals: the conjunction `x ≠ 5 ∧ x ≤ 4 ∧ x ≥ 6` is
     /// unsatisfiable on BOTH branches of `x ≠ 5` (low: x ≤ 4 ∧ x ≤ 4;
-    /// high: x ≤ 4 ∧ x ≥ 6 — infeasible), so the clause verifies.
+    /// high: x ≤ 4 ∧ x ≥ 6 – infeasible), so the clause verifies.
     #[test]
     fn lia_disequality_branch_verifies() {
         let (mut m, x, _y, _z) = lia_setup();
@@ -2387,7 +2387,7 @@ mod euf_lemma_tests {
     }
 
     /// A disequality that does NOT close both branches: `x ≠ 5 ∧ x ≤ 4`
-    /// is satisfiable (x = 4) — rejected.
+    /// is satisfiable (x = 4) – rejected.
     #[test]
     fn lia_disequality_open_branch_rejected() {
         let (mut m, x, _y, _z) = lia_setup();
@@ -2399,7 +2399,7 @@ mod euf_lemma_tests {
     }
 
     /// Disequality over a non-integer-valued expression (x/2 ≠ 0) is
-    /// declined — no exact integer split.
+    /// declined – no exact integer split.
     #[test]
     fn lia_disequality_non_integral_declined() {
         let (mut m, x, _y, _z) = lia_setup();
@@ -2409,7 +2409,7 @@ mod euf_lemma_tests {
         let ne = m.mk_eq(half_x, zero);
         // Force infeasibility on both sides via x = 1 (so x/2 = 0.5,
         // satisfying ≠ 0): the lemma (¬(x/2≠0) ∨ ¬(x=1)) is NOT valid, and
-        // the conjunction x/2≠0 ∧ x=1 is actually satisfiable — but the
+        // the conjunction x/2≠0 ∧ x=1 is actually satisfiable – but the
         // disequality is non-integral so the verifier declines regardless.
         let one = m.mk_int(1);
         let e = m.mk_eq(x, one);

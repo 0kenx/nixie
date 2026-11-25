@@ -1,4 +1,4 @@
-//! Full port of kissat's `factor.c` — quotient-chain bounded variable
+//! Full port of kissat's `factor.c` – quotient-chain bounded variable
 //! addition (the worker-class lever).
 //!
 //! # The mechanism (kissat `factor.c`, all defaults on: `factor=1`,
@@ -7,26 +7,26 @@
 //!
 //! A **quotient chain** `q_0 → q_1 → … → q_b` is grown one pivot at a time.
 //! `q_0.factor = x_1` with `q_0.clauses` = every live clause containing `x_1`
-//! (binaries from the BIG's adjacency — original *and* learned, as in
+//! (binaries from the BIG's adjacency – original *and* learned, as in
 //! kissat's binary watches; large original clauses of size `3..=FACTOR_SIZE`
-//! whose *every* literal has binary+large occurrence `≥ 2` — kissat's
+//! whose *every* literal has binary+large occurrence `≥ 2` – kissat's
 //! `connect_clauses_to_factor` candidate filter, here an explicit
 //! occurrence index).  Each extension picks the next pivot `x_{k+1}` by
 //! counting, over the chain tail's clauses `(x_k ∨ A_j)`, the literals `x`
-//! that co-occur in a **matching** clause — binary `(q ∨ x)` for a binary
+//! that co-occur in a **matching** clause – binary `(q ∨ x)` for a binary
 //! tail clause `(x_k ∨ q)`, or a same-size large clause `d` whose literals
 //! are exactly the tail clause's non-pivot literals plus `x`.  Only the
 //! *matched* clauses survive into the new link (`matches[i]` indexes the
-//! previous link's list), so the pattern sets `A_j` shrink organically —
+//! previous link's list), so the pattern sets `A_j` shrink organically –
 //! kissat's incremental chain, not a bulk co-occurrence intersection (the
 //! measured-negative shapes listed in `docs/handovers/`).
 //!
 //! `best_quotient` then evaluates every prefix cut `p`: with `n = |q_p|`
 //! matched patterns and `p+1` factors, the rewrite deletes `(p+1)·n` clauses
 //! `(x_i ∨ A_j)` and adds `p+1` dividers `(t ∨ x_i)` plus `n` quotients
-//! `(¬t ∨ A_j)` — reduction `n·(p+1) − n − (p+1)`.  Applied when the best
+//! `(¬t ∨ A_j)` – reduction `n·(p+1) − n − (p+1)`.  Applied when the best
 //! reduction exceeds the bound (kissat's escalating `eliminate` bound starts
-//! at 0; we keep 0 — divergence recorded below).
+//! at 0; we keep 0 – divergence recorded below).
 //!
 //! # Soundness
 //!
@@ -39,9 +39,9 @@
 //!   some `A_j` fully false has every `x_i` true (each `(x_i ∨ A_j)` forces
 //!   it), so `t := false` satisfies the quotients and every divider.
 //! * **new → old**: `t` true forces every `A_j`; `t` false forces every
-//!   `x_i` — either way each `(x_i ∨ A_j)` is satisfied by the model's
+//!   `x_i` – either way each `(x_i ∨ A_j)` is satisfied by the model's
 //!   restriction to the original variables.  (Equivalently: the added
-//!   clauses say `¬x_i → t → A_j`, the deleted ones `¬A_j → x_i` —
+//!   clauses say `¬x_i → t → A_j`, the deleted ones `¬A_j → x_i` –
 //!   contrapositives of each other.)
 //!
 //! The transformation is equisatisfiable **and** model-preserving downward,
@@ -51,18 +51,18 @@
 //! satisfiability class in both directions, learned or not.  Large
 //! candidates stay original-only, as in kissat.
 //!
-//! # Variable schedule — the handover doc's reading is inverted
+//! # Variable schedule – the handover doc's reading is inverted
 //!
 //! `docs/handovers/2026-09-07-factor-port.md` says kissat "pushes the fresh
 //! hub to the FRONT of the VMTF queue, making it the next decision".  The
 //! source says the opposite: `adjust_scores_and_phases_of_fresh_variables`
-//! dequeues each fresh variable, relinks it at `queue->first` — the
+//! dequeues each fresh variable, relinks it at `queue->first` – the
 //! **oldest** end, reached last by `kissat_decide`'s scan from
-//! `queue->last` — sets its VSIDS score to **0**, and restamps the list so
+//! `queue->last` – sets its VSIDS score to **0**, and restamps the list so
 //! fresh variables carry the smallest stamps.  Fresh hubs are decided
 //! **last**, not first (in focused VMTF *and* stable VSIDS mode alike).
 //! This port follows the source (`NIXIE_FACTOR_SCHED=back`, the default);
-//! `=front` (bump-to-tail: next decision — the handover's claim) and
+//! `=front` (bump-to-tail: next decision – the handover's claim) and
 //! `=leave` (our `new_var` default, which enqueues at the tail) are retained
 //! as measured arms.  Our `new_var` already inserts at activity 0, so the
 //! VSIDS half of the adjustment is a no-op here.
@@ -70,7 +70,7 @@
 //! # Delivery and budget (kissat semantics)
 //!
 //! * **Dirty-literal gating** (`flags.factor` bits, set wherever kissat's
-//!   `kissat_mark_added_literal` runs — our `mark_subsume_lit` sites): the
+//!   `kissat_mark_added_literal` runs – our `mark_subsume_lit` sites): the
 //!   candidate heap only ever processes literals whose clause set changed
 //!   since they were last factored; a completed pass sets the watermark and
 //!   later passes are skipped until new marks arrive.
@@ -80,12 +80,12 @@
 //!   `50‰ × max(window, 10M)` of search work since the last round (kissat
 //!   `factoreffort=50`, `mineffort=10`).
 //! * **Delay** (kissat `factordelay=4`): skip while
-//!   `log10(active vars) > rounds + 4` — worker-class instances (93k vars ⇒
+//!   `log10(active vars) > rounds + 4` – worker-class instances (93k vars ⇒
 //!   log10 ≈ 4.97) factor from the first round on, exactly as in kissat.
 //! * **Incremental delivery**: introductions happen one chain at a time
 //!   inside the pass, with dividers/quotients connected to the BIG and the
 //!   occurrence index immediately (kissat connects them in dense mode), so
-//!   later chains in the same pass match the new structure — the fixpoint
+//!   later chains in the same pass match the new structure – the fixpoint
 //!   the measured-negative "mega-round" delivery lacked.
 //!
 //! # Divergences from `factor.c` (recorded)
@@ -99,14 +99,14 @@
 //! * Eager O(1) watch-list removal (`eagerly_remove_watch`) is replaced by
 //!   tombstone retirement (`ClauseDatabase::remove`, O(1) probe via the
 //!   pass's `dead` bitset) plus **periodic BIG compaction**
-//!   ([`Solver::factor_maybe_compact`]) — a batched analogue that keeps
+//!   ([`Solver::factor_maybe_compact`]) – a batched analogue that keeps
 //!   scans tight without per-deletion memmoves.  Between compactions the
-//!   candidate-heap scores are snapshots (raw list lengths) — they only
+//!   candidate-heap scores are snapshots (raw list lengths) – they only
 //!   steer pop order, never correctness (every match re-validates
 //!   liveness).
 //! * `update_factored` parity: the fresh hub `t` is never pushed into the
 //!   schedule (kissat's `update_factored` touches only the chain factors
-//!   and chain clauses) — pushing it lets the pass factor hub clauses
+//!   and chain clauses) – pushing it lets the pass factor hub clauses
 //!   against each other, building mega-clusters whose conflict clauses
 //!   span thousands of decision levels (measured avg_lbd ≈ 1100 on
 //!   worker_550 before the exclusion; kissat sits at ≈ 227
@@ -114,7 +114,7 @@
 //! * The next-pivot boundary check excludes code `== initial` as well as
 //!   `> initial` (kissat's `next > initial` admits exactly the first fresh
 //!   literal; our arrays are sized `initial`, so the boundary code is
-//!   excluded — a one-literal divergence per pass).
+//!   excluded – a one-literal divergence per pass).
 //! * kissat's per-watch `factor_ticks` are mirrored as `1 + len/8` per
 //!   scanned list plus 1 per clause visit/add/delete.
 //! * `TERMINATED(factor_terminated_1)` (external termination) is not ported;
@@ -220,7 +220,7 @@ fn factor_sched_mode() -> FactorSched {
             Ok("back") => FactorSched::Back,
             Ok("leave") => FactorSched::Leave,
             // Default `front` (decide hubs first): the MEASURED best arm
-            // for our search — worker_550 complete-pass conflicts
+            // for our search – worker_550 complete-pass conflicts
             // front 10-24k / leave 31k / back 473k (back, kissat's actual
             // source semantics, is catastrophic under our VMTF/phase
             // dynamics; kissat's own search is tuned around it).  The
@@ -251,7 +251,7 @@ fn chain_trace_enabled(applies: usize) -> bool {
 
 /// One chain link's clause: binary `(factor ∨ q)` or large `(factor ∨ A)`.
 ///
-/// `cid` always names the clause that contains **this link's** factor — the
+/// `cid` always names the clause that contains **this link's** factor – the
 /// original clause for link 0, the match witness for deeper links (kissat
 /// stores the raw watch and re-derives the pair at delete time; we keep the
 /// id, which `ClauseDatabase::remove` retires directly).
@@ -285,12 +285,12 @@ struct OccIndex {
     /// Clause ids, ascending within each span.
     flat: Vec<ClauseId>,
     /// Mid-pass additions (kissat connects added quotients immediately;
-    /// keys beyond `initial` are skipped — they can never be pivots).
+    /// keys beyond `initial` are skipped – they can never be pivots).
     extra: FxHashMap<u32, Vec<ClauseId>>,
 }
 
 impl OccIndex {
-    /// Primary span length of `code` (0 beyond the table — mid-pass fresh
+    /// Primary span length of `code` (0 beyond the table – mid-pass fresh
     /// literals have no primary span).
     #[inline]
     fn len(&self, code: u32) -> usize {
@@ -345,7 +345,7 @@ struct FactorState {
     quotients: Vec<Quotient>,
     /// Per-literal-code marks.  Sized `initial` at pass start and grown with
     /// the literal space (mid-pass-added chain clauses contain fresh
-    /// literals and are scanned in later iterations — the pass's own
+    /// literals and are scanned in later iterations – the pass's own
     /// fixpoint delivery; kissat's solver-wide `marks` array grows with new
     /// variables the same way).
     marks: Vec<u8>,
@@ -385,7 +385,7 @@ struct FactorState {
     /// Introductions this pass.
     introduced: usize,
     /// Scan scratch: BIG partner snapshots and occurrence snapshots
-    /// (reused across scans — per-scan allocation churn dominated pass
+    /// (reused across scans – per-scan allocation churn dominated pass
     /// wall on worker-class instances).
     scratch_partners: Vec<(Lit, ClauseId)>,
     scratch_occs: Vec<ClauseId>,
@@ -414,7 +414,7 @@ impl FactorState {
         self.ticks >= self.limit
     }
 
-    /// `1 + len/8` — kissat's per-watched-list cache-line estimate.
+    /// `1 + len/8` – kissat's per-watched-list cache-line estimate.
     #[inline]
     fn tick_list(&mut self, len: usize) -> bool {
         self.ticks += 1 + (len as u64) / 8;
@@ -546,12 +546,12 @@ impl Solver {
             sum_n: 0,
         };
         // Occurrence index over candidate large clauses (dense-mode
-        // `connect_clauses_to_factor`) — built once above the trace block
+        // `connect_clauses_to_factor`) – built once above the trace block
         // so the entry diagnostics can share it.
         let mut occ = occ_tmp;
 
         // `schedule_factorization`: every dirty active literal with more
-        // than one occurrence enters the heap (score = raw watch size —
+        // than one occurrence enters the heap (score = raw watch size –
         // kissat `update_candidate`).
         for code in 0..initial {
             let cu = code as usize;
@@ -570,7 +570,7 @@ impl Solver {
         // `run_factorization` main loop.  The heap is lazy but pops are
         // EXACT-max: a popped entry whose score no longer matches the
         // literal's current raw degree is discarded (and re-pushed at the
-        // current degree when still > 1) — kissat's `update_candidate`
+        // current degree when still > 1) – kissat's `update_candidate`
         // re-scores the heap eagerly after every apply; without this the
         // pass chains stale-ranked pivots whose neighborhoods were already
         // consumed (measured: 3,130 applies vs kissat's 51,466 on
@@ -585,7 +585,7 @@ impl Solver {
                 continue;
             }
             let _ = score; // scores are snapshots; pops are dirty-gated
-            // (Exact-pop validation — recompute-and-repush on mismatch —
+            // (Exact-pop validation – recompute-and-repush on mismatch –
             // measured a path-ological 8.9M-entry re-validation storm on
             // worker_550: every apply bumps ~350 pending entries and each
             // validation is O(degree).  kissat's eager heap updates cost
@@ -741,7 +741,7 @@ impl Solver {
 
     /// Raw occurrence count of `code`: BIG adjacency (binaries containing
     /// the literal = edges from its negation) + large occurrence index
-    /// (primary span + mid-pass overflow).  Snapshot semantics — tombstoned
+    /// (primary span + mid-pass overflow).  Snapshot semantics – tombstoned
     /// entries still count between compactions (divergence noted in the
     /// module doc; steering only).
     fn factor_raw_degree(&self, occ: &OccIndex, code: u32) -> u64 {
@@ -750,7 +750,7 @@ impl Solver {
         big + occ.len(code) as u64 + occ.extra_len(code) as u64
     }
 
-    /// Liveness check for a binary BIG edge via the tombstone bitset —
+    /// Liveness check for a binary BIG edge via the tombstone bitset –
     /// O(1), no arena deref (tombstone retirements inside this pass are
     /// marked here; the BIG is compacted periodically, see
     /// [`Solver::factor_maybe_compact`]).  Ids beyond the pass's start
@@ -767,7 +767,7 @@ impl Solver {
     /// Periodic BIG compaction (our analogue of kissat's eager O(1) watch
     /// removal): once tombstones accumulate, drop dead edges from the
     /// primary spans and overflow lists in one sweep so later scans walk
-    /// only live entries.  Safe between rounds — no propagation runs on a
+    /// only live entries.  Safe between rounds – no propagation runs on a
     /// tombstoned BIG (the caller rebuilds before re-propagating), and the
     /// per-code edge order is preserved.
     fn factor_maybe_compact(&mut self, state: &mut FactorState) {
@@ -796,7 +796,7 @@ impl Solver {
     /// `≥ 2`, after `FACTOR_CAND_ROUNDS` fixed-point reduction rounds.
     fn build_factor_occurrence_index(&self) -> OccIndex {
         let num_lits = 2 * self.num_vars;
-        // Binary occurrence per literal: BIG adjacency length (raw — no
+        // Binary occurrence per literal: BIG adjacency length (raw – no
         // retirements have happened inside this pass yet, so raw = live
         // here).
         let mut bincount = vec![0u32; num_lits];
@@ -806,7 +806,7 @@ impl Solver {
         }
         // Candidate snapshot + per-literal large counts, iterated to the
         // fixed point (kissat `factorcandrounds`; the initial iteration
-        // filters on binary counts only — a large clause participates only
+        // filters on binary counts only – a large clause participates only
         // in binary-rich neighborhoods by design).
         let mut largecount = vec![0u32; num_lits];
         let mut candidates: Vec<ClauseId> = Vec::new();
@@ -955,7 +955,7 @@ impl Solver {
             match entry.q {
                 Some(q) => {
                     // Binary tail clause `(x_k ∨ q)`: candidates are `q`'s
-                    // binary partners — BIG edges from `¬q` are exactly the
+                    // binary partners – BIG edges from `¬q` are exactly the
                     // live binaries `(q ∨ next)` (kissat scans `q`'s binary
                     // watches).
                     let partners = {
@@ -1277,7 +1277,7 @@ impl Solver {
 
     /// Apply the chain cut at `idx` (kissat `apply_factoring`).  Skips
     /// (without introducing) when any chain clause is a live propagation
-    /// reason — our mid-search hygiene invariant (kissat's dense-mode
+    /// reason – our mid-search hygiene invariant (kissat's dense-mode
     /// deletion needs no such check).
     fn factor_apply(&mut self, state: &mut FactorState, occ: &mut OccIndex, idx: usize) {
         for q in &state.quotients[..=idx] {
@@ -1348,7 +1348,7 @@ impl Solver {
             }
         }
         // Delete every chain clause (kissat `delete_unfactored`; our
-        // retirement is the tombstone + periodic compaction — the caller
+        // retirement is the tombstone + periodic compaction – the caller
         // rebuilds BIG/watches, and reads inside this pass validate
         // liveness).
         let mut touched: SmallVec<[Lit; 32]> = SmallVec::new();
@@ -1373,11 +1373,11 @@ impl Solver {
                 self.stats.factor_clauses_rewritten += 1;
             }
         }
-        // `update_factored`: re-arm the schedule for the chain literals —
+        // `update_factored`: re-arm the schedule for the chain literals –
         // each factor in BOTH polarities plus the deleted clauses'
         // literals, exactly kissat's set.  The fresh hub `t` is
         // deliberately NOT pushed (kissat never pushes it either): hubs
-        // must not be factored against each other inside the pass —
+        // must not be factored against each other inside the pass –
         // hub-on-hub chains build mega-clusters whose conflict clauses
         // span thousands of levels (measured avg_lbd 1103 on worker_550
         // before this exclusion; the handover's calibration shows kissat
@@ -1440,7 +1440,7 @@ impl Solver {
 
     /// kissat `adjust_scores_and_phases_of_fresh_variables`.  VSIDS: our
     /// `new_var` inserts at activity 0 (kissat zeroes its ≈1 activation
-    /// score) — nothing to do.  VMTF: fresh variables move to the oldest
+    /// score) – nothing to do.  VMTF: fresh variables move to the oldest
     /// end and the list is restamped (`NIXIE_FACTOR_SCHED` arms).
     fn factor_adjust_fresh(&mut self, state: &mut FactorState) {
         if state.fresh.is_empty() {

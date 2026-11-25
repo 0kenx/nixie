@@ -34,7 +34,7 @@ The latest committed worker-memory study reports this paired standing table:
 
 | Solver | Solved / 54 at a 60-second cap | Nixie/reference wall-time ratio on both-solved files |
 |---|---:|---:|
-| Nixie | 50 | — |
+| Nixie | 50 | – |
 | CaDiCaL 3.0.1 | 51 | 1.239x |
 | Kissat 4.0.4 | 50 | 1.411x |
 

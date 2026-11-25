@@ -15,8 +15,8 @@
 //! search actually needs.
 //!
 //! Under a binder there is no such root.  `array_axioms::ground_children`
-//! stops at `Forall`/`Exists`/`Let`/`Match` — a `select` mentioning a bound
-//! variable is an instance of nothing — so the lazy axiom never fires, and the
+//! stops at `Forall`/`Exists`/`Let`/`Match` – a `select` mentioning a bound
+//! variable is an instance of nothing – so the lazy axiom never fires, and the
 //! only thing that can refute the assertion is an MBQI instantiation at a
 //! value that falsifies it.  MBQI picks its instances from the candidate
 //! model, and in the candidate model the whole read is one opaque value of the
@@ -44,7 +44,7 @@
 //! # Why this is an equivalence, not an approximation
 //!
 //! The rewrite is the array axiom itself, so it holds in every model at every
-//! polarity, with no side condition — exactly like the case split
+//! polarity, with no side condition – exactly like the case split
 //! `instantiate_array_axioms` emits for the ground term.  Declining to apply
 //! it therefore costs completeness and never soundness, which is what every
 //! guard below does when it is unsure.
@@ -61,7 +61,7 @@
 //!
 //! * A quantifier is a candidate only when, **at each of its own
 //!   occurrences**, the binders it would be spliced across bind no name that
-//!   occurs free in it — which is what makes
+//!   occurs free in it – which is what makes
 //!   [`TermManager::substitute`](nixie_core::ast::TermManager::substitute)
 //!   incapable of alpha-renaming anything.  The chain checked runs from the
 //!   occurrence outward and *stops at the nearest enclosing candidate
@@ -71,7 +71,7 @@
 //!   which a script could *evade*: adding the valid, contentless conjunct
 //!   `(forall ((a (_ BitVec 7))) (= a a))` beside a real quantifier whose
 //!   only free variable is the array `a` put the name `a` in the bound set
-//!   and declined the real quantifier — a wrong `sat` where the same two
+//!   and declined the real quantifier – a wrong `sat` where the same two
 //!   quantifiers as two assertions are `unsat` (`#P2b-55` (a)).
 //! * Nested quantifiers are rewritten **innermost-first**, and the enclosing
 //!   binder is rebuilt from its rewritten body rather than spliced across:
@@ -109,7 +109,7 @@ use nixie_core::interner::Spur;
 ///
 /// A chain of `n` stores expands to `n` nested `ite`s, so the cost is linear
 /// and the cap only matters for adversarial input.  Past it the remaining base
-/// keeps its `select`, which is still the same term — declining costs
+/// keeps its `select`, which is still the same term – declining costs
 /// completeness only.
 const MAX_STORE_PEEL_DEPTH: usize = 16;
 
@@ -129,7 +129,7 @@ const MAX_CANDIDATE_QUANTIFIERS: usize = 64;
 /// `None` when nothing qualified.
 ///
 /// The result is **equivalent** to `term`, and the caller asserts it *beside*
-/// `term` rather than in place of it — see
+/// `term` rather than in place of it – see
 /// [`Solver::assert_quantifier_obligations`](crate::solver::Solver) for the
 /// measurement that forced that choice.
 pub(crate) fn expand_reads_over_writes_under_binders(
@@ -205,7 +205,7 @@ pub(crate) fn expand_reads_over_writes_under_binders(
 ///
 /// The rewritten quantifier has exactly the original's free variables, so a
 /// splice that cannot capture the original cannot capture the replacement
-/// either — which is the property the whole filter exists to establish.
+/// either – which is the property the whole filter exists to establish.
 fn rewritable_quantifiers(term: TermId, manager: &TermManager) -> Vec<TermId> {
     let occurrences = quantifier_occurrences(term, manager);
     if occurrences.is_empty() || occurrences.len() > MAX_CANDIDATE_QUANTIFIERS {

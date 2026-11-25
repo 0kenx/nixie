@@ -48,7 +48,7 @@ impl LiaSolver {
     ///
     /// The loop stops early when no cut can be derived (the LP point is
     /// integral, or no sound cut exists for the selected variable) and when the
-    /// simplex exhausts its pivot budget — in the latter case the cuts already
+    /// simplex exhausts its pivot budget – in the latter case the cuts already
     /// asserted stay, which is sound because each is a valid inequality.
     ///
     /// Callers must invoke this only at the root, before any branch-and-bound
@@ -164,7 +164,7 @@ impl LiaSolver {
     /// Branch-and-bound itself remains cut-free by design.  A branch-local cut
     /// is derived from a tableau that already includes the branch bound, so it
     /// is valid only inside that branch and must be retracted with it; wiring
-    /// that scoping correctly is a recorded follow-up, not a gap in soundness —
+    /// that scoping correctly is a recorded follow-up, not a gap in soundness –
     /// branch-and-bound alone is a sound and (for bounded problems) complete
     /// integrality procedure.
     fn branch_and_bound(&mut self, depth: usize) -> Result<bool> {
@@ -249,8 +249,8 @@ impl LiaSolver {
 
     /// Scope-balanced integer feasibility check.
     ///
-    /// Runs the same pipeline as [`LiaSolver::check`] — root cuts, probing,
-    /// feasibility pump, branch-and-bound — but leaves the simplex at exactly
+    /// Runs the same pipeline as [`LiaSolver::check`] – root cuts, probing,
+    /// feasibility pump, branch-and-bound – but leaves the simplex at exactly
     /// the scope depth it was entered at.  [`LiaSolver::check`] deliberately
     /// does *not*: it retains the winning branch's `push` so that the integral
     /// assignment stays queryable through [`LiaSolver::value`].  That is
@@ -263,11 +263,11 @@ impl LiaSolver {
     /// pushed on the way out.
     ///
     /// Returns:
-    /// * `Ok(Some(model))` — integer-feasible; `model` maps every integer
+    /// * `Ok(Some(model))` – integer-feasible; `model` maps every integer
     ///   variable to its value at the satisfying leaf.
-    /// * `Ok(None)` — proven integer-infeasible (LP infeasible, refuted by a
+    /// * `Ok(None)` – proven integer-infeasible (LP infeasible, refuted by a
     ///   valid root cut, or every branch exhausted).
-    /// * `Err(_)` — a resource limit (simplex pivot budget or branch depth)
+    /// * `Err(_)` – a resource limit (simplex pivot budget or branch depth)
     ///   stopped the search before a verdict was reached.  A resource limit is
     ///   never reported as a verdict.
     ///
@@ -321,7 +321,7 @@ impl LiaSolver {
     ///
     /// Mirrors [`LiaSolver::branch_and_bound`], with two differences: the
     /// satisfying leaf's assignment is captured into a model before unwinding,
-    /// and **every** `push` is matched by a `pop` on every exit path — the
+    /// and **every** `push` is matched by a `pop` on every exit path – the
     /// winning branch, the infeasible branch, and both resource-limit paths.
     fn branch_and_bound_balanced(
         &mut self,

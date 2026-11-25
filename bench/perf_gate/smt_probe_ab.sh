@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Paired SMT probe corpus — the theory-path counterpart of
+# Paired SMT probe corpus – the theory-path counterpart of
 # `paired_instructions.sh` (which runs the CNF gate corpus, where no theory
 # code executes).
 #
 # Why: the perf gate and `paired_instructions.sh` are both pure CNF, so a
 # change on the CDCL(T)/theory path (arithmetic assertion, EUF, combination)
-# passes them while being unmeasured — and a uniform instruction-cost change
+# passes them while being unmeasured – and a uniform instruction-cost change
 # there is invisible to every existing gate (trap 23's shape, on the SMT
 # side). This harness measures it directly: deterministic instruction counts
 # (`perf stat -x, -e cpu_core/instructions/u`), both arms, same cell, run
@@ -20,14 +20,14 @@
 #   CORE=5 GATE_CAP=60 ... same invocation
 #
 # Baseline defaults to the pinned BASELINE sha's precompile binary (note: for
-# theory-path work pin a CURRENT baseline — the pinned one predates every
+# theory-path work pin a CURRENT baseline – the pinned one predates every
 # landing since it was cut, and its SMT trajectories differ).
 # Cells file: `<path relative to smt-lib/non-incremental><TAB><extra nixie
 # args>`; blank extra = plain verdict cell, `--conflict-limit N` = fixed-budget
 # cell (counters print on the budget path; they do NOT print on a time-cap
 # timeout, so never let a cell hit `-t`).
 #
-# Verdict or counter mismatch on any cell is a hard failure (exit 1) — for a
+# Verdict or counter mismatch on any cell is a hard failure (exit 1) – for a
 # semantics-inert change the pairing must be bit-identical; for a deliberate
 # heuristic landing pass EXPECT_TRAJECTORY_SHIFT=1 to downgrade it to a note
 # (the instruction ratio is then a comparison of two different searches).
@@ -102,7 +102,7 @@ awk '{ lr += log($2/$1); n++ }
              printf "geomean instruction ratio (cand/base): %.4f over %d cells\n", exp(lr/n), n;
            else print "no valid pairs" }' "$tmp/pairs"
 [ "$fail" -ne 0 ] && {
-    echo "PAIRING FAILURE: verdicts/counters are not identical — the instruction comparison is void." >&2
+    echo "PAIRING FAILURE: verdicts/counters are not identical – the instruction comparison is void." >&2
     exit 1
 }
 exit 0

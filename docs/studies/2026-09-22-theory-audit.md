@@ -51,7 +51,7 @@ suite was run. The array rollback panic is demonstrated only by Rust.
 
 ## Confirmed findings
 
-### F1 — P1: Polite combination promotes a candidate arrangement to a theorem
+### F1 – P1: Polite combination promotes a candidate arrangement to a theorem
 
 Location: `nixie-theories/src/combination.rs:356–377`.
 
@@ -68,7 +68,7 @@ additional indexing hazard at lines 365/368: `TermId::raw()` is used as an EUF
 node ID. The reproducer deliberately uses IDs 0 and 1 matching their interned
 node IDs, so the wrong answer is independent of that hazard.
 
-### F2 — P1: Model-based combination ignores arrangement disequalities
+### F2 – P1: Model-based combination ignores arrangement disequalities
 
 Location: `nixie-theories/src/combination.rs:750–777`.
 
@@ -82,7 +82,7 @@ Check the complete arrangement, including disequalities and any required case
 splits, before returning `Sat`. Until implemented, unresolved disequalities
 must prevent a combined satisfiable verdict.
 
-### F3 — P1: Cross-format FP conversion constrains only special cases
+### F3 – P1: Cross-format FP conversion constrains only special cases
 
 Location: `nixie-theories/src/fp/solver/mod.rs:827–843`.
 
@@ -96,7 +96,7 @@ Implement exponent/significand conversion and rounding, or mark this conversion
 unsupported so the final check cannot accept its unconstrained result. This
 example is exact widening and cannot be explained by a rounding-mode difference.
 
-### F4 — P1: Set relations are snapshots rather than persistent obligations
+### F4 – P1: Set relations are snapshots rather than persistent obligations
 
 Location: `nixie-theories/src/set/solver.rs:750–779`, `1104–1171`; related subset
 insertion at `666–689`.
@@ -113,7 +113,7 @@ Negated subset insertion has an empty semantic branch. Preserve each relation,
 propagate it to a fixed point after later mutations, and validate all constraints
 before accepting a model. Determined cardinalities alone are not satisfiability.
 
-### F5 — P1: Set Theory assertions are accepted but never processed
+### F5 – P1: Set Theory assertions are accepted but never processed
 
 Location: `nixie-theories/src/set/solver.rs:1292–1308`.
 
@@ -126,7 +126,7 @@ Implement assertion decoding with access to term structure, or return an error
 or `Unknown` for unresolved assertions. This is independent of F4: no set
 relations or variables are needed to reproduce it.
 
-### F6 — P1: Integer UTVPI omits integer consistency and model construction
+### F6 – P1: Integer UTVPI omits integer consistency and model construction
 
 Location: `nixie-theories/src/utvpi/solver.rs:185–188`, `463–479`.
 
@@ -140,7 +140,7 @@ Implement the integer parity/SCC consistency step and an integral model procedur
 Rejecting fractional candidate models alone is insufficient to prove `Unsat`:
 other inputs can have an integral solution even when one candidate is fractional.
 
-### F7 — P1: UTVPI strict bounds are wrong over both reals and rational thresholds
+### F7 – P1: UTVPI strict bounds are wrong over both reals and rational thresholds
 
 Location: `nixie-theories/src/utvpi/graph.rs:129–135`.
 
@@ -153,7 +153,7 @@ left-hand sides normalize strict rational thresholds with `ceil(c)-1` and
 nonstrict thresholds with `floor(c)`, using exact arithmetic. Fixing F6's parity
 check would not fix either input transformation here.
 
-### F8 — P1: UTVPI drops contradictory constant constraints
+### F8 – P1: UTVPI drops contradictory constant constraints
 
 Location: `nixie-theories/src/utvpi/graph.rs:367–369`.
 
@@ -162,7 +162,7 @@ return `Ok`. The branch says to check the bound but performs no check and adds
 no graph edge. A negative constant must create a justified conflict; real strict
 `0<0` also needs consideration independently of graph reachability.
 
-### F9 — P1: Popping the first UTVPI constraint deletes synthetic source edges
+### F9 – P1: Popping the first UTVPI constraint deletes synthetic source edges
 
 Location: `nixie-theories/src/utvpi/graph.rs:232–247`, `451–457`.
 
@@ -177,7 +177,7 @@ consistency checking covers every component. Bellman–Ford's independent
 initialization masks the damaged source connectivity; changing engines alone
 would not repair the scope invariant.
 
-### F10 — P1: UTVPI exports model potentials as entailed bounds
+### F10 – P1: UTVPI exports model potentials as entailed bounds
 
 Location: `nixie-theories/src/utvpi/solver.rs:499–518`.
 
@@ -191,7 +191,7 @@ Compute bounds using the appropriate paths between complementary nodes, with
 correct scaling, or return `None` when no bound is entailed. Consumers must not
 use current model choices as theory propagations.
 
-### F11 — P1: Array negative assertions manufacture self-disequalities
+### F11 – P1: Array negative assertions manufacture self-disequalities
 
 Location: `nixie-theories/src/array/solver.rs:583–587`.
 
@@ -205,7 +205,7 @@ opaque assertions that cannot be interpreted. The public `assert_diseq(a,b,…)`
 primitive correctly detects a self-disequality; the adapter supplies the wrong
 operands, so changing the primitive would mask the defect rather than fix it.
 
-### F12 — P2: Array pop indexes nodes it has already truncated
+### F12 – P2: Array pop indexes nodes it has already truncated
 
 Location: `nixie-theories/src/array/solver.rs:619–630`.
 

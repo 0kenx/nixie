@@ -6,8 +6,8 @@
 //! the propagator (driven by `UserPropagatorManager`), and every emitted
 //! consequence or conflict is checked against **all concrete completions**
 //! of the graph, computed by an independent transitive-closure oracle. The
-//! oracle uses boolean-matrix closure — a different algorithm from the
-//! propagator's BFS — so agreement is genuine cross-validation, not a
+//! oracle uses boolean-matrix closure – a different algorithm from the
+//! propagator's BFS – so agreement is genuine cross-validation, not a
 //! tautology. Verdicts (Sat/Unsat/Unknown) are checked against an
 //! independent violation analysis.
 
@@ -767,7 +767,7 @@ fn zero_length_paths_do_not_count() {
 
 /// Focused regression for the empty-cut soundness defect caught by the
 /// exhaustive oracle during development: a *forward*-closure cut for the
-/// self-pair case produced `Consequence(¬reach(u,u), [])` — an
+/// self-pair case produced `Consequence(¬reach(u,u), [])` – an
 /// unconditional justification the solver would keep as a permanent unit
 /// clause, wrongly forbidding cycles in later branches (a false `unsat`
 /// whenever the search backtracks past the false edges and re-enables
@@ -852,7 +852,7 @@ struct Shadow {
     atoms: Vec<Option<bool>>,
 }
 
-/// Deterministic tiny RNG (xorshift64) for the generated campaign — no
+/// Deterministic tiny RNG (xorshift64) for the generated campaign – no
 /// external rand dependency, fully reproducible from the printed seed.
 struct Rng(u64);
 impl Rng {
@@ -877,7 +877,7 @@ impl Rng {
 /// final-checks), with every consequence validated against every concrete
 /// completion (or a seeded sample when too many are unfixed), exactly like
 /// the CP generated-oracle study. This exercises the incremental
-/// propagator's maintained state across long sequences — the post-backtrack
+/// propagator's maintained state across long sequences – the post-backtrack
 /// full re-read, repeated invalidation, and re-fixation paths the
 /// exhaustive small oracles cannot reach.
 #[test]
@@ -1280,10 +1280,10 @@ fn validate_generated_state(
 /// closure as the cut.
 ///
 /// The 1↔4 cycle keeps the shape that caught the design's first (wrong)
-/// version — a probe that exited at *any* closure member instead of at
+/// version – a probe that exited at *any* closure member instead of at
 /// the target: after e1 and e3 die, vertex 1 still reaches members
 /// {1,4} of the stale closure, but only through the cycle that never
-/// gets back to 2 — accepting that keeps a too-large closure and misses
+/// gets back to 2 – accepting that keeps a too-large closure and misses
 /// the determined ¬reach(0,2) (the shape the exhaustive oracle caught;
 /// the witness design rejects it structurally: e1/e3 are 1's witness
 /// edges, and the recomputed closure cannot sneak through 4).
@@ -1316,7 +1316,7 @@ fn closure_witness_preserves_and_drops_exactly() {
     let neg_r02 = tm.mk_not(r02);
 
     // Stage 1: only e1 dies. Vertex 1 keeps its parallel route e3 to 2, so
-    // the closure is preserved and 0 may still reach 2 — no propagation.
+    // the closure is preserved and 0 may still reach 2 – no propagation.
     manager.notify_fixed(e1, false_term);
     assert_eq!(
         manager.final_check(),
@@ -1329,7 +1329,7 @@ fn closure_witness_preserves_and_drops_exactly() {
     );
 
     // Stage 2: e3 dies too. Vertex 1's only remaining routes into the
-    // stale closure are the 1↔4 cycle, which never reaches 2 — the probe
+    // stale closure are the 1↔4 cycle, which never reaches 2 – the probe
     // must reject that (exit only at the target!) and the recomputed
     // closure {2} makes ¬reach(0,2) determined, cut = {¬e1, ¬e3}.
     manager.notify_fixed(e3, false_term);
@@ -1348,7 +1348,7 @@ fn closure_witness_preserves_and_drops_exactly() {
         assert!(cut.justification.contains(&want));
     }
 
-    // Stage 3: all edges fixed (e0, e4, e5 true) — still no 0→2 route; the
+    // Stage 3: all edges fixed (e0, e4, e5 true) – still no 0→2 route; the
     // all-fixed state stays consistent with ¬reach (no conflict), and
     // re-fixing after a push/pop cycle re-derives the same state.
     manager.push();
@@ -1397,7 +1397,7 @@ fn all_fixed_determined_reach_propagates() {
     let neg_r03 = tm.mk_not(r03);
 
     // 0→1 and 3→1 are true, but both exits toward 3 are false: 0 cannot
-    // reach 3 in any completion — and with all edges fixed the value is
+    // reach 3 in any completion – and with all edges fixed the value is
     // determined, so it must propagate.
     manager.notify_fixed(e0, true_term);
     manager.notify_fixed(e1, false_term);
@@ -1425,11 +1425,11 @@ fn all_fixed_determined_reach_propagates() {
 /// Every partial state of the three guards and the three atoms (reach(0,3),
 /// reach(0,0), acyclic) is replayed through the propagator; verdicts and
 /// emitted consequences are validated against **all 2³ guard completions**
-/// with an independent closure oracle — the same contract as the distinct
+/// with an independent closure oracle – the same contract as the distinct
 ///-atom cases above, so sharing cannot change what a consequence means.
 #[test]
 fn oracle_shared_guard_edges() {
-    /// (from, to, group) — one entry per *edge*; group indexes the atom.
+    /// (from, to, group) – one entry per *edge*; group indexes the atom.
     const EDGES: &[(u32, u32, usize)] = &[
         (0, 1, 0),
         (1, 2, 0),

@@ -8,7 +8,7 @@ fn bound_tripwire_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var("NIXIE_BOUND_TRIPWIRE").is_ok())
 }
 
-/// `NIXIE_S6_NDIR2=1` — the general narrow direction-2 derivation in
+/// `NIXIE_S6_NDIR2=1` – the general narrow direction-2 derivation in
 /// [`Simplex::propagate_bounds_in`] (read once per process like
 /// `bound_tripwire_enabled`; that pass runs per final-check fixpoint round).
 fn slice6_ndir2_enabled() -> bool {
@@ -16,7 +16,7 @@ fn slice6_ndir2_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var("NIXIE_S6_NDIR2").as_deref() == Ok("1"))
 }
 
-/// `NIXIE_S6_PINNED=0` — opts OUT of the pinned-basic direction-2
+/// `NIXIE_S6_PINNED=0` – opts OUT of the pinned-basic direction-2
 /// derivation (default on; read once per process).
 fn slice6_pinned_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -49,11 +49,11 @@ struct LinKey {
 
 /// Canonical identity of an EXACT (wide) linear form: terms sorted by
 /// VarId with zero coefficients dropped, plus the exact constant.  The
-/// content-addressing key for the wide store — the wide channel's
+/// content-addressing key for the wide store – the wide channel's
 /// counterpart of [`LinKey`]: without it every rebuild round's re-assert
 /// minted a FRESH wide row for identical content (measured ~150
 /// near-duplicates on one gap-survey member, each pivoted and classified
-/// by every convergence pass — item 91's zoo).
+/// by every convergence pass – item 91's zoo).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct BigLinKey {
     terms: Vec<(VarId, num_rational::BigRational)>,
@@ -222,7 +222,7 @@ fn gcd_i128(a: i128, b: i128) -> i128 {
     // Both operands inside `u64`: run the fast 64-bit kernel instead of
     // software 128-bit modulo (`__umodti3` dominated pivot cycles on
     // dense LIA rows before this delegation).  NOTE: the range check is
-    // u64, and the kernel takes u64 — an `as i64` here would TRUNCATE
+    // u64, and the kernel takes u64 – an `as i64` here would TRUNCATE
     // values in (i64::MAX, u64::MAX] (the wide-literal regressions caught
     // exactly that cast).
     if a <= u64::MAX as i128 && b <= u64::MAX as i128 {
@@ -261,7 +261,7 @@ fn gcd_i64(a: i64, b: i64) -> i64 {
 }
 
 /// The binary-gcd kernel (shift/subtract) with the power-of-two operand
-/// fast path: gcd(2^j, 2^k·m) = 2^min(j,k) for odd m — one shift, no loop.
+/// fast path: gcd(2^j, 2^k·m) = 2^min(j,k) for odd m – one shift, no loop.
 /// Measured on the CAV post-cut substitution mass: 37% of all calls carry
 /// an operand of exactly 1 and 58% a power of two; each was paying the
 /// full binary loop (tens of iterations) to rediscover this.
@@ -325,12 +325,12 @@ fn mod_inverse_i64(a: i64, m: i64) -> Option<i64> {
 /// Scale an exact row (terms + constant) back into `Rational64` width by a
 /// POSITIVE factor: normalize to integer coefficients (multiply by the
 /// denominators' LCM), then divide by a common denominator chosen so that
-/// every REDUCED fraction fits — a power of two sized from the maximum
+/// every REDUCED fraction fits – a power of two sized from the maximum
 /// magnitude, extended with SMALL ODD PRIME factors stripped from that
 /// maximum (an odd numerator beyond `i64::MAX` is not fixed by any power
 /// of two: the fraction is irreducible, so `3·i64::MAX` needs the factor
 /// 3). A magnitude with no small odd factor left (a `2^100`-scale prime)
-/// is unrepresentable at every scale — `None` (the honest fallback).
+/// is unrepresentable at every scale – `None` (the honest fallback).
 ///
 /// The result is the same linear row up to a POSITIVE scalar multiple:
 /// zero bounds are preserved (the constraint encoding's invariant), so
@@ -367,7 +367,7 @@ pub fn scale_exact_row<K: Copy>(
     let shift = bits.saturating_sub(62);
     let mut denom = num_bigint::BigInt::one() << shift;
     // Odd-factor relief: what must fit is the REDUCED numerator of
-    // `max_mag / denom` — for an ODD numerator a power-of-two denominator
+    // `max_mag / denom` – for an ODD numerator a power-of-two denominator
     // cancels nothing, so small odd primes are pulled into the
     // denominator until the reduced numerator fits.
     if !max_mag.is_zero() {
@@ -424,7 +424,7 @@ fn big_r64(r: &Rational64) -> num_rational::BigRational {
 }
 
 /// Narrow an exact `BigRational` back to `Rational64`; `None` when the
-/// final genuinely does not fit (the honest give-up — intermediates may
+/// final genuinely does not fit (the honest give-up – intermediates may
 /// overflow while finals fit, so only the *final* is refused).
 fn narrow_big_r64(r: &num_rational::BigRational) -> Option<Rational64> {
     Some(Rational64::new(
@@ -670,7 +670,7 @@ fn split_reasons(reasons: SmallVec<[u32; 4]>) -> Option<(u32, SmallVec<[u32; 4]>
     }
     Some((primary, aux))
 }
-/// An exact (`BigRational`) linear expression — the wide-row storage of
+/// An exact (`BigRational`) linear expression – the wide-row storage of
 /// [`Simplex::wide_rows`]. Same shape as [`LinExpr`]; never narrowed
 /// (that is the point: at least one coefficient or the constant does not
 /// fit `Rational64`).
@@ -683,7 +683,7 @@ pub struct BigLinExpr {
 }
 
 /// How the slack interned by [`Simplex::intern_row_reported`] relates to
-/// the linear form the caller requested — the datum every
+/// the linear form the caller requested – the datum every
 /// integrality-sensitive consumer of a row slack needs.
 ///
 /// Every constraint this encoding asserts on a row slack is a ZERO bound
@@ -691,21 +691,21 @@ pub struct BigLinExpr {
 /// preserves zero bounds, so both modes carry identical CONSTRAINT
 /// semantics. The difference is what the slack's VALUE means:
 ///
-/// * [`RowInternMode::Exact`] — the slack *is* the requested form (up to
+/// * [`RowInternMode::Exact`] – the slack *is* the requested form (up to
 ///   the integrality-preserving GCD canonicalization and the
 ///   function-preserving basic-variable substitution). An integer-valued
 ///   requested form makes the slack integer-valued, so Gomory cuts and
 ///   branch-and-bound may treat it as an integer variable.
-/// * [`RowInternMode::Rescaled`] — the requested form did not fit
+/// * [`RowInternMode::Rescaled`] – the requested form did not fit
 ///   `Rational64` in any orientation, and the slack is defined as
 ///   `form / λ` for a positive width factor `λ` ([the wide-LP rescale]
 ///   [`Simplex::scale_big_to_narrow`]). Dividing an integer-valued form
 ///   by `λ` does NOT stay integer-valued in general (`3·2^62 + 1` scaled
 ///   by `1/52` takes value `1/52`), so integrality transfers ONLY when
-///   the rescaled row is itself an integral form — the caller must check
+///   the rescaled row is itself an integral form – the caller must check
 ///   the actual row before integer-marking the slack. Treating such a
-///   slack as integer let a Gomory cut fabricate `52 | (1 - s_axiom)` —
-///   a constraint implied by nothing — and refute a division axiom alone
+///   slack as integer let a Gomory cut fabricate `52 | (1 - s_axiom)` –
+///   a constraint implied by nothing – and refute a division axiom alone
 ///   (a false `unsat` on a `sat` QF_LIA goal; the arithmetic arc's
 ///   item 54).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -863,7 +863,7 @@ impl LinExpr {
 
 /// Width budget for fraction-free row arithmetic ([`IntRow`]): every
 /// numerator and the shared denominator stays `≤ 2^62`.  The margin over
-/// `i64::MAX` (2^63) is deliberate — the pivot substitution forms products
+/// `i64::MAX` (2^63) is deliberate – the pivot substitution forms products
 /// `d_e·n_v + n_e·m_v` and `d_r·d_e` in `i128`, and two 2^62 operands keep
 /// every product ≤ 2^124 and every sum ≤ 2^125, comfortably inside `i128`
 /// with NO checked-multiplication bailout on the hot path.
@@ -874,7 +874,7 @@ const INT_ROW_BUDGET: u128 = 1 << 62;
 /// 2^62`.  This is the Bareiss-style representation the pivot substitution
 /// runs on: the per-term rational `x + f·y` (three-plus gcds per term) is
 /// replaced by integer multiply-subtract on the numerators plus ONE
-/// row-level gcd chain — the substitution mass of a pivot drops from
+/// row-level gcd chain – the substitution mass of a pivot drops from
 /// ~3.5 gcds/term to ~1 (the single reduction back to the canonical
 /// per-term `Rational64` row).
 ///
@@ -887,7 +887,7 @@ const INT_ROW_BUDGET: u128 = 1 << 62;
 /// numerator, contradicting joint-canonicity.
 ///
 /// In the integer tableau, an `IntRow` IS the tableau row's primary
-/// form ([`TableRow::Int`]) — the canonical `LinExpr` materializes from it
+/// form ([`TableRow::Int`]) – the canonical `LinExpr` materializes from it
 /// lazily ([`materialize_lin`]), so the two can never disagree.
 #[derive(Debug, Clone, Default, PartialEq)]
 struct IntRow {
@@ -900,7 +900,7 @@ struct IntRow {
 }
 
 impl IntRow {
-    /// The row's numerator of `var` (`None` when absent — absent terms are
+    /// The row's numerator of `var` (`None` when absent – absent terms are
     /// zero by convention and zero terms never exist in a canonical row).
     fn numerator_of(&self, var: VarId) -> Option<i128> {
         self.terms.iter().find(|(v, _)| *v == var).map(|(_, n)| *n)
@@ -912,29 +912,29 @@ impl IntRow {
     }
 }
 
-/// One tableau row in one of its two equivalent forms — the INTEGER
+/// One tableau row in one of its two equivalent forms – the INTEGER
 /// TABLEAU's storage (the integer-tableau design's Phase 1,
 /// `2026-09-21-integer-tableau-design.md`):
 ///
-/// * [`TableRow::Int`] — the fraction-free form a pivot's substitution
+/// * [`TableRow::Int`] – the fraction-free form a pivot's substitution
 ///   produced (integer numerators + shared denominator, within
 ///   [`INT_ROW_BUDGET`]).  The canonical rational row has NOT been
 ///   materialized: the per-term `checked_ratio_i128` write-back (one
-///   gcd per term — the measured dominant arithmetic cost on the churn
+///   gcd per term – the measured dominant arithmetic cost on the churn
 ///   probes) is deferred to the first consumer that actually reads
 ///   coefficients, through [`Simplex::row_lin`].
-/// * [`TableRow::Lin`] — the canonical rational row, materialized (or
-///   interned directly — the parse/intern path always produces this
+/// * [`TableRow::Lin`] – the canonical rational row, materialized (or
+///   interned directly – the parse/intern path always produces this
 ///   form).
 ///
 /// The two forms are VALUE-IDENTICAL (`substitute_row_ff`'s equivalence
 /// grid pins the correspondence: the `IntRow` is the canonical row with
 /// a common denominator, the canonical row is the `IntRow` reduced
-/// per-term).  Materialization is a pure function of the content — laziness
+/// per-term).  Materialization is a pure function of the content – laziness
 /// changes WHEN a row is canonical, never WHAT it is, so every consumer
 /// sees exactly the historical rows and the search trajectory is
 /// bit-identical.  Var-SET readers (the column-diff maintenance, the
-/// debug column verifier) may read either form's term lists directly —
+/// debug column verifier) may read either form's term lists directly –
 /// the two forms name exactly the same variables (an integer numerator
 /// is zero exactly when the canonical coefficient is).
 #[derive(Debug, Clone)]
@@ -943,7 +943,7 @@ enum TableRow {
     /// unbuilt (the next pivot's substitution attempt builds it once).
     Lin(Arc<LinExpr>),
     /// Canonical rational row whose content has NO fraction-free form
-    /// within [`INT_ROW_BUDGET`] (the negative marker — the build was
+    /// within [`INT_ROW_BUDGET`] (the negative marker – the build was
     /// attempted at commit and declined).  Prevents a per-pivot rebuild
     /// on the over-budget tail.
     LinNoInt(Arc<LinExpr>),
@@ -953,14 +953,14 @@ enum TableRow {
 
 impl TableRow {
     /// The row's canonical form (materializing `Int` on the fly, no
-    /// memoization — for callers that already hold `&self`).
+    /// memoization – for callers that already hold `&self`).
     fn lin_owned(&self) -> LinExpr {
         match self {
             TableRow::Lin(row) | TableRow::LinNoInt(row) => row.as_ref().clone(),
             TableRow::Int(int_row) => materialize_lin(int_row),
         }
     }
-    /// The row's term VARIABLES (no coefficients) — form-independent
+    /// The row's term VARIABLES (no coefficients) – form-independent
     /// (zero numerators never exist in any form's term list).
     fn term_vars(&self) -> SmallVec<[VarId; 4]> {
         match self {
@@ -977,7 +977,7 @@ impl TableRow {
             TableRow::Int(row) => row.terms.iter().any(|(v, _)| pred(*v)),
         }
     }
-    /// Number of terms — exactly `term_vars().len()` without building it.
+    /// Number of terms – exactly `term_vars().len()` without building it.
     fn terms_len(&self) -> usize {
         match self {
             TableRow::Lin(row) | TableRow::LinNoInt(row) => row.terms.len(),
@@ -989,7 +989,7 @@ impl TableRow {
 /// Fraction-free encoding of a canonical row: common denominator =
 /// `lcm(denominators)` (chain of gcds), numerators scaled accordingly.
 /// `None` when the result would leave the [`INT_ROW_BUDGET`] width (the
-/// honest give-up — the caller keeps the per-term rational path for that
+/// honest give-up – the caller keeps the per-term rational path for that
 /// row; over-budget rows are the genuine determinant-ratio tail).
 fn int_row_from_lin(row: &LinExpr) -> Option<IntRow> {
     let mut d: i128 = 1;
@@ -1020,7 +1020,7 @@ fn int_row_from_lin(row: &LinExpr) -> Option<IntRow> {
 /// `checked_ratio_i128` over the shared denominator (one gcd per term),
 /// zero numerators dropped (they never exist in a well-formed `IntRow`,
 /// but the writer is defensive).  This is byte-for-byte the write-back
-/// `substitute_row_ff` performs — factored out so the lazy path produces
+/// `substitute_row_ff` performs – factored out so the lazy path produces
 /// exactly what the eager path did (the equivalence grid pins the
 /// correspondence).
 fn materialize_lin(row: &IntRow) -> LinExpr {
@@ -1028,7 +1028,7 @@ fn materialize_lin(row: &IntRow) -> LinExpr {
     // denominator of a tableau-admitted `IntRow` are <= 2^62
     // (`INT_ROW_BUDGET`, checked at every construction site), so after
     // dividing out the gcd both parts still fit `i64` with a bit to
-    // spare — the casts below cannot wrap.  (The debug_asserts pin the
+    // spare – the casts below cannot wrap.  (The debug_asserts pin the
     // invariant; a violation is a constructor bug, never a runtime
     // guess.)
     let d = row.denom as i128;
@@ -1060,7 +1060,7 @@ fn materialize_lin(row: &IntRow) -> LinExpr {
 
 /// The entering row's exact (`BigRational`) form, from whichever
 /// entering form exists (canonical, born-integer, or the wide form
-/// itself) — the lazy `entering_big_cell`'s builder (the cold-tail
+/// itself) – the lazy `entering_big_cell`'s builder (the cold-tail
 /// consumers only).
 fn entering_big_from(lin: &Option<LinExpr>, born: &Option<IntRow>) -> BigLinExpr {
     if let Some(w) = born {
@@ -1099,15 +1099,15 @@ fn entering_big_from(lin: &Option<LinExpr>, born: &Option<IntRow>) -> BigLinExpr
 /// The entering variable's solved row, BORN in its integer form from an
 /// integer-form leaving row (Phase 3 of the integer tableau): solving
 /// `b = (Σ nᵢvᵢ + n_c)/D` for the entering variable (`n_e` its numerator)
-/// gives `e = (D·b − Σ_{i≠e} nᵢvᵢ − n_c)/n_e` — re-denomination only
+/// gives `e = (D·b − Σ_{i≠e} nᵢvᵢ − n_c)/n_e` – re-denomination only
 /// sign-flips budget-bounded numerators, so the result is EXACT AND
 /// NARROW BY CONSTRUCTION (no intermediate can overflow; the historical
 /// `build_pivot_expr` exact/wide retries are unreachable for an `Int`
 /// leaving row) and admitted by construction (`|N| ≤ 2^62`,
 /// `denominator = |n_e| ≤ 2^62`).
 ///
-/// Term order matches `build_pivot_expr` exactly — `basic_var` first,
-/// then the leaving row's terms in order — so downstream iteration,
+/// Term order matches `build_pivot_expr` exactly – `basic_var` first,
+/// then the leaving row's terms in order – so downstream iteration,
 /// column maintenance and content addressing see the same shape.
 fn born_entering_row(leaving: &IntRow, n_e: i128, basic_var: VarId, nonbasic_var: VarId) -> IntRow {
     debug_assert!(n_e != 0, "entering coefficient is nonzero");
@@ -1139,7 +1139,7 @@ fn lcm_i128(a: i128, b: i128) -> Option<i128> {
 }
 
 /// The fraction-free pivot substitution, semantically identical to
-/// [`Simplex::substitute_row_fast`] (and bit-identical in output — same
+/// [`Simplex::substitute_row_fast`] (and bit-identical in output – same
 /// canonical coefficients, same term ORDER, same zero-term dropping),
 /// computed on [`IntRow`] encodings:
 ///
@@ -1150,7 +1150,7 @@ fn lcm_i128(a: i128, b: i128) -> Option<i128> {
 /// result numerators `N_v = D_e·n_v + n_e·m_v` over the shared denominator
 /// `D_r·D_e`, then one joint gcd-reduction pass.  Every operand is within
 /// [`INT_ROW_BUDGET`], so the `i128` products cannot overflow and the only
-/// `None` is a final that does not fit a canonical `Rational64` — exactly
+/// `None` is a final that does not fit a canonical `Rational64` – exactly
 /// the case where `substitute_row_fast` also declines, so the caller's
 /// exact-`BigRational` retry produces the same row this function could not.
 ///
@@ -1166,7 +1166,7 @@ fn substitute_row_ff(
     let d_r = row.denom as i128;
     let d_e = entering.denom as i128;
     // Budget invariants (structural: entries only come from budget-checked
-    // builders) — every product below is ≤ 2^124 and every sum ≤ 2^125,
+    // builders) – every product below is ≤ 2^124 and every sum ≤ 2^125,
     // inside `i128` without checked arithmetic on the hot path.
     debug_assert!(n_e != 0, "entering coefficient is nonzero");
     debug_assert!(
@@ -1185,7 +1185,7 @@ fn substitute_row_ff(
     );
     // Union merge in the exact order `substitute_row_fast` produces:
     // row terms first (minus the entering term), then entering terms
-    // absent from the row — cancellation to zero drops a row term in
+    // absent from the row – cancellation to zero drops a row term in
     // place; an appended term is never zero (`n_e ≠ 0`, `m_v ≠ 0`).
     let mut nums: SmallVec<[(VarId, i128); 4]> = SmallVec::with_capacity(row.terms.len());
     for (v, n_v) in &row.terms {
@@ -1201,7 +1201,7 @@ fn substitute_row_ff(
     for (v, m_v) in &entering.terms {
         if !row.contains(*v) {
             // The entering row references the leaving basic (its first
-            // term) — always an append, like every absent variable.
+            // term) – always an append, like every absent variable.
             let n = n_e * m_v;
             debug_assert!(n != 0, "appended terms carry nonzero entering numerators");
             if n != 0 {
@@ -1218,11 +1218,11 @@ fn substitute_row_ff(
     // down to the row's minimal common denominator.
     //
     // DIVISION-FIRST STEP (the walk's measured shape): the accumulated `g`
-    // stabilizes early and then divides every remaining numerator — on the
+    // stabilizes early and then divides every remaining numerator – on the
     // churn probe 93 % of chains never hit the early exit, and in the
     // `== g0` Bareiss class (31 % of full walks) NO numerator ever reduces
     // `g`.  So the per-step operation is Euclid's identity: for operands
-    // inside `u64`, `gcd(g, n) = n % g == 0 ? g : gcd(g, n % g)` — the
+    // inside `u64`, `gcd(g, n) = n % g == 0 ? g : gcd(g, n % g)` – the
     // dominant "already divides" case costs one branch-free hardware
     // division (a mask when `g` is a power of two) instead of a binary-gcd
     // call, and the residue path runs the kernel on a pair `< g`.  The
@@ -1256,7 +1256,7 @@ fn substitute_row_ff(
     // No canonical write-back: the row COMMITS in its integer form and
     // `materialize_lin` produces the canonical row lazily on the first
     // coefficient read (the integer-tableau bridge).  Admission is the
-    // same budget the write-back's `checked_ratio_i128` calls enforced —
+    // same budget the write-back's `checked_ratio_i128` calls enforced –
     // and a budget-admitted row ALWAYS narrows (|N|, D <= 2^62 implies
     // the reduced parts fit i64), so the write-back could never decline
     // where admission passed; dropping it changes nothing about which
@@ -1401,7 +1401,7 @@ pub(crate) fn canonicalize_lin_form(
 /// Which bound the LEAVING variable of a pivot is snapped to when it exits
 /// the basis.  The snap target is part of each driver's pivot SEMANTICS, not
 /// a free choice: the standard feasibility repair drives the violated basic
-/// back to the bound it violated (Dutertre–de Moura CAV'06) — snapping
+/// back to the bound it violated (Dutertre–de Moura CAV'06) – snapping
 /// anywhere else overshoots the repair by the whole bound interval, and the
 /// overshoot lands on the entering variable through the row equation,
 /// manufacturing a fresh violation of the same size.  On bound sets with
@@ -1483,7 +1483,7 @@ pub struct PropagatedBound {
     pub var: VarId,
     /// Whether it's a lower bound (true) or upper bound (false)
     pub is_lower: bool,
-    /// The bound value (exact when the derivation's value leaves width —
+    /// The bound value (exact when the derivation's value leaves width –
     /// see [`BoundValue`])
     pub value: BoundValue,
     /// The reasons (assertion IDs) that imply this bound
@@ -1532,14 +1532,14 @@ pub struct Simplex {
     /// undo restore) to `var`, so [`Self::propagate_bounds_in`] can skip
     /// re-deriving rows none of whose variables moved.  A derivation is a
     /// pure function of its row's contents and the bounds of the variables
-    /// it references (basic included) — unchanged versions guarantee the
+    /// it references (basic included) – unchanged versions guarantee the
     /// same derivations, and the last derivation at a version already
     /// stored everything it could tighten.
     bound_ver: Vec<u64>,
     /// Touched-row set for the row-driven atom propagation (z3
     /// `touched_rows`): basics whose rows reference a variable whose bound
     /// changed since the propagation last drained the set. Tracked only
-    /// while `aprop_track` (the `NIXIE_APROP_ROW` study arm) is on — an
+    /// while `aprop_track` (the `NIXIE_APROP_ROW` study arm) is on – an
     /// unarmed `note_bound_change` pays one `bool` test.
     aprop_track: bool,
     aprop_dirty_rows: Vec<VarId>,
@@ -1554,7 +1554,7 @@ pub struct Simplex {
     /// incremental skip must not suppress a crossing that would re-fire
     /// at unchanged inputs, so its consumption re-arms every row.
     cross_ver: u64,
-    /// Last derivation stamp per basic variable (narrow or wide store —
+    /// Last derivation stamp per basic variable (narrow or wide store –
     /// the key spaces are disjoint): see [`Self::row_stamp`].
     derive_stamp: FxHashMap<(VarId, u8), (u64, u64, u64, usize)>,
     /// Number of original variables
@@ -1569,13 +1569,13 @@ pub struct Simplex {
     upper: Vec<Option<Bound>>,
     /// Tableau rows: basic variable -> linear combination of non-basic.
     /// INTEGER-TABLEAU storage (Phase 1): a row lives in its fraction-free
-    /// form ([`TableRow::Int`]) when a pivot just produced it — the
+    /// form ([`TableRow::Int`]) when a pivot just produced it – the
     /// canonical rational row materializes on the first coefficient read
     /// ([`Self::row_lin`]); intern-time rows enter already canonical
     /// ([`TableRow::Lin`]).  The two forms are value-identical (see
     /// [`TableRow`]); consumers see exactly the historical rows.
     tableau: FxHashMap<VarId, TableRow>,
-    /// Rows whose exact substituted content does not fit `Rational64` —
+    /// Rows whose exact substituted content does not fit `Rational64` –
     /// a coefficient or the constant leaves `i64` width and stays there.
     /// They keep their EXACT meaning (the slack equals the exact linear
     /// form) but are excluded from the narrow machinery: the tableau never
@@ -1589,7 +1589,7 @@ pub struct Simplex {
     /// wrapped verdicts, decided wherever representability allows.
     wide_rows: FxHashMap<VarId, BigLinExpr>,
     /// Exact POINT values of variables (basic or non-basic) whose current
-    /// assignment does not fit `Rational64` width — the point-value
+    /// assignment does not fit `Rational64` width – the point-value
     /// counterpart of `wide_rows`: a non-basic snapped to a wide bound
     /// (branch bounds at `2^63`), or a pivot snap whose target is wide.
     /// `assignment[i]` then holds a stale representative while THIS map
@@ -1602,7 +1602,7 @@ pub struct Simplex {
     wide_points: FxHashMap<VarId, BigDeltaRational>,
     /// A bounded wide row's value was unrepresentable (or stale-ref'd) at
     /// the last assignment pass: mid-search this is TRANSIENT (the search
-    /// may move to a point where it narrows — often the value is exactly 0
+    /// may move to a point where it narrows – often the value is exactly 0
     /// once the constraint holds), so it must not break the check; the
     /// convergence points (`check` after `make_feasible`, and
     /// `state_feasible`'s model-snapshot gate) re-classify the row exactly
@@ -1621,7 +1621,7 @@ pub struct Simplex {
     /// Rows here are content-replaced `Arc` values with no in-place term
     /// cells, so the back-pointer lives in this side map instead of inside
     /// the row; a removal reads the slot, `swap_remove`s that position and
-    /// fixes up exactly ONE moved entry's slot — O(1) instead of the linear
+    /// fixes up exactly ONE moved entry's slot – O(1) instead of the linear
     /// `position` scan that dominated dense QF_LIA (39.6% of arctic
     /// matrix CPU in the 2026-11-10 scan).  A slot is only ever acted on
     /// after verifying `columns[var][slot] == row`; disagreement falls
@@ -1697,7 +1697,7 @@ pub struct Simplex {
     assignment_current: bool,
     /// The delta-vs-reeval canary (item 85, wide-literal study): when set,
     /// every snap-delta propagation is checked against the exact evaluation
-    /// of the substituted row and reconciled to it — the exact value wins.
+    /// of the substituted row and reconciled to it – the exact value wins.
     /// Opt-in because the re-evaluation is the cost the incremental path
     /// exists to avoid (the full per-pivot re-evaluation was 40–52% of
     /// QF_UFLIA runtime).
@@ -1770,7 +1770,7 @@ impl Simplex {
     /// Unchecked variants for call sites that PROVE membership (or its
     /// absence) from the column-exactness invariant: the position scan is
     /// replaced by the `column_slots` back-pointer (Z3 `static_matrix`
-    /// discipline — see that field's doc).  The slot is verified against
+    /// discipline – see that field's doc).  The slot is verified against
     /// the vector before use; any disagreement falls back to the
     /// authoritative scan, and the one entry `swap_remove` displaces gets
     /// its slot fixed up.  The resulting vector is identical to the
@@ -1789,7 +1789,7 @@ impl Simplex {
             let pos = if trusted {
                 slot.map_or(0, |s| s as usize)
             } else {
-                // Slot absent (row not present — the common proven-absent
+                // Slot absent (row not present – the common proven-absent
                 // case) or desynced: the scan is the authority.  A desync
                 // is impossible by the maintenance discipline (every
                 // mutation of `columns` records slots in lockstep); the
@@ -1873,13 +1873,13 @@ impl Simplex {
             if self.resource_limit {
                 // The re-derivation overflowed: propagating deltas from a
                 // partially wrapped vector would fabricate consequences.
-                // `crash_basis` left `assignment_current` false — the flag
+                // `crash_basis` left `assignment_current` false – the flag
                 // stays honest for the next consumer.
                 return;
             }
         }
         let var = idx as VarId;
-        // A BASIC variable's value is DERIVED from its row — snapping it
+        // A BASIC variable's value is DERIVED from its row – snapping it
         // into the new window would desync the entry from the row (the
         // row still evaluates to the old point), and the pivot delta
         // algebra trusts that consistency (the delta-vs-reeval canary
@@ -1897,7 +1897,7 @@ impl Simplex {
         // Exact comparisons: a WIDE bound (beyond `Rational64` width)
         // still orders against the narrow point, and a snap into it lands
         // in the wide point store (`snap_point_to`), leaving `assignment`
-        // stale for the exact re-derivation — never a fabricated narrow
+        // stale for the exact re-derivation – never a fabricated narrow
         // stand-in.
         let mut snapped_wide = false;
         let lo_v = self.lower[idx].as_ref().and_then(|lo| {
@@ -1933,12 +1933,12 @@ impl Simplex {
         // Checked snap delta: the subtraction itself can leave `i64` width
         // (a non-basic jumping from a deep negative bound to a deep
         // positive one), and a wrapped delta would corrupt every dependent
-        // it propagates to — the same contract as the pivot's snap delta.
+        // it propagates to – the same contract as the pivot's snap delta.
         // Defer to the full re-derivation instead of guessing.
         let Some(delta) = checked_sub_delta(new, old) else {
             // The snapped non-basic value itself is exact (it is a bound
             // value); only the dependents' updates are skipped, so the
-            // staleness flag — never `resource_limit`, which `crash_basis`
+            // staleness flag – never `resource_limit`, which `crash_basis`
             // alone may set through a failed full derivation.
             self.assignment_current = false;
             return;
@@ -1956,7 +1956,7 @@ impl Simplex {
                 continue;
             }
             // Checked delta propagation with an exact (`BigRational`) retry
-            // and a narrowed final — the item-14 pattern: `Δ · c` and the
+            // and a narrowed final – the item-14 pattern: `Δ · c` and the
             // accumulating sum legitimately leave `i64` width on
             // wide-coefficient rows while the row's final value fits
             // (magnitudes cancel), so the retry keeps the incremental
@@ -1964,7 +1964,7 @@ impl Simplex {
             // Only a final that does not fit defers, through the staleness
             // flag (`crash_basis` owns the honest `resource_limit`
             // verdict). Unchecked, the multiply PANICKED in debug and
-            // silently WRAPPED in release — a corrupted dependent every
+            // silently WRAPPED in release – a corrupted dependent every
             // later decision trusted (the debug-panic sweep fired exactly
             // here via `note_bound_change` once bound derivation reached
             // wide-coefficient rows).
@@ -1977,8 +1977,8 @@ impl Simplex {
             // staleness flag left the entry stale by exactly `Δ · coef`
             // (the 2026-09-15 wide-coefficient false-`unsat`: the stale
             // entry survived the row's later narrow-back into the tableau
-            // — the substitution preserves the row's function, not the
-            // entry's value — and the phony violation drove an invalid
+            // – the substitution preserves the row's function, not the
+            // entry's value – and the phony violation drove an invalid
             // conflict). Flag the vector and let the next guard re-derive.
             let updated = self.row_lin(b).map(|row| {
                 row.terms
@@ -2126,14 +2126,14 @@ impl Simplex {
     /// its exact value NARROWS: `update_assignment` stores exactly what
     /// fits and leaves a stale entry otherwise (the `wide_pending`
     /// classification's input).  Reading the raw entry then FABRICATES a
-    /// value — the false-`sat` class of 2026-09-15: an `Int` variable
+    /// value – the false-`sat` class of 2026-09-15: an `Int` variable
     /// wide-basic at an unrepresentable fractional optimum read as
     /// integral `0`, and branch-and-bound accepted it as a model.  This
     /// read re-derives wide basics EXACTLY from their row; `None` = no
     /// honest narrow value exists (the caller must decline, never guess).
     #[must_use]
     pub fn delta_value_exact(&self, var: VarId) -> Option<DeltaRational> {
-        // Row over point — see `point_value_exact`'s priority note.
+        // Row over point – see `point_value_exact`'s priority note.
         if let Some(wexpr) = self.wide_rows.get(&var) {
             return self.eval_big_expr(wexpr);
         }
@@ -2146,14 +2146,14 @@ impl Simplex {
     /// The EXACT point value of `var` (a `BigDeltaRational`): the wide
     /// point store's entry when one exists, the wide row's exact evaluation
     /// for a wide basic, else the (exact) narrow assignment widened.  This
-    /// is the honest read for consumers that must not fabricate — equality
-    /// derivation, model publication — where [`Self::delta_value_exact`]'s
+    /// is the honest read for consumers that must not fabricate – equality
+    /// derivation, model publication – where [`Self::delta_value_exact`]'s
     /// narrowed form does not exist.
     #[must_use]
     pub fn point_value_exact(&self, var: VarId) -> Option<BigDeltaRational> {
         // A variable with a DEFINING WIDE ROW is basic: its value is the
         // row's live evaluation.  A wide point parked from a previous
-        // nonbasic life is a leftover — reading it first would shadow the
+        // nonbasic life is a leftover – reading it first would shadow the
         // row with a frozen stale value that drifts apart as the search
         // moves the row's terms (the item-95 defect: the J5 cert-false
         // class's mechanism).  The row wins; a lone point (a genuine
@@ -2191,7 +2191,7 @@ impl Simplex {
         }
     }
 
-    /// The EXACT value (`BigRational`) of a wide basic's defining row — the
+    /// The EXACT value (`BigRational`) of a wide basic's defining row – the
     /// standard (real) part of `eval_big_raw`, which the wide pass already
     /// recomputes on every re-derivation.  `None` only on a stale reference
     /// (no row, or an unassigned column).  This is the wide-value
@@ -2217,7 +2217,7 @@ impl Simplex {
     /// `−10 / −9`), so the search stays decidable where the narrowed
     /// value alone would force an honest decline.  `None` when the
     /// variable is not wide-basic, its row is not evaluable, or even the
-    /// floor/ceil leave `i64` (no representable branch bound exists —
+    /// floor/ceil leave `i64` (no representable branch bound exists –
     /// the caller declines).
     #[must_use]
     pub fn wide_floor_ceil_big(&self, var: VarId) -> Option<(i64, i64)> {
@@ -2226,13 +2226,13 @@ impl Simplex {
         Some((floor.to_i64()?, ceil.to_i64()?))
     }
     /// Branch bounds (`floor`, `ceil`) for a variable whose exact value is
-    /// wide, as EXACT integral `BigRational`s — the widened branch channel:
+    /// wide, as EXACT integral `BigRational`s – the widened branch channel:
     /// a branch bound beyond `i64` (the value's floor/ceil at `2^63`-scale)
     /// exists exactly here where `wide_floor_ceil_big` declined, so the
     /// branch-and-bound's `Underivable` arm disappears into an exact
     /// branch on the widened bound store.  `None` when the variable is
     /// not wide, its row is not evaluable, or the value has no floor/ceil
-    /// (impossible for a rational — kept for exhaustiveness).
+    /// (impossible for a rational – kept for exhaustiveness).
     #[must_use]
     pub fn wide_floor_ceil_exact(
         &self,
@@ -2281,13 +2281,13 @@ impl Simplex {
     /// Retire any wide POINT parked for `var`: the variable is gaining (or
     /// already has) a DEFINING ROW, and a leftover point from a previous
     /// nonbasic life would shadow the row in every exact read
-    /// (`point_value_exact` consults the point store first) — a frozen
+    /// (`point_value_exact` consults the point store first) – a frozen
     /// stale value disagreeing with the live row's evaluation, drifting
     /// apart as the search moves the row's terms (the item-95 defect:
     /// a parked point 842 vs a row evaluating 864+ over its own reads;
     /// every snapshot, key-form evaluation, and model publication read
     /// the frozen point while the constraint machinery composed through
-    /// the row — the J5 cert-false class's mechanism).
+    /// the row – the J5 cert-false class's mechanism).
     fn retire_wide_point(&mut self, var: VarId) {
         if self.wide_points.remove(&var).is_some() {
             self.assignment_current = false;
@@ -2333,7 +2333,7 @@ impl Simplex {
     }
 
     /// A slack's narrow defining row (the atom-row canary).  A row still
-    /// in its integer form is materialized for the caller (unmemoized —
+    /// in its integer form is materialized for the caller (unmemoized –
     /// the canary path is cold).
     pub fn row_of(&self, slack: VarId) -> Option<std::sync::Arc<LinExpr>> {
         Some(std::sync::Arc::new(match self.tableau.get(&slack)? {
@@ -2348,7 +2348,7 @@ impl Simplex {
     }
 
     /// Whether `var` rests at a WIDE POINT (a non-basic snapped to a bound
-    /// beyond `Rational64` width — its `assignment` entry is stale by
+    /// beyond `Rational64` width – its `assignment` entry is stale by
     /// design, exactly a wide basic's is).  The honest-value guards in the
     /// theory layer must cover BOTH wide channels: a wide-point integer
     /// reading its raw entry published a fabricated `0` while its exact
@@ -2397,7 +2397,7 @@ impl Simplex {
     }
 
     /// The narrow `δ₀`; `None` while any bound or point is wide (see
-    /// `has_wide_bound_state`) — the exact variant owns those states.
+    /// `has_wide_bound_state`) – the exact variant owns those states.
     pub fn delta_instantiation(&self) -> Option<Rational64> {
         if self.has_wide_bound_state() {
             return None;
@@ -2408,7 +2408,7 @@ impl Simplex {
     /// The EXACT `δ₀` (a positive `BigRational`): the largest value in
     /// `(0, 1]` for which every bound still holds after substituting
     /// `δ := δ₀`, computed over the EXACT point values (wide points and
-    /// wide rows included — no stale entries).  `None` when a binding
+    /// wide rows included – no stale entries).  `None` when a binding
     /// constraint admits no positive instantiation (a stale or infeasible
     /// state: publishing any value would fabricate a witness, so the
     /// caller declines).
@@ -2542,7 +2542,7 @@ impl Simplex {
     }
     /// Set a lower bound from an EXACT (`BigRational`) delta-rational:
     /// the value narrows into the fast path when it fits and is stored
-    /// exactly (as `BoundValue::Wide`) when it does not — branch bounds
+    /// exactly (as `BoundValue::Wide`) when it does not – branch bounds
     /// at `2^63`, strict bounds hanging off `i64::MIN`, and exact
     /// propagated bounds all enter through here, so the fixed-width wall
     /// they used to decline against (`FracVar::Underivable`, the
@@ -2606,7 +2606,7 @@ impl Simplex {
     /// Set an upper bound from a [`BoundValue`]; see `set_lower_value`.
     fn set_upper_value(&mut self, var: VarId, value: BoundValue, reasons: SmallVec<[u32; 4]>) {
         let idx = var as usize;
-        // Tripwire: see `set_lower_delta` — a strengthening direction for
+        // Tripwire: see `set_lower_delta` – a strengthening direction for
         // uppers means the NEW value is GREATER (looser) than the live one.
         if bound_tripwire_enabled()
             && let Some(old) = self.upper.get(idx).and_then(Option::as_ref)
@@ -2758,7 +2758,7 @@ impl Simplex {
     }
 
     /// [`Self::intern_row`] reporting HOW the interned row's slack relates
-    /// to the requested form — the datum every integrality-sensitive caller
+    /// to the requested form – the datum every integrality-sensitive caller
     /// needs (see [`RowInternMode`]).
     pub(crate) fn intern_row_reported(&mut self, mut expr: LinExpr) -> (VarId, RowInternMode) {
         // Canonical integer rescaling at the single choke point every row
@@ -2767,7 +2767,7 @@ impl Simplex {
         canonicalize_lin_form(&mut expr.terms, &mut expr.constant);
         // Substitute basic variables out of the row. The old body used the
         // UNCHECKED `Ratio` operators: a `coef · basic-constant` product
-        // past `i64` panicked in debug and WRAPPED in release — a silently
+        // past `i64` panicked in debug and WRAPPED in release – a silently
         // wrong row that every later decision trusted (observed on the
         // wide-literal differential: `2^62 · 2` intermediates with a final
         // that fits). Checked fixed-width first; exact `BigRational`
@@ -2779,7 +2779,7 @@ impl Simplex {
         let mut rescaled = false;
         'subst: for (var, coef) in &expr.terms {
             // A WIDE basic variable must be substituted exactly like a
-            // narrow one — treating it as nonbasic (the tableau lookup
+            // narrow one – treating it as nonbasic (the tableau lookup
             // misses it) would leak its term into the new row and break the
             // "rows reference only nonbasics" invariant every pivot trusts
             // (the debug column check caught exactly that: a stale columns
@@ -2819,7 +2819,7 @@ impl Simplex {
         if overflowed {
             // Exact retry: accumulate per-variable in `BigRational`, narrow
             // each final. A final that still does not fit does NOT drop the
-            // row — the row keeps its exact meaning in `wide_rows` (the
+            // row – the row keeps its exact meaning in `wide_rows` (the
             // wide-LP side table): no wrapping, no global decline, pivoting
             // and propagation simply never go through it. This is what
             // keeps a wide formula's *other* constraints decidable (the
@@ -2827,7 +2827,7 @@ impl Simplex {
             match self.intern_substitute_exact(&expr) {
                 Some(exact) => substituted_expr = exact,
                 None => {
-                    // The finals do not fit even exactly — but a POSITIVE
+                    // The finals do not fit even exactly – but a POSITIVE
                     // rescaling of the whole row may: every constraint
                     // bound in this encoding is ZERO, which a positive
                     // multiple preserves, so the scaled row carries the
@@ -2837,7 +2837,7 @@ impl Simplex {
                     // any representable scaling lands in the wide store.
                     // The rescale changes the slack's DEFINING FORM (the
                     // slack is `form / λ`, not `form`): bound semantics are
-                    // preserved, integrality is NOT — reported as
+                    // preserved, integrality is NOT – reported as
                     // [`RowInternMode::Rescaled`] for the integer-marking
                     // callers.
                     match Self::scale_big_to_narrow(&self.intern_substitute_big(&expr)) {
@@ -2867,7 +2867,7 @@ impl Simplex {
             slack_expr.add_term(*var, *coef);
         }
         self.rows_ver = self.rows_ver.wrapping_add(1);
-        // Column index bookkeeping for the new row (from the expr in hand —
+        // Column index bookkeeping for the new row (from the expr in hand –
         // the inserted row is this exact content).
         let terms: SmallVec<[(VarId, Rational64); 4]> = slack_expr.terms.iter().copied().collect();
         self.tableau
@@ -2886,7 +2886,7 @@ impl Simplex {
         // re-derive the whole tableau via `crash_basis`.
         if self.assignment_current {
             // Checked evaluation (with the exact fallback): the old inline
-            // `v += assignment * c` used the UNCHECKED `Ratio` operators —
+            // `v += assignment * c` used the UNCHECKED `Ratio` operators –
             // the same release-wrap class `eval_expr` was fixed for.
             if let Some(val) = self.eval_expr(&slack_expr) {
                 self.assignment[slack as usize] = val;
@@ -2899,7 +2899,7 @@ impl Simplex {
                 // which MIGRATES such a row to the wide store, and the
                 // convergence classification owns the verdict.  Setting the
                 // global `resource_limit` here (the old behavior) declined
-                // every mid-check intern of a wide-valued row — the S1
+                // every mid-check intern of a wide-valued row – the S1
                 // slice of the gap survey (~37 members at 010f0e7e).
                 self.assignment_current = false;
             }
@@ -2924,7 +2924,7 @@ impl Simplex {
     fn intern_wide_row(&mut self, expr: LinExpr) -> VarId {
         let big = self.intern_substitute_big(&expr);
         // Content addressing: an identical EXACT row already in the wide
-        // store IS the row — return its slack (the bounds on it carry
+        // store IS the row – return its slack (the bounds on it carry
         // every constraint ever asserted over this form).  Without this,
         // every rebuild round's re-assert minted a duplicate (item 91's
         // ~150-row zoo), each one pivoted and classified forever after.
@@ -2932,7 +2932,7 @@ impl Simplex {
         if let Some(&slack) = self.wide_row_ids.get(&key)
             && self.wide_rows.contains_key(&slack)
         {
-            // The hit slack is BASIC with its defining row — a wide point
+            // The hit slack is BASIC with its defining row – a wide point
             // parked from an earlier nonbasic life would shadow it.
             self.retire_wide_point(slack);
             return slack;
@@ -2954,12 +2954,12 @@ impl Simplex {
                 None => {
                     // The exact VALUE of the row does not fit the
                     // assignment vector.  The row is ALREADY in the wide
-                    // store — its meaning survives exactly, its stored
+                    // store – its meaning survives exactly, its stored
                     // assignment entry is stale on purpose (the wide store
                     // never maintained it), and the convergence
                     // classification evaluates it exactly.  Only the
                     // staleness flag is needed; the global `resource_limit`
-                    // here declined every mid-check intern of a wide row —
+                    // here declined every mid-check intern of a wide row –
                     // the S2 slice of the gap survey (~52 members at
                     // 010f0e7e), the survey's single largest decline site.
                     self.assignment_current = false;
@@ -2997,7 +2997,7 @@ impl Simplex {
                     add(*inner_var, coef * big_r64(inner_coef), &mut terms);
                 }
             } else if let Some(wide) = self.wide_rows.get(var) {
-                // Substitute through another WIDE row exactly — width
+                // Substitute through another WIDE row exactly – width
                 // propagates, which is fine: the result stays exact.
                 constant += coef * wide.constant.clone();
                 for (inner_var, inner_coef) in &wide.terms {
@@ -3017,7 +3017,7 @@ impl Simplex {
     /// runs (the `assert_*` entries at `rhs = i64::MIN`, whose `-rhs`
     /// constant is exactly `+2^63`).  A positive rescale into width gets
     /// the FULL narrow machinery (reported as
-    /// [`RowInternMode::Rescaled`] — the slack is `form / λ`, so
+    /// [`RowInternMode::Rescaled`] – the slack is `form / λ`, so
     /// integrality is re-derived from the actual row); a row beyond any
     /// representable scaling is captured exactly in the wide store (its
     /// zero-bound constraint survives; the wide classification owns the
@@ -3026,8 +3026,8 @@ impl Simplex {
         let substituted = self.intern_substitute_big_from(expr);
         if let Some(scaled) = Self::scale_big_to_narrow(&substituted) {
             // The narrow intern runs its own substitution again over the
-            // already-substituted (nonbasic-only) row — a no-op by
-            // construction — plus canonicalization and registration.
+            // already-substituted (nonbasic-only) row – a no-op by
+            // construction – plus canonicalization and registration.
             let (slack, _mode) = self.intern_row_reported(scaled);
             return (slack, RowInternMode::Rescaled);
         }
@@ -3198,20 +3198,20 @@ impl Simplex {
         };
         // Convergence point for wide rows: the narrow search is done, so an
         // exactly-classified VIOLATION now is final (no pivot can repair a
-        // wide row) — the honest `resource_limit`. A within-bounds row is
+        // wide row) – the honest `resource_limit`. A within-bounds row is
         // satisfied regardless of whether its value could be stored.
         // Convergence point for wide rows: the narrow search is done, so a
         // wide row's exact classification is final. A violation is a
-        // REFUTATION when the row's value is FORCED — every variable it
+        // REFUTATION when the row's value is FORCED – every variable it
         // references sits at a singleton bound (lo == hi), so the basic's
         // value is determined and out of bounds under the current
         // assertions; the conflict explains through those bounds' reasons.
         // Otherwise (some variable free to move) no pivot can repair a
-        // wide row — the honest `resource_limit` decline.
+        // wide row – the honest `resource_limit` decline.
         if verdict.is_ok() && (self.wide_pending || !self.wide_rows.is_empty()) {
             // Convergence classification with the WIDE-DRIVEN REPAIR STEP:
             // a violated wide row whose achievable range OVERLAPS its bound
-            // window is repairable in principle — the old behavior declined
+            // window is repairable in principle – the old behavior declined
             // the whole check (`resource_limit`, honest `unknown`) because
             // no pivot could reach it (wide rows were unpivable).  The
             // pivot's wide-leaving branch now solves the wide row exactly
@@ -3238,7 +3238,7 @@ impl Simplex {
                             // Interval refutation: the row's achievable
                             // value range under the variables' bounds,
                             // computed exactly (delta-aware), versus the
-                            // basic's bounds — disjoint means no assignment
+                            // basic's bounds – disjoint means no assignment
                             // of the bounded variables can satisfy the row:
                             // a genuine Farkas conflict explained through
                             // the determining bounds' reasons.
@@ -3259,7 +3259,7 @@ impl Simplex {
                             // exact value does not narrow (the wide pass only
                             // stores narrowing values), so the entry-based
                             // inference picked the wrong side on exactly
-                            // those rows — every repair then searched the
+                            // those rows – every repair then searched the
                             // reversed direction, found no eligible column,
                             // and declined a repairable row.
                             let bound_kind = match self.eval_big_raw(&wexpr) {
@@ -3300,7 +3300,7 @@ impl Simplex {
                             ) else {
                                 // No eligible entering column: every
                                 // repair direction is blocked at its
-                                // bound — not a state this classification
+                                // bound – not a state this classification
                                 // can repair; decline honestly.
 
                                 declined = true;
@@ -3348,13 +3348,13 @@ impl Simplex {
             }
         }
         // Full-state definitional invariant (debug builds): at the true
-        // convergence point — feasible narrow search done, wide rows
-        // classified (repaired or certified) — every row must reference
+        // convergence point – feasible narrow search done, wide rows
+        // classified (repaired or certified) – every row must reference
         // only nonbasic variables, and every basic's value (stored entry
         // for narrow rows, exact evaluation for wide ones) must sit inside
         // its bound window.  These properties are what the
         // core-completeness argument rests on (rows are definitions;
-        // constraints live only in bounds with reasons — see the
+        // constraints live only in bounds with reasons – see the
         // provenance analysis in the study), so a violation here is a
         // latent wrong-verdict site, named loudly.
         #[cfg(debug_assertions)]
@@ -3387,11 +3387,11 @@ impl Simplex {
     /// `true` means [`Self::crash_basis`] must NOT move it: the value is a
     /// legal coordinate the search itself chose (a pivot's leaving snap, a
     /// guarded bound writer, a previous `snap_point_to`), and it stays
-    /// trustworthy even while `assignment_current` is down — the flag's
+    /// trustworthy even while `assignment_current` is down – the flag's
     /// staleness is about BASIC entries (wide pivots defer their rows'
     /// re-derivation); a NON-basic's position is written by its own writers
     /// at the moment it is set.  Re-snapping a positioned non-basic to the
-    /// preferred (lower) bound relocates the search point arbitrarily —
+    /// preferred (lower) bound relocates the search point arbitrarily –
     /// in particular it moves a variable a wide repair just parked at its
     /// UPPER bound, un-doing the repair at the next re-derivation: the
     /// period-2 limit cycle of the wide-repair loop (the `simplex-tail-i129`
@@ -3443,7 +3443,7 @@ impl Simplex {
     /// The snap applies ONLY to non-basics without a current position of
     /// their own (fresh variables, popped or loosened bounds, transients):
     /// a non-basic already resting at one of its current bounds keeps its
-    /// value ([`Self::nonbasic_rests_at_bound`]) — moving it would relocate
+    /// value ([`Self::nonbasic_rests_at_bound`]) – moving it would relocate
     /// the search point the writers placed it at.
     fn crash_basis(&mut self) {
         #[cfg(feature = "std")]
@@ -3458,7 +3458,7 @@ impl Simplex {
                 continue;
             }
             // A WIDE bound snaps the non-basic into the wide point store
-            // (exact value, stale `assignment` entry — the row pass below
+            // (exact value, stale `assignment` entry – the row pass below
             // re-derives dependents exactly); a narrow bound is the
             // historical fast path.
             let snap = self.lower[i]
@@ -3481,7 +3481,7 @@ impl Simplex {
         // overflow, leaving later rows' assignments stale. Forcing the flag
         // true at the guard sites (as they used to) let `check`'s
         // entry-time `resource_limit = false` clear the only other
-        // witness, and later pivots consumed the stale vector — the delta
+        // witness, and later pivots consumed the stale vector – the delta
         // formula inherited the stale base and (release) a phony violation
         // drove an invalid conflict: a false `unsat` (the f1 differential
         // class, root-caused 2026-09-15; reproducer under
@@ -3510,7 +3510,7 @@ impl Simplex {
             // A pivot can invalidate the assignment vector MID-LOOP (the
             // wide-updates commit and the narrow-back recompute deferral
             // both clear `assignment_current`); the next `find_violating`
-            // must not consume the stale entries — a bogus violation here
+            // must not consume the stale entries – a bogus violation here
             // drives `explain_conflict` to an invalid clause (the item-51
             // false `unsat`: a stale `0` on a row evaluating to `1`
             // refuted the division axiom alone). Same guard as every
@@ -3569,7 +3569,7 @@ impl Simplex {
             let val = self.assignment[idx];
             // A WIDE bound's target is not representable as a
             // `DeltaRational`: the SOI driver (a heuristic) skips that
-            // error — the standard feasibility driver still sees the
+            // error – the standard feasibility driver still sees the
             // violation through the exact comparisons in
             // `find_violating`.
             if let Some(lo) = &self.lower[idx]
@@ -3644,7 +3644,7 @@ impl Simplex {
     /// a column `j` with `c_j > 0` improves by *decreasing* `x_j` (needs
     /// room below), `c_j < 0` by *increasing* it.  Heuristic mode takes the
     /// steepest `|c_j|`; Bland mode (after a degenerate streak) takes the
-    /// smallest eligible id — with Bland entering AND leaving rules the
+    /// smallest eligible id – with Bland entering AND leaving rules the
     /// step sequence cannot cycle.
     fn soi_entering(
         &self,
@@ -3798,7 +3798,7 @@ impl Simplex {
                     // with this flip just the same; skipping it silently
                     // would leave the entry stale (see
                     // `on_nonbasic_bound_change`'s flag discipline). Decline
-                    // the whole flip — the staged updates are discarded and
+                    // the whole flip – the staged updates are discarded and
                     // the driver falls back.
                     None => return false,
                 };
@@ -3825,9 +3825,9 @@ impl Simplex {
     /// (steepest-`|c_j|` entering, min-ratio leaving, Bland after a
     /// degenerate streak, bound flips when no row blocks).
     ///
-    /// **Fallback contract**: whenever the driver cannot improve — no
+    /// **Fallback contract**: whenever the driver cannot improve – no
     /// eligible entering column, an unbounded-improvement anomaly, its own
-    /// pivot budget, or any exact-arithmetic overflow — control passes to
+    /// pivot budget, or any exact-arithmetic overflow – control passes to
     /// the standard one-violation driver ([`Self::make_feasible`]) from the
     /// current basis.  Every conflict therefore still comes from the
     /// existing exact explanation path; this driver introduces no new
@@ -3896,7 +3896,7 @@ impl Simplex {
                 diag::inc_pivot();
                 // The snap stays the HISTORICAL lower-preferred rule: this
                 // driver's progress invariant (the violation-sum decrease it
-                // measures per step) is calibrated to it — snapping to the
+                // measures per step) is calibrated to it – snapping to the
                 // ratio's blocking bound instead spins the driver into its
                 // budget on `soi_differential` seed 5.  The DdM repair-loop
                 // snap (`SnapBound::from_violated`) is the standard
@@ -3907,7 +3907,7 @@ impl Simplex {
                     // Overflow mid-pivot: `pivot` set `resource_limit` and
                     // mutated nothing (transactional contract).  Clear the
                     // flag and hand the (unchanged) state to the standard
-                    // driver — it may still terminate via its own path
+                    // driver – it may still terminate via its own path
                     // before hitting the same overflow, and re-sets the
                     // flag if it cannot.
                     self.resource_limit = false;
@@ -4045,8 +4045,8 @@ impl Simplex {
     fn find_violating(&self) -> Option<(VarId, Bound)> {
         // Deferred clone: track the winning (var, side) and materialize the
         // `Bound` exactly once, at return.  The winner is the smallest
-        // violating var id, which depends only on the violator set — not on
-        // iteration order — so the selection (and the returned bound) is
+        // violating var id, which depends only on the violator set – not on
+        // iteration order – so the selection (and the returned bound) is
         // identical to the historical eager-clone loop, without cloning a
         // `Bound` (value + reason list) per violating row on the way there.
         // A `None` from the final lookup is impossible (the winner's side
@@ -4090,7 +4090,7 @@ impl Simplex {
     /// columns make every later pivot touch fewer rows, and non-free (bounded)
     /// dependents cannot absorb arbitrary value changes, so entering a column
     /// full of them immediately recreates infeasibility elsewhere.
-    /// The violated basic's row as (variable, sign) pairs — the entering
+    /// The violated basic's row as (variable, sign) pairs – the entering
     /// rules' only coefficient input.  Reads EITHER stored form with no
     /// materialization and no gcd (the sign of `N_v` under `D > 0` is the
     /// sign of the canonical coefficient); the term order is the same in
@@ -4183,7 +4183,7 @@ impl Simplex {
     /// stale-by-design `assignment` entry (it rests at a bound beyond
     /// `Rational64` width), so the eligibility comparison must read its
     /// EXACT point.  Reading the stale entry answered the wrong question in
-    /// both directions — "cannot increase" declined a repairable state
+    /// both directions – "cannot increase" declined a repairable state
     /// (the wide-repair NOCOL class), and "can increase" pivoted a
     /// variable already resting at its bound.
     #[inline]
@@ -4241,8 +4241,8 @@ impl Simplex {
         // re-derivation before it may be consumed" mark, and `check` is not
         // the only consumer: rows can be *added* while the flag is down (a
         // pop sets it, and the div/mod/abs axiom feed adds rows right after),
-        // which leaves the new slack's entry at its `zero()` default —
-        // `intern_row_cached` only computes it when the flag is up — and the
+        // which leaves the new slack's entry at its `zero()` default –
+        // `intern_row_cached` only computes it when the flag is up – and the
         // pivot-driven paths that run before the next `check`
         // (`propagate_bounds` / `tighten_bounds` / the SOI drivers) would
         // then read, propagate, and DECIDE on a stale value.  (This is not
@@ -4256,7 +4256,7 @@ impl Simplex {
             self.crash_basis();
             if self.resource_limit {
                 // The re-derivation overflowed (`update_assignment`'s checked
-                // path): same contract as a mid-pivot overflow below — no
+                // path): same contract as a mid-pivot overflow below – no
                 // structural mutation happened, and the flag makes every
                 // caller report `Unknown`.
                 return false;
@@ -4268,8 +4268,8 @@ impl Simplex {
         // The entering variable's defining row: checked fixed-width first
         // (the fast path), exact `BigRational` retry on any intermediate
         // overflow (intermediates of `-c/coef` legitimately overflow while
-        // the finals fit — magnitudes and denominators cancel), and — the
-        // dual-width entering side — an UNNARROWED exact row as the last
+        // the finals fit – magnitudes and denominators cancel), and – the
+        // dual-width entering side – an UNNARROWED exact row as the last
         // resort: a mixed-magnitude row (coefficients `1` and `2^63`)
         // makes the solved form's quotients irreducibly past `i64`, and
         // the entering variable's row then lives in the wide store with
@@ -4278,12 +4278,12 @@ impl Simplex {
         //
         // A WIDE leaving basic takes the same route one level up: its
         // defining row lives in the wide store, so the solve runs exactly
-        // over `BigRational` from the start (the wide-driven repair step —
+        // over `BigRational` from the start (the wide-driven repair step –
         // without it, a violated wide row whose achievable range overlaps
         // its window could never be repaired).
         let mut leaving_row_is_wide = false;
         // PHASE 3: an integer-form leaving row's solved form is BORN
-        // integer (see `born_entering_row`) — exact-and-narrow by
+        // integer (see `born_entering_row`) – exact-and-narrow by
         // construction, zero gcds, and the entering row's canonical form
         // is never built on this path at all.  Lin/LinNoInt and wide
         // leaving rows keep the historical chain below.
@@ -4347,14 +4347,14 @@ impl Simplex {
             // WIDE-LEAVING pivot: the leaving basic's `assignment` entry is
             // stale BY DESIGN (the wide store's value is only exact through
             // `eval_big_raw`), so the snap delta computed from it is NOT
-            // the variable's true move — delta-propagating that delta into
+            // the variable's true move – delta-propagating that delta into
             // the substituted rows' entries fabricates their values (the
             // delta-vs-reeval canary caught it live: `got` accumulated the
             // stale-based delta while the exact substitution had already
             // moved the true value).  Every row rewritten by THIS pivot
             // therefore takes the `was_wide` contract: the delta loop
             // skips it and the commit recomputes its entry from the new
-            // row exactly — item 43's narrow-back discipline, applied to
+            // row exactly – item 43's narrow-back discipline, applied to
             // the wide-LEAVING side.
             leaving_row_is_wide = true;
             match Self::narrow_big_lin(&entering_big) {
@@ -4365,7 +4365,7 @@ impl Simplex {
             self.resource_limit = true;
             return false;
         };
-        // The exact entering row in wide form — LAZY (Phase 3): only the
+        // The exact entering row in wide form – LAZY (Phase 3): only the
         // cold-tail consumers (the wide-row substitution branch and the
         // exact fallback below) ever need it; the fraction-free and born
         // paths never do.  Building it eagerly would pay per-term
@@ -4375,7 +4375,7 @@ impl Simplex {
         // The entering row's fraction-free encoding: the BORN row itself
         // on the Phase-3 path (no `int_row_from_lin` build at all), the
         // lcm build on the canonical path; `None` when wide or over the
-        // [`INT_ROW_BUDGET`] width — then every row keeps its historical
+        // [`INT_ROW_BUDGET`] width – then every row keeps its historical
         // per-term rational path this pivot.
         let mut entering_big_cell = entering_wide.clone();
         let entering_int = born_int.clone().or_else(|| {
@@ -4400,7 +4400,7 @@ impl Simplex {
                 if var == basic_var {
                     continue;
                 }
-                // WIDE rows are rewritten too — skipping them would leave a
+                // WIDE rows are rewritten too – skipping them would leave a
                 // stale exact row, which is unsound (the row's meaning must
                 // track the substitution). Their coefficient of the entering
                 // variable is exact, so the substitution runs exactly and
@@ -4409,7 +4409,7 @@ impl Simplex {
                 // A wide-origin row's ASSIGNMENT entry is not maintained by
                 // delta propagation (the wide store's value is only
                 // re-derived by `update_assignment`'s wide pass, and an
-                // unrepresentable value leaves the entry stale on purpose) —
+                // unrepresentable value leaves the entry stale on purpose) –
                 // so when the substitution NARROWS the row back into the
                 // tableau, the commit must recompute the entry from the new
                 // row instead of trusting it (`was_wide` below). Trusting it
@@ -4452,14 +4452,14 @@ impl Simplex {
                 };
                 // FRACTION-FREE FAST PATH (the Bareiss layer, integer-tableau
                 // native): a row already stored in its integer form
-                // substitutes WITHOUT materializing — integer mul-sub +
+                // substitutes WITHOUT materializing – integer mul-sub +
                 // one row-level gcd chain, and the RESULT commits as an
                 // `Int` row (the canonical write-back deferred to the
                 // first coefficient read; the churn mass re-substitutes
                 // rows far more often than anything reads them, so the
                 // deferral collapses the write-back floor).
                 //
-                // GATE — at least one side must carry a fraction: an
+                // GATE – at least one side must carry a fraction: an
                 // all-INTEGRAL substitution is already gcd-free on the
                 // historical path (`try_add_term_mul`'s integer fast
                 // path), where the fraction-free form's `i128` numerators
@@ -4491,7 +4491,7 @@ impl Simplex {
                     continue;
                 };
                 // A buildable-but-unbuilt (Lin) row takes its one-shot ff
-                // attempt through a freshly built integer form — the
+                // attempt through a freshly built integer form – the
                 // build's cost replaces the write-back it saves, and a
                 // success turns the row Int-native for every later pivot.
                 if entering_wide.is_none()
@@ -4508,12 +4508,12 @@ impl Simplex {
                 // Same fast-then-exact discipline as the entering row: the
                 // substitution's intermediates (`sc·const`, merged
                 // coefficients) can exceed `i64` while every final of the
-                // substituted row fits — cancellation across terms — so the
+                // substituted row fits – cancellation across terms – so the
                 // `BigRational` retry recovers the row and only a genuinely
                 // wide row declines the pivot.
                 // Fast-then-exact, and a genuinely wide result no longer
                 // declines the pivot: the exact row lands in the wide store
-                // (`wide_updates`) with its meaning intact — pivoting and
+                // (`wide_updates`) with its meaning intact – pivoting and
                 // propagation skip it, its value is re-derived exactly.
                 // Only the ENTERING row must be narrow (the pivot machinery
                 // is `LinExpr`-shaped); a wide entering row is what
@@ -4570,7 +4570,7 @@ impl Simplex {
         let mut snap_delta: Option<DeltaRational> = None;
         if leaving < self.assignment.len() {
             // Snap the now-nonbasic leaving var to the bound its DRIVER
-            // chose (see `SnapBound` — the caller passes the semantics; the
+            // chose (see `SnapBound` – the caller passes the semantics; the
             // historical behavior snapped lower-preferred unconditionally,
             // which overshoots every upper-bound repair and livelocked
             // mirrored rows on the `wisas_xs_8_13` bound set).
@@ -4592,7 +4592,7 @@ impl Simplex {
             if let Some(v) = snapped {
                 let old = self.assignment[leaving];
                 // Exact snap: a WIDE target lands in the wide point store
-                // (with the staleness flag — the delta loop below must not
+                // (with the staleness flag – the delta loop below must not
                 // propagate from a fabricated stand-in), a narrow target
                 // is the historical fast path (checked snap delta).
                 match v.narrow() {
@@ -4600,7 +4600,7 @@ impl Simplex {
                         if vn != old {
                             // Checked: the snap delta feeds the delta
                             // propagation, and the subtraction itself can
-                            // leave `i64` width on wide searches — refuse
+                            // leave `i64` width on wide searches – refuse
                             // to wrap (a wrapped delta would corrupt every
                             // dependent assignment) and defer to the full
                             // re-derivation instead.
@@ -4659,7 +4659,7 @@ impl Simplex {
                     continue;
                 }
                 // A row referencing a WIDE-POINT non-basic propagates from
-                // a stale entry for that term — the same fabrication the
+                // a stale entry for that term – the same fabrication the
                 // `was_wide` skip guards, on the term side (caught live by
                 // the delta-vs-reeval canary on the rehome regression:
                 // `got` accumulated over the stale entry while `want`'s
@@ -4673,7 +4673,7 @@ impl Simplex {
                 }
                 // The leaving basic's coefficient in the new row, read
                 // from whichever form the row committed in (one gcd for
-                // an Int row — the deferred write-back's only per-pivot
+                // an Int row – the deferred write-back's only per-pivot
                 // residual).
                 let coef_opt = match new_form {
                     TableRow::Lin(row) | TableRow::LinNoInt(row) => row
@@ -4701,7 +4701,7 @@ impl Simplex {
                         }
                         // `NIXIE_DELTA_VERIFY` (the delta-vs-reeval canary
                         // the stamps debugging ran live): re-evaluate the
-                        // substituted row exactly and reconcile — the exact
+                        // substituted row exactly and reconcile – the exact
                         // evaluation always wins, so a reachable
                         // incremental/exact disagreement (item 85 in the
                         // wide-literal study: the stamps trajectory exposed
@@ -4760,16 +4760,16 @@ impl Simplex {
         self.rows_ver = self.rows_ver.wrapping_add(1);
         self.tableau.remove(&basic_var);
         // The leaving row's fraction-free encoding dies with the row (the
-        // VarId is never a row owner again — ids are not recycled).
+        // VarId is never a row owner again – ids are not recycled).
         self.rows_ver = self.rows_ver.wrapping_add(1);
         self.wide_rows.remove(&basic_var);
         match (new_expr, entering_wide, born_int) {
             (_, _, Some(born)) => {
                 // The born-integer entering row: commits in its integer
-                // form — the canonical row materializes lazily like any
+                // form – the canonical row materializes lazily like any
                 // other (Phase 3's last piece: the hot path never builds
                 // the entering row's canonical form).  The row is inserted
-                // first and its terms read from the `Arc` — no per-pivot
+                // first and its terms read from the `Arc` – no per-pivot
                 // term-list copy.
                 let entering_terms: SmallVec<[VarId; 4]> =
                     born.terms.iter().map(|(v, _)| *v).collect();
@@ -4831,12 +4831,12 @@ impl Simplex {
             // removal, and an added term is guaranteed absent from the column
             // (direct push – `column_add`'s membership scan over dense
             // columns was a top profiler entry here). The row's PREVIOUS
-            // content lives in the tableau or — for a row that just narrowed
-            // back — in the wide store; diff against whichever holds it.
+            // content lives in the tableau or – for a row that just narrowed
+            // back – in the wide store; diff against whichever holds it.
             // Diff without materializing either side's variable list:
             // the old content is borrowed (tableau or wide store), the new
             // row is scanned directly, and only the (usually tiny/empty)
-            // dropped/added results are collected — same membership tests,
+            // dropped/added results are collected – same membership tests,
             // same iteration orders, same column mutations as the
             // materialized diff.
             let old_terms: Option<SmallVec<[VarId; 4]>> = match self.tableau.get(&var) {
@@ -4876,7 +4876,7 @@ impl Simplex {
             self.rows_ver = self.rows_ver.wrapping_add(1);
             self.tableau.insert(var, new_form);
             // A row that narrowed back from the wide store leaves it (the
-            // tableau entry is now authoritative) — and its ASSIGNMENT
+            // tableau entry is now authoritative) – and its ASSIGNMENT
             // entry is recomputed from the new row: the wide store never
             // maintained it through delta propagation (an unrepresentable
             // value leaves it stale on purpose), so the narrow store must
@@ -4903,7 +4903,7 @@ impl Simplex {
         }
         // Commit wide updates: same diff-based column maintenance against
         // the previous content (either store), and the assignment goes
-        // stale — a wide row's basic value may depend on the snapped
+        // stale – a wide row's basic value may depend on the snapped
         // leaving variable, and its exact update is the wide pass of the
         // next full re-derivation (`update_assignment`).
         if !wide_updates.is_empty() {
@@ -5023,7 +5023,7 @@ impl Simplex {
     /// skip, so targeted updates stay consistent with the full recompute.
     /// Fast (checked `i64`) build of the entering variable's defining row
     /// for the pivot `basic_var ← nonbasic_var`: the row of `basic_var`
-    /// solved for `nonbasic_var`. `None` on any intermediate overflow —
+    /// solved for `nonbasic_var`. `None` on any intermediate overflow –
     /// the caller retries exactly ([`Self::build_pivot_expr_exact`]).
     fn build_pivot_expr(
         expr: &LinExpr,
@@ -5082,13 +5082,13 @@ impl Simplex {
     /// Exact entering row, UNNARROWED (`BigLinExpr`): the dual-width
     /// pivot's entering side. Used when even the exact build cannot narrow
     /// (a mixed-magnitude row: coefficients `1` and `2^63` make the solved
-    /// form's quotients — `1/2^63` — irreducibly past `i64`); the entering
+    /// form's quotients – `1/2^63` – irreducibly past `i64`); the entering
     /// variable's row then lives in the wide store, and every substitution
     /// through it runs exactly. Division by zero still declines.
     /// The WIDE-leaving pivot's entering row: solve the exact wide row
     /// `x_B = wexpr(x_N)` for `nonbasic_var` (its wide coefficient
-    /// `coef_b`, nonzero) —
-    /// `x_entering = (x_B - Σ_{k≠entering} a_k·x_k - c) / a_entering` —
+    /// `coef_b`, nonzero) –
+    /// `x_entering = (x_B - Σ_{k≠entering} a_k·x_k - c) / a_entering` –
     /// exactly, in `BigRational`.  This is the pivot-analogue through wide
     /// rows: the leaving variable exits the (wide) basis snapped to the
     /// bound its driver chose, the entering variable becomes the row's new
@@ -5096,7 +5096,7 @@ impl Simplex {
     /// row referencing the entering column is substituted through the exact
     /// result by the ordinary pivot machinery.  Without it, a violated wide
     /// row whose achievable range OVERLAPS its bound window could never be
-    /// repaired — the convergence wall that turned such states into honest
+    /// repaired – the convergence wall that turned such states into honest
     /// `unknown` (the wide-LP endgame's named residual).
     fn build_pivot_expr_big_wide(
         wexpr: &BigLinExpr,
@@ -5128,7 +5128,7 @@ impl Simplex {
     /// [`Self::find_pivot_col`]'s direction test over the exact wide row's
     /// coefficients (sign logic is width-independent).  Smallest eligible
     /// index wins (Bland-style, termination-friendly); `None` means every
-    /// repair direction is blocked at its bound — the caller declines.
+    /// repair direction is blocked at its bound – the caller declines.
     fn find_wide_pivot_col(&self, wexpr: &BigLinExpr, bound: &Bound) -> Option<VarId> {
         let mut best: Option<VarId> = None;
         for (var, coef) in &wexpr.terms {
@@ -5182,7 +5182,7 @@ impl Simplex {
 
     /// Fast (checked `i64`) pivot substitution of one row: drop the entering
     /// variable's term and add `sc · new_expr` (the entering variable's
-    /// defining row). `None` on any intermediate overflow — retry with
+    /// defining row). `None` on any intermediate overflow – retry with
     /// [`Self::substitute_row_exact`].
     fn substitute_row_fast(
         row: &LinExpr,
@@ -5246,20 +5246,20 @@ impl Simplex {
     /// Scale an exact row back into `Rational64` width by a POSITIVE
     /// factor: normalize to integer coefficients (multiply by the
     /// denominators' LCM), then divide by a common denominator chosen so
-    /// that every REDUCED fraction fits — a power of two sized from the
+    /// that every REDUCED fraction fits – a power of two sized from the
     /// maximum magnitude, extended with SMALL ODD PRIME factors stripped
     /// from that maximum (an odd numerator beyond `i64::MAX` is not fixed
     /// by any power of two: the fraction is irreducible, so `3·i64::MAX`
     /// needs the factor 3).
     ///
     /// The result is the same linear form up to a positive scalar
-    /// multiple — and a positive multiple of a row preserves every ZERO
+    /// multiple – and a positive multiple of a row preserves every ZERO
     /// bound (`slack = 0`, `slack ≤ 0`, `slack ≥ 0`), which is exactly
     /// how the constraint sites encode atoms (constants live in the row,
     /// bounds are zero). The scaled row therefore carries the same
     /// constraints while its coefficients fit, and the FULL narrow
     /// machinery (pivots, propagation, conflicts) applies. `None` when no
-    /// such scale exists (a magnitude with no small odd factors left —
+    /// such scale exists (a magnitude with no small odd factors left –
     /// or a denominator beyond `i64`): the caller falls back to the
     /// wide-row store.
     fn scale_big_to_narrow(expr: &BigLinExpr) -> Option<LinExpr> {
@@ -5299,7 +5299,7 @@ impl Simplex {
                     add(*inner_var, &coef_b * big_r64(inner_coef), &mut terms);
                 }
             } else if let Some(wide) = self.wide_rows.get(var) {
-                // Substitute through another WIDE row exactly — width
+                // Substitute through another WIDE row exactly – width
                 // propagates, which is fine: the result stays exact.
                 constant += &coef_b * wide.constant.clone();
                 for (inner_var, inner_coef) in &wide.terms {
@@ -5363,10 +5363,10 @@ impl Simplex {
     /// (per delta component; the lexicographic `(real, delta)` order makes
     /// interval endpoint arithmetic valid) and compared against the
     /// basic's bounds. A DISJOINT range means no assignment of the
-    /// bounded variables can satisfy the row — a genuine conflict, its
+    /// bounded variables can satisfy the row – a genuine conflict, its
     /// reasons every finite bound that determined the range plus the
     /// basic's own bounds. `None` when the ranges overlap (repairable in
-    /// principle — the honest decline applies instead).
+    /// principle – the honest decline applies instead).
     fn wide_row_refuted_by_bounds(&self, expr: &BigLinExpr, idx: usize) -> Option<Vec<u32>> {
         use num_rational::BigRational as BR;
         // (real, delta) range endpoints; `None` = unbounded on that side.
@@ -5387,12 +5387,12 @@ impl Simplex {
         let mut min = End(BR::zero(), BR::zero());
         let mut max = End(BR::zero(), BR::zero());
         // An unbounded side makes THAT side's disjointness test vacuous
-        // (−∞ is never above an upper; +∞ never below a lower) — it must
+        // (−∞ is never above an upper; +∞ never below a lower) – it must
         // NOT bail the whole refutation: the OTHER side can still prove
         // it.  The old early `return None` on any unbounded endpoint
         // discarded valid refutations whenever the row had one free
         // column in the irrelevant direction (measured: `v2 = v1 + c`,
-        // `v1 ≥ 0` unbounded above, `v2 ≤ 0` — the min side alone
+        // `v1 ≥ 0` unbounded above, `v2 ≤ 0` – the min side alone
         // refutes; the unbounded max side hid it and the check declined
         // an LP-infeasible goal to `unknown`).
         let mut min_unbounded = false;
@@ -5432,18 +5432,18 @@ impl Simplex {
             };
             // The endpoint choice already folds the signs: for c > 0 the
             // minimum sits at `lo` and the maximum at `hi`; for c < 0 they
-            // swap.  The contribution is ALWAYS `+ c·endpoint` — the
+            // swap.  The contribution is ALWAYS `+ c·endpoint` – the
             // pre-fix code SUBTRACTED it on the c < 0 arm (`min -= c·hi`),
             // which computes the wrong endpoint value by `2·c·hi` and so a
             // range WIDER than the truth: valid refutations were missed
             // (the row's true minimum already above its window read as
             // overlap), the repair step then found every direction
             // blocked at its bound (NOCOL), and the check declined an
-            // LP-infeasible state to `unknown` — the S3 residual's
+            // LP-infeasible state to `unknown` – the S3 residual's
             // dominant mechanism (45 of the 110 survey members at
             // `bf9f5b71`).  Conservative in the safe direction only (the
             // widened range can only FAIL to refute), so nothing answered
-            // wrongly — it only failed to answer.
+            // wrongly – it only failed to answer.
             match min_src {
                 Some(e) => {
                     acc(&mut min, &End(&cb.0 * &e.0, &cb.0 * &e.1), 1);
@@ -5494,14 +5494,14 @@ impl Simplex {
     }
 
     /// The violated bound of a wide basic, if any: `None` = the exact
-    /// evaluation is undecidable (a stale reference — no verdict may rest
+    /// evaluation is undecidable (a stale reference – no verdict may rest
     /// on the row), `Some(None)` = the row is satisfied, `Some(Some(bound))`
     /// = the row violates `bound` (the bound carries its kind AND reasons,
     /// exactly like a narrow violation).
     fn wide_row_violated_bound(&self, expr: &BigLinExpr, idx: usize) -> Option<Option<Bound>> {
         let (real, delta) = self.eval_big_raw(expr)?;
         let cmp_bound = |b: &BoundValue| -> core::cmp::Ordering {
-            // (real + delta·δ) vs bound — δ ordering only breaks real ties.
+            // (real + delta·δ) vs bound – δ ordering only breaks real ties.
             match real.cmp(&b.real_big()) {
                 core::cmp::Ordering::Equal => delta.cmp(&b.delta_big()),
                 ord => ord,
@@ -5573,20 +5573,20 @@ impl Simplex {
     /// Checked fixed-width accumulation with an exact (`BigRational`)
     /// retry: the old body used the *unchecked* `Ratio` operators, whose
     /// release behaviour on an intermediate outside `i64` is a silent wrap
-    /// — a wrong `Some` that every consumer would trust (assignment
+    /// – a wrong `Some` that every consumer would trust (assignment
     /// snapshots, the pivot's entering value). Intermediates legitimately
     /// overflow while the final fits (magnitudes cancel), so the retry
     /// recovers the exact value and only a genuinely unrepresentable final
     /// declines to `None`.
     /// Evaluate an integer-form row over the current assignment:
-    /// `(Σ Nᵢ·aᵢ + N_c)/D` — the born-integer entering row's value
+    /// `(Σ Nᵢ·aᵢ + N_c)/D` – the born-integer entering row's value
     /// (Phase 3).  INTEGRAL-ASSIGNMENT FAST PATH: when every referenced
     /// value's real and delta parts carry denominator 1 (the common
     /// tableau state), the sum is pure `i128` accumulation (products
     /// ≤ 2^125 by the budget invariant) with ONE final
-    /// `checked_ratio_i128` — zero gcds.  A fractional assignment falls
+    /// `checked_ratio_i128` – zero gcds.  A fractional assignment falls
     /// back to the canonical evaluation (the mixed case only).
-    /// Semantically identical to `eval_expr(&materialize_lin(row))` —
+    /// Semantically identical to `eval_expr(&materialize_lin(row))` –
     /// exact arithmetic under a common denominator.
     fn eval_int_expr(&self, row: &IntRow) -> Option<DeltaRational> {
         let d = row.denom as i128;
@@ -5656,7 +5656,7 @@ impl Simplex {
                 // keeps its value (`nonbasic_rests_at_bound`).  The
                 // historical lower-preferred re-snap here silently
                 // relocated every repair the search had parked at an
-                // UPPER bound — this loop runs after EVERY wide-driven
+                // UPPER bound – this loop runs after EVERY wide-driven
                 // re-derivation (via `crash_basis`), so each wide repair
                 // was un-done one call deeper than the crash fix could
                 // see: the persistent period-2 cycle of the
@@ -5677,15 +5677,15 @@ impl Simplex {
             }
         }
         // CHECKED row-value derivation: a product or sum that leaves
-        // `Rational64` width (large coefficients against wide model values —
+        // `Rational64` width (large coefficients against wide model values –
         // the QF_NIA/VeryMax family reaches this through `crash_basis`)
         // aborts the re-derivation and sets `resource_limit`, the existing
         // "give up honestly" channel: every consumer then reports `Unknown`
         // instead of trusting a wrapped value.  Unchecked, this PANICKED in
-        // debug and silently WRAPPED in release — a corrupted assignment
+        // debug and silently WRAPPED in release – a corrupted assignment
         // vector the pivots would then reason over.
         let mut wide_migrations: Vec<VarId> = Vec::new();
-        // Materialize first (the stale path's own cost — it always read
+        // Materialize first (the stale path's own cost – it always read
         // canonical rows), then iterate Arcs.
         let row_keys: Vec<VarId> = self.tableau.keys().copied().collect();
         'rows: for var in row_keys {
@@ -5749,7 +5749,7 @@ impl Simplex {
                                         continue 'rows;
                                     }
                                     None => {
-                                        // The row's exact VALUE does not fit —
+                                        // The row's exact VALUE does not fit –
                                         // MIGRATE the row to the wide store
                                         // (item 28's capture, applied at
                                         // re-derivation): its meaning survives
@@ -5758,7 +5758,7 @@ impl Simplex {
                                         // convergence classification owns the
                                         // verdict. Declining here (the old
                                         // behavior) made any trajectory that
-                                        // visits such a point `unknown` — the
+                                        // visits such a point `unknown` – the
                                         // chain-under-narrow-dir2 deflection.
                                         wide_migrations.push(var);
                                         continue 'rows;
@@ -5785,7 +5785,7 @@ impl Simplex {
         }
         // Migrations: rows whose exact value left `Rational64` move to the
         // wide store (column index already covers both; the slack keeps
-        // its bounds; the basic becomes unpivable — the wide semantics).
+        // its bounds; the basic becomes unpivable – the wide semantics).
         for var in wide_migrations {
             self.rows_ver = self.rows_ver.wrapping_add(1);
             if let Some(entry) = self.tableau.remove(&var) {
@@ -5811,10 +5811,10 @@ impl Simplex {
         }
         // Wide rows: re-derived EXACTLY every pass (their values can
         // overflow intermediate-wise while the final fits, so the checked
-        // fast path is not even attempted — exact is the only path). An
-        // unrepresentable value is TRANSIENT mid-search — the search may
+        // fast path is not even attempted – exact is the only path). An
+        // unrepresentable value is TRANSIENT mid-search – the search may
         // well move to a point where it narrows (a satisfied constraint's
-        // slack is often exactly 0) — so it never breaks this pass: an
+        // slack is often exactly 0) – so it never breaks this pass: an
         // UNBOUNDED wide slack's value is irrelevant (nothing reads it),
         // and a bounded one flags `wide_pending` for the convergence
         // points to classify exactly.
@@ -5943,18 +5943,18 @@ impl Simplex {
         let _ = self.propagate_bounds_in(&FxHashSet::default());
     }
 
-    /// [`Self::propagate_bounds`] with the caller's INTEGER-variable set —
+    /// [`Self::propagate_bounds`] with the caller's INTEGER-variable set –
     /// slice 6: bounds derived through the WIDE store weaken to `ceil`/
     /// `floor` for STORAGE on integer basics only; real basics keep
     /// exact-or-decline. Crossings are tested on the EXACT value and
     /// planted through `pending_crossing` (never on a weakened form).
     /// The derivation stamp of one row: `(rows_ver, cross_ver, max bound
     /// version over the variables the derivation reads, int_vars.len())`.
-    /// A row re-derives only while its stamp CHANGED — every input of its
+    /// A row re-derives only while its stamp CHANGED – every input of its
     /// derivations (row contents via `rows_ver`, the referenced variables'
-    /// bounds via their versions, the basic's own bound — the basic is
+    /// bounds via their versions, the basic's own bound – the basic is
     /// always among `vars`' maximum when it is bounded, and an unbounded
-    /// basic never derives — the crossing-export contract via `cross_ver`,
+    /// basic never derives – the crossing-export contract via `cross_ver`,
     /// and the integer-weakening regime via the set size) is covered by
     /// exactly these components.  Value- and trajectory-identical to full
     /// re-derivation: at an unchanged stamp the last derivation already
@@ -5983,7 +5983,7 @@ impl Simplex {
     /// and the derivation-stamp fields).  One slice-6 propagation pass
     /// over the narrow and wide rows (see the `tighten_tableau_bounds`
     /// caller for the fixpoint loop and the soundness gates).  Returns
-    /// the number of bounds STORED this pass — the fixpoint signal.
+    /// the number of bounds STORED this pass – the fixpoint signal.
     pub fn propagate_bounds_in(&mut self, int_vars: &FxHashSet<VarId>) -> usize {
         self.propagated.clear();
         // NARROW direction-2 is env-gated while under evaluation: solve a
@@ -5991,7 +5991,7 @@ impl Simplex {
         // atom-bound encoding hides pins behind `s = var` slack rows).
         // NARROW direction-2, two gates: `NIXIE_S6_NDIR2=1` enables the
         // general form (which deflects some pivot trajectories into the
-        // width wall — see the study); the PINNED-BASIC form runs by
+        // width wall – see the study); the PINNED-BASIC form runs by
         // default: a row whose basic is fully pinned (lo == hi) is an
         // equality over its variables, and solving it for each referenced
         // variable is exactly the pin-hiding case (`s = var` rows) the
@@ -6009,12 +6009,12 @@ impl Simplex {
             }
         };
         // Default ON since 2026-09-17, SCOPED to wide-row states (the
-        // enablement rule: sound by construction — exact derivations
+        // enablement rule: sound by construction – exact derivations
         // through fully-pinned rows, the corner-audited slice-6 machinery
-        // — screened by the wide + mixed differentials at the new default,
+        // – screened by the wide + mixed differentials at the new default,
         // 0 disagreements, and parity 176/177).  The scoping is the
         // screening result: run unconditionally, the per-final-check
-        // derivation cost lands on every instance — an MBQI-heavy
+        // derivation cost lands on every instance – an MBQI-heavy
         // `scope_rebase` test went 36 s → cap-timeout with the gate on
         // and no wide row in sight to benefit; scoped to wide states the
         // same test is bit-identical to the gate-off binary.  The gate's
@@ -6118,9 +6118,9 @@ impl Simplex {
                 int_vars.len(),
             );
             // (A stamp-unchanged `continue` mirroring the narrow loop above
-            // was evidently intended here — the landed line was an empty
+            // was evidently intended here – the landed line was an empty
             // `if` (dead code, clippy `-D warnings` blocker). Removed
-            // verbatim: the behavior — always re-deriving — is unchanged;
+            // verbatim: the behavior – always re-deriving – is unchanged;
             // the skip, if wanted, belongs to the stamps owner.)
             for lower in [true, false] {
                 let Some((real, delta, reasons)) =
@@ -6249,7 +6249,7 @@ impl Simplex {
             // First-writer-wins: every plant site is a GENUINE crossing of
             // the current bound state (sound to export whichever fires), so
             // keeping the FIRST makes the exported conflict a deterministic
-            // function of the input state — invariant under the derivation
+            // function of the input state – invariant under the derivation
             // stamps' skipping (a last-writer-wins slot made the winner
             // depend on which unchanged-input rows re-derived, coupling the
             // conflict choice to the caching and breaking trajectory
@@ -6259,7 +6259,7 @@ impl Simplex {
             return;
         }
         // STORAGE: the exact value, narrowed when it fits and WIDE when it
-        // does not — the i64-fit requirement that used to discard (or, for
+        // does not – the i64-fit requirement that used to discard (or, for
         // integer variables, `weaken_int_bound`-decline) derived bounds
         // beyond width is gone with the widened bound store.  For an
         // INTEGER variable the integral tightening (`ceil` for lower /
@@ -6367,11 +6367,11 @@ impl Simplex {
     }
 
     /// Exact (`BigRational`) interval derivation of one directional bound of
-    /// `basic = Σ cⱼxⱼ + k` from the variables' current bounds — the
+    /// `basic = Σ cⱼxⱼ + k` from the variables' current bounds – the
     /// wide-row propagation core. `lower = true` derives the infimum, `false`
     /// the supremum. Endpoints are chosen by LEX COMPARISON of each pair
     /// (mid-search states can carry genuinely contradictory atom sets whose
-    /// bounds are INVERTED — a slot-name choice picks the wrong end).
+    /// bounds are INVERTED – a slot-name choice picks the wrong end).
     /// Branch-local bounds decline the derivation. The result carries every
     /// contributing bound's antecedents.
     fn derive_bound_big_parts(
@@ -6399,7 +6399,7 @@ impl Simplex {
             let hi = self.upper.get(vi).and_then(Option::as_ref);
             // A ONE-SIDED pair only serves its own direction: a lone lower
             // is the pair's minimum (fine for an infimum) but says nothing
-            // about the supremum (it is +∞) — returning it for a sup
+            // about the supremum (it is +∞) – returning it for a sup
             // request FABRICATES the tightest possible bound (the strict
             // `>` false-`unsat` class: the atom slack's lone strict lower
             // used as a supremum endpoint derived a phony `−3−ε` upper).
@@ -6412,7 +6412,7 @@ impl Simplex {
                     // conflict).  Deriving through an EMPTY interval
                     // fabricates a bound whose endpoint is the pair's
                     // WRONG side (the `want_min == a_first` pick swaps
-                    // min/max exactly when the pair is inverted) — a bound
+                    // min/max exactly when the pair is inverted) – a bound
                     // no antecedent implies.  Decline; the vacuous-truth
                     // case loses nothing (the crossing fires on its own).
                     if a.value > b.value {
@@ -6491,7 +6491,7 @@ impl Simplex {
             match (lo, hi) {
                 (Some(a), Some(b)) => {
                     // Crossed window: decline (see the direction-1
-                    // selection for the full argument) — the crossing
+                    // selection for the full argument) – the crossing
                     // channel owns the contradictory state.
                     if a.value > b.value {
                         return None;
@@ -6555,7 +6555,7 @@ impl Simplex {
     }
 
     /// Lexicographic `(real, delta)` comparison of an exact big bound
-    /// against a stored [`DeltaRational`] — crossing/tightness tests use
+    /// against a stored [`DeltaRational`] – crossing/tightness tests use
     /// this so a widened representation never erases a unit-interval
     /// crossing.
     fn cmp_bound_big(
@@ -6577,7 +6577,7 @@ impl Simplex {
     /// corners, so recomputing the directional bound by full corner
     /// enumeration is an INDEPENDENT check of the endpoint arithmetic.
     /// Compares against the corner EXTREMUM of the derived values directly
-    /// (min for lower, max for upper — no divisor-sign flip: the corner
+    /// (min for lower, max for upper – no divisor-sign flip: the corner
     /// values are already the target's achievable values).
     #[cfg(all(debug_assertions, feature = "std"))]
     fn audit_by_corners(
@@ -6716,7 +6716,7 @@ impl Simplex {
     /// Checked accumulate `sum += value * coef` for the delta-propagation
     /// sums: `None` on `Rational64` overflow, which declines the derivation
     /// (propagation is an optimization; a wrapped bound would fabricate a
-    /// consequence the row does not entail — the same class the
+    /// consequence the row does not entail – the same class the
     /// `update_assignment` fix closes on the assignment side).
     fn delta_acc(sum: &mut DeltaRational, value: &DeltaRational, coef: &Rational64) -> Option<()> {
         let pr = checked_eval_mul(&value.real, coef)?;
@@ -6734,7 +6734,7 @@ impl Simplex {
     fn derive_basic_bound(&self, basic_var: VarId, expr: &LinExpr) -> Option<PropagatedBound> {
         // Both directional walks share one discipline: checked accumulation,
         // and on overflow ONE exact (`BigRational`) retry of the WHOLE
-        // directional sum. After that retry the arithmetic is COMPLETE —
+        // directional sum. After that retry the arithmetic is COMPLETE –
         // the walk keeps iterating only to collect every term's bound
         // REASONS (an incomplete reason set would surface as an unsound
         // conflict explanation one derivation later); adding further
@@ -6743,7 +6743,7 @@ impl Simplex {
         // wide-chain false `unsat` of 2026-09-15/16: the exact retry
         // returned the correct full sum, the walk then re-added the
         // remaining terms, and the corrupted bound refuted a satisfiable
-        // chain (caught by the model audit — every stored bound must hold
+        // chain (caught by the model audit – every stored bound must hold
         // at a known-feasible point; see the slice-6 study).
         let idx = basic_var as usize;
         let mut lower_sum = DeltaRational::from_rational(expr.constant);
@@ -6998,7 +6998,7 @@ impl Simplex {
         // only ever RELAXES bounds (assertions tighten monotonically within
         // a scope), so the invariant survives the pop untouched.  This used
         // to snapshot+restore the whole tableau, `basic` flags, `columns`
-        // and the assignment vector per scope — O(tableau) clones that also
+        // and the assignment vector per scope – O(tableau) clones that also
         // shared every column `Arc`, turning each in-scope column edit into
         // a full column clone (`Arc::make_mut`), which dominated once the
         // tableau persisted across the search (see the restart-resync note
@@ -7040,7 +7040,7 @@ impl Simplex {
                     }
                 }
             }
-            // Note on the assignment vector: no wholesale restore — but a
+            // Note on the assignment vector: no wholesale restore – but a
             // NON-BASIC can be left outside its restored window.  The old
             // argument ("a non-basic only ever moves by a snap into the
             // then-current window, and pops only relax") misses one shape:
@@ -7049,12 +7049,12 @@ impl Simplex {
             // snap-into-window then parks the variable at a point only the
             // TIGHTENED side justified; restoring that side widens the
             // window away from the point (the NLA interval probes build
-            // exactly this shape — found by the strengthened definitional
+            // exactly this shape – found by the strengthened definitional
             // invariant).  Re-snap every non-basic the undo left outside
-            // its window (an empty window parks at the lower — `check`'s
+            // its window (an empty window parks at the lower – `check`'s
             // crossing scan reports it); each snap moves a non-basic, so
             // its dependents go stale with it (one flag for the full
-            // re-derivation — no flag when nothing moved, keeping the
+            // re-derivation – no flag when nothing moved, keeping the
             // incremental maintenance for the common relax-only pop).
             let mut moved = false;
             for &var in &restored {
@@ -7101,7 +7101,7 @@ impl Simplex {
         for i in 0..self.assignment.len() {
             // WIDE basics are certified against their EXACT row evaluation
             // in the wide loop below: an unrepresentable exact value leaves
-            // the stored entry stale BY DESIGN (`wide_pending`'s contract —
+            // the stored entry stale BY DESIGN (`wide_pending`'s contract –
             // the convergence classification certifies the exact value), so
             // the entry is not a sound witness here.
             if self.wide_rows.contains_key(&(i as VarId)) {
@@ -7116,7 +7116,7 @@ impl Simplex {
                 .get(i)
                 .and_then(|b| b.as_ref().map(|x| x.value.clone()));
             // A WIDE POINT's narrow entry is stale BY DESIGN (the exact
-            // value lives in the point store) — the window check runs on
+            // value lives in the point store) – the window check runs on
             // the EXACT value, like the wide-basic loop below.
             if let Some(w) = self.wide_points.get(&(i as VarId)) {
                 if let Some(lo) = &lb
@@ -7164,7 +7164,7 @@ impl Simplex {
         }
         for (b, _row) in self.tableau.iter() {
             // CHECKED evaluation: the invariant runs on wide trajectories
-            // whose row products legitimately leave `i64` width — an
+            // whose row products legitimately leave `i64` width – an
             // overflowing row is unverifiable cheaply here, not a panic
             // (the pre-existing inline `+=`/`*` aborted the debug build).
             let row_v = self.row_lin_view(*b)?;
@@ -7178,7 +7178,7 @@ impl Simplex {
                 // only NONBASIC variables.  A basic in a row's terms would
                 // make the one-level substitutions (`intern_row`'s exact
                 // path, the pivot machinery's "rows reference only
-                // nonbasics" contract) unsound — the property the whole
+                // nonbasics" contract) unsound – the property the whole
                 // core-completeness argument rests on.
                 if self.tableau.contains_key(t) || self.wide_rows.contains_key(t) {
                     return Some(format!(
@@ -7248,8 +7248,8 @@ impl Simplex {
     /// the assignment first when it is stale (pops invalidate nothing but
     /// leave basic values from the popped scope's pivots), then asks
     /// `find_violating`.  Consumers that read variable values without a
-    /// fresh `check` — the branch-and-bound leaf and integral-dive paths,
-    /// before snapshotting a model — must gate on this: a stale or
+    /// fresh `check` – the branch-and-bound leaf and integral-dive paths,
+    /// before snapshotting a model – must gate on this: a stale or
     /// mid-flight state can hold basic values outside their bound windows,
     /// and snapshotting it publishes a model that violates asserted atoms
     /// (the QF_ANIA/sum10 invalid-model class).
@@ -7316,7 +7316,7 @@ impl Simplex {
         idx < self.basic.len() && self.basic[idx]
     }
 
-    /// The minimal integral move deltas that make `x + α·δ` integral — Z3's
+    /// The minimal integral move deltas that make `x + α·δ` integral – Z3's
     /// `get_patching_deltas` (`src/math/lp/int_solver.cpp`): with `x =
     /// x₁/x₂` and `α = a₁/a₂` both reduced, a solution δ exists iff `x₂ ∣
     /// a₂`, and the solutions are exactly `δ ≡ δ₊ (mod a₂)` where `δ₊ =
@@ -7350,7 +7350,7 @@ impl Simplex {
 
     /// Z3 `try_patch_column`: move nonbasic `j` by the integral `delta`
     /// when every variable it touches stays inside its bounds and no
-    /// integral dependent becomes fractional.  A pure assignment update —
+    /// integral dependent becomes fractional.  A pure assignment update –
     /// no pivot, no tableau change.  `false` declines without side
     /// effects.
     fn try_patch_column(&mut self, v: VarId, j: VarId, delta: i64) -> bool {
@@ -7366,7 +7366,7 @@ impl Simplex {
         };
         // A variable parked in the wide point store has a stale assignment
         // entry: its exact point is not representable, so no bound check on
-        // it can be trusted — decline (sound skip).
+        // it can be trusted – decline (sound skip).
         if self.wide_points.contains_key(&j) {
             return false;
         }
@@ -7377,7 +7377,7 @@ impl Simplex {
             },
             delta: jv.delta,
         };
-        // An integral move can never repair a fractional `j` — the point
+        // An integral move can never repair a fractional `j` – the point
         // would stay fractional at a nonbasic integer column forever, so
         // such a move can never contribute to an integral point.  Require
         // `j` integral up front (Z3's nonbasics rest at integral bounds by
@@ -7403,12 +7403,12 @@ impl Simplex {
         for owner in col.iter() {
             let oi = *owner as usize;
             // A wide-row owner's assignment entry is stale by design: its
-            // window cannot be checked — decline the whole candidate
+            // window cannot be checked – decline the whole candidate
             // (sound: patching is an optimization).
             if self.wide_rows.contains_key(owner) {
                 return false;
             }
-            // ONE coefficient from the store's own form — an Int row
+            // ONE coefficient from the store's own form – an Int row
             // yields it with a single `checked_ratio_i128` (no
             // materialization: this scan runs per owner per candidate,
             // and a full Cow materialize here measured as real cost once
@@ -7450,7 +7450,7 @@ impl Simplex {
             {
                 return false;
             }
-            // Z3: "do not waste resources on this case" — never break an
+            // Z3: "do not waste resources on this case" – never break an
             // integral dependent.
             let old_int = old.real.is_integer() && old.delta.is_zero();
             let new_int = new_val.real.is_integer() && new_val.delta.is_zero();
@@ -7474,7 +7474,7 @@ impl Simplex {
     /// `frac(v) + frac(coef_j)·δ ≡ 0 (mod 1)`.
     fn patch_basic_column(&mut self, v: VarId, is_int: &dyn Fn(VarId) -> bool) {
         // A wide-basic's narrow row does not exist (its defining row lives
-        // in the wide store) and its assignment entry is stale — nothing
+        // in the wide store) and its assignment entry is stale – nothing
         // here may be patched soundly.  Skip (the exact-value acceptance
         // read in `patch_int_columns` covers it).
         if self.wide_rows.contains_key(&v) {
@@ -7487,7 +7487,7 @@ impl Simplex {
             return;
         };
         // A nonzero delta component can never become integral by a
-        // (real-integral) patch move — skip.
+        // (real-integral) patch move – skip.
         if !val.delta.is_zero() {
             return;
         }
@@ -7495,7 +7495,7 @@ impl Simplex {
             return;
         }
         // Checked: the fractional-part subtraction itself can overflow at
-        // wide magnitudes — decline (sound skip) instead of panicking in
+        // wide magnitudes – decline (sound skip) instead of panicking in
         // debug / wrapping in release.
         let Some(r) = checked_sub_r64(val.real, val.real.floor()) else {
             return;
@@ -7516,24 +7516,24 @@ impl Simplex {
         }
     }
 
-    /// Z3 `int_solver::patch_basic_columns` — the cheap integrality move
+    /// Z3 `int_solver::patch_basic_columns` – the cheap integrality move
     /// that runs BEFORE any cut or branch: for every fractional integer
     /// basic, try to move a nonbasic integer column so the basic lands on
     /// an integer, with every touched variable staying inside its bounds
-    /// and no integral dependent broken.  Pure assignment updates — no
+    /// and no integral dependent broken.  Pure assignment updates – no
     /// pivots, no tableau changes, no rows added.  Returns `true` when no
     /// integer basic is fractional afterwards (the assignment is then an
     /// honest integral point: LP feasibility is preserved by the bound
     /// checks, integrality by construction).
     pub(super) fn patch_int_columns(&mut self, is_int: &dyn Fn(VarId) -> bool) -> bool {
-        // Z3's `has_inf_int` covers EVERY integer column, basic or not —
+        // Z3's `has_inf_int` covers EVERY integer column, basic or not –
         // so must both the feasibility pre-read and the success read here.
         // A fractional NONBASIC integer column is unfixable by integral
         // moves (and moving it only poisons the point further), so the
         // pass declines immediately when one exists.  Every value read is
         // EXACT (`point_value_exact`): a wide-basic's or wide-point's raw
         // assignment entry is stale, and reading it fabricates
-        // integrality — the false-`sat` class `find_fractional_int_var`'s
+        // integrality – the false-`sat` class `find_fractional_int_var`'s
         // own comment documents (`(= (+ (* 27670116100584327436 v2) ...)
         // -5)` answered `sat` on a fabricated `v1 = 0`).
         let int_cols: Vec<VarId> = (0..self.assignment.len())
@@ -7574,9 +7574,9 @@ impl Simplex {
             self.patch_basic_column(*v, is_int);
         }
         // Success = every integer variable (basic or nonbasic) carries an
-        // integral, delta-free value — Z3's `!has_inf_int`.
+        // integral, delta-free value – Z3's `!has_inf_int`.
         // Success = every integer variable (basic or nonbasic) carries an
-        // EXACT integral, delta-free value — Z3's `!has_inf_int`, with the
+        // EXACT integral, delta-free value – Z3's `!has_inf_int`, with the
         // same wide-aware exact read the precheck used.
         let done = int_cols.iter().all(|v| {
             self.point_value_exact(*v)
@@ -7619,13 +7619,13 @@ impl Simplex {
     }
 
     /// The tableau row defining `var` (its right-hand side), for callers
-    /// that must reason about the slack's actual defining form — e.g. the
+    /// that must reason about the slack's actual defining form – e.g. the
     /// integrality re-check after a *rescaled* intern (see the private
     /// `RowInternMode`). A wide-store basic has no narrow row; `None` then.
     pub fn defining_row(&self, var: VarId) -> Option<std::borrow::Cow<'_, LinExpr>> {
         self.row_lin_view(var)
     }
-    /// The row of `var` in its CANONICAL rational form — the single
+    /// The row of `var` in its CANONICAL rational form – the single
     /// materialization choke point of the integer tableau.  A row stored
     /// as [`TableRow::Int`] (a pivot's fresh output) is materialized here
     /// on first coefficient access (the per-term write-back, one gcd per
@@ -7649,7 +7649,7 @@ impl Simplex {
     /// The row of `var` in canonical form WITHOUT materializing (the
     /// `&self` readers' view): a `TableRow::Lin` borrows its `Arc`; an
     /// `Int` row constructs the canonical form on the fly (the write-back
-    /// cost, discarded — no memoization possible behind `&self`).  The
+    /// cost, discarded – no memoization possible behind `&self`).  The
     /// `&mut` hot paths use [`Self::row_lin`] (memoizing); a profile that
     /// shows an `&self` reader paying repeatedly on `Int` rows is the
     /// signal to migrate that reader to `&mut`.
@@ -7725,7 +7725,7 @@ impl Simplex {
     }
     /// Iterate over `(basic_var, row)` pairs in the tableau.
     /// Iterate `(basic_var, canonical row)` pairs.  Integer-form rows are
-    /// materialized on the fly (unmemoized — `&self`): the cut/propagation
+    /// materialized on the fly (unmemoized – `&self`): the cut/propagation
     /// readers this serves are cold relative to the pivot loop.
     pub(super) fn tableau_iter(&self) -> Vec<(VarId, std::borrow::Cow<'_, LinExpr>)> {
         self.tableau
@@ -7781,7 +7781,7 @@ impl Simplex {
             .and_then(|b| b.as_ref().and_then(|b| b.value.narrow().map(|v| v.real)))
     }
     /// Full narrow `DeltaRational` upper bound for variable at `idx`, if
-    /// any (a wide bound has no narrow form and reads as absent — the
+    /// any (a wide bound has no narrow form and reads as absent – the
     /// exact reads are [`Self::point_value_exact`] and the bound's
     /// [`BoundValue`] accessors).
     #[inline]

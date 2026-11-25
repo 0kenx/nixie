@@ -1,4 +1,4 @@
-//! Transitive reduction of the binary implication graph — a port of CaDiCaL
+//! Transitive reduction of the binary implication graph – a port of CaDiCaL
 //! `transred.cpp`.
 //!
 //! A binary clause `(¬src ∨ dst)` is **transitively redundant** when the
@@ -6,7 +6,7 @@
 //! binary implication graph; the clause can then be retired. This is the
 //! documented amortizer for hyper-binary resolution, which otherwise
 //! "has the risk to produce too many hyper binary resolvents" (cadical's
-//! own words) — the most probable missing piece behind this repo's
+//! own words) – the most probable missing piece behind this repo's
 //! full-inprocessing-stack-as-default rejections.
 //!
 //! # Soundness rules (each from cadical's source or the inprocessing-rules
@@ -16,7 +16,7 @@
 //!   (original) binary may only be proven transitive through *other
 //!   irredundant* binaries: a path through a learned clause justifies
 //!   deletion only while that learned clause lives, and learned clauses
-//!   are removed by database reduction — deleting an original on such a
+//!   are removed by database reduction – deleting an original on such a
 //!   transient justification under-constrains the formula (the same class
 //!   as the subsume-promotion bugs fixed earlier: the subsumer of an
 //!   original must carry the obligation permanently).
@@ -25,7 +25,7 @@
 //! * **Hyper-derived binaries are not candidates**: they arrive in bulk,
 //!   are mostly reduced away, and were non-transitive at creation.
 //! * **Failed literals**: if the BFS from `src` reaches both `x` and `¬x`,
-//!   `src` is failed — `¬src` is forced as a level-0 unit (and the scan
+//!   `src` is failed – `¬src` is forced as a level-0 unit (and the scan
 //!   re-propagates).
 //! * Retirements go through [`Solver::retire_clause`] (BIG-edge purge +
 //!   live-reason re-pointing), per the deleted-reason hygiene rules.
@@ -55,7 +55,7 @@ impl Solver {
         }
 
         let ticks = self.ticks_focused + self.ticks_stable;
-        // Effort-scheduled rounds (2026-09-07): cadical's window form —
+        // Effort-scheduled rounds (2026-09-07): cadical's window form –
         // `transredeffort` (100‰) of the search work since the last round,
         // in this round's step budget, instead of the cumulative-tick form.
         let budget = if self.inproc_budgets.window > 0 {
@@ -274,7 +274,7 @@ mod tests {
     /// Original `a→c` whose only alternative path runs through LEARNED
     /// binaries (`a→d`, `d→c`): must NOT be retired (a learned
     /// justification is transient; deleting the original on it
-    /// under-constrains the formula — the inprocessing-rules restriction).
+    /// under-constrains the formula – the inprocessing-rules restriction).
     #[test]
     fn original_not_retired_via_learned_path() {
         let mut s = solver_with(4, &[&[-1, 3]]);

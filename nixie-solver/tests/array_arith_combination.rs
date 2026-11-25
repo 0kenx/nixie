@@ -3,14 +3,14 @@
 //!
 //! The read-over-write lemma minted the atom `(= n1 1)` with no trichotomy
 //! clause, and `process_constraint`'s negative-`Eq` branch informs EUF and the
-//! bit-vector solver but not the simplex — so a `false` assignment never
+//! bit-vector solver but not the simplex – so a `false` assignment never
 //! became a strict bound and the tableau was free to set `n1 = 1` anyway. See
 //! `docs/studies/2026-09-14-array-index-equality-from-arithmetic.md`; the
 //! structural guard is
 //! `solver::tests::every_numeric_equality_atom_carries_its_trichotomy`.
 //!
-//! Found from the most ordinary TLA+ there is — a function read at a state
-//! variable's value —
+//! Found from the most ordinary TLA+ there is – a function read at a state
+//! variable's value –
 //!
 //! ```tla
 //! f[k \in 0..3] == IF k <= 0 THEN 0 ELSE 1

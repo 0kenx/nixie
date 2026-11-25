@@ -1,4 +1,4 @@
-# Z3 SAT-caching on `circuit_48in64out` — real lever, does not close the 7× gap (2026-09-10)
+# Z3 SAT-caching on `circuit_48in64out` – real lever, does not close the 7× gap (2026-09-10)
 
 Z3 4.16.0 solves `circuit_48in64out` SAT with **23,149** conflicts (0.63 s).
 Nixie/Kissat sit at ~163k / ~277k (n/z conf **7.02×**). Z3 has no circuit/LUT/XOR/ANF
@@ -22,9 +22,9 @@ Input `satcomp2024/bench/303480ca7e8322d771c94caf4ebd4e95-circuit_48in64out_with
 (2,848 vars, 64 units + 168,000 width-8 LUT cubes).
 
 | arm | verdict | conflicts | T/N |
-| off (`sat_caching=0`) | sat | 231,596 | — |
+| off (`sat_caching=0`) | sat | 231,596 | – |
 | treatment (`=1`) | sat | **153,716** | **0.70×** vs null |
-| matched null (`=2`) | sat | 219,116 | — |
+| matched null (`=2`) | sat | 219,116 | – |
 
 Collateral, same binary:
 

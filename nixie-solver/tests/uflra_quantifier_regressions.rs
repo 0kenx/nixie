@@ -22,7 +22,7 @@
 //!    model's "universe" for an *interpreted* sort is merely a sample of
 //!    the model's values, so restricting an Int/Real Skolem to it
 //!    fabricated an unsat verdict out of values the Skolem was never
-//!    allowed to take — a false `Satisfied` on `2v+1 = y` whose falsifier
+//!    allowed to take – a false `Satisfied` on `2v+1 = y` whose falsifier
 //!    sat outside the sample.  Only uninterpreted sorts (genuinely finite
 //!    domains, the finite-model semantics) may be restricted; the
 //!    ite-chain completion covers the infinite ones.
@@ -37,7 +37,7 @@ fn run(script: &str) -> Vec<String> {
 
 /// Run with a bounded wall-clock budget: the set-family goals honestly
 /// answer `unknown` only after their full round budget, which is minutes
-/// of productive-spin rounds — fine for the solver, too slow for a
+/// of productive-spin rounds – fine for the solver, too slow for a
 /// regression pin (the never-wrong property is verdict-level and does not
 /// need the full budget).
 fn run_bounded(script: &str, timeout_ms: u64) -> Vec<String> {
@@ -62,7 +62,7 @@ fn last_status(output: &[String]) -> &str {
 /// The FFT shape (`smtlib.620487`): the ground disequality
 /// `f3(f4, f5-f6) != -f3(f4, f5)` together with the periodicity axiom
 /// `forall v. f3(f4, f6+v) = -f3(f4, v)` is refuted by the single instance
-/// `v := f5-f6` — e-matching finds it, and the ground layer needs the
+/// `v := f5-f6` – e-matching finds it, and the ground layer needs the
 /// arithmetic congruence `f6 + (f5-f6) = f5` to close (defect 1).
 #[test]
 fn fft_periodicity_is_unsat() {
@@ -83,7 +83,7 @@ fn fft_periodicity_is_unsat() {
 /// The same refutation with the instance already spelled out as a ground
 /// assertion: the quantifier-under-function purification skip must not
 /// leave `(+ f6 (- f5 f6))` outside the arithmetic interface (defect 1's
-/// assert-path exposure — was `unknown`, z3 `unsat`).
+/// assert-path exposure – was `unknown`, z3 `unsat`).
 #[test]
 fn spelled_out_instance_is_unsat() {
     let output = run(r#"
@@ -156,11 +156,11 @@ fn derived_universal_over_int_is_not_falsely_satisfied() {
 /// `20170829-Rodin/smt4688353851435564037`): rounds of heavy instantiation
 /// leave the goal quantifiers with exhausted budgets or stale tuple
 /// evaluations, and the *legacy* finite-exhaustion `Satisfied` then
-/// certified a model the completed interpretation demonstrably refutes —
+/// certified a model the completed interpretation demonstrably refutes –
 /// a false `sat` that many pre-compile binaries also answer.  The nested
 /// checker's second opinion (`check_veto`) now gates that verdict: an
-/// aux-`sat` under the finite-universe restriction — a falsifier at a
-/// domain point the tuple check missed or mis-evaluated — vetoes it.
+/// aux-`sat` under the finite-universe restriction – a falsifier at a
+/// domain point the tuple check missed or mis-evaluated – vetoes it.
 /// Pinned: the goal may be decided `unsat` (it is), or honestly `unknown`;
 /// never `sat`.
 #[test]
@@ -204,13 +204,13 @@ fn rodin_goal_quantifiers_are_never_falsely_satisfied() {
 /// a witness axiom (`~subset(s1,s2) => exists x. member(x,s1) /\ ~member(x,s2)`)
 /// together with the subset-extensionality axiom.  Satisfiable (subset true
 /// except the one ground-false pair, with a member witness for it), and the
-/// convergence machinery now reaches the target subset table — but the
+/// convergence machinery now reaches the target subset table – but the
 /// final `Satisfied` is blocked by the assert path's nested-`exists` gap
 /// (see the study): an asserted `forall` whose body carries the `exists` in
 /// a non-head position is registered unskolemized, so its instances carry
 /// an opaque `exists` Boolean and the witness is never forced into the
 /// model.  Pinned as never-wrong: `sat` once that gap closes, `unknown`
-/// meanwhile — never `unsat` (the spurious-`unsat` shape a first cut of
+/// meanwhile – never `unsat` (the spurious-`unsat` shape a first cut of
 /// the nested-binder registration produced, by emitting a guarded
 /// binder's instances as e-matching units).
 #[test]
@@ -242,7 +242,7 @@ fn witness_extensionality_alternation_is_never_wrong() {
 /// `Bool`-valued functions on an uninterpreted sort with a `Real` member
 /// index.  The completed model with `else = false` satisfies every axiom
 /// vacuously off the finitely many entries, and the nested model check can
-/// certify that over the whole `Real` domain — but the outer loop's
+/// certify that over the whole `Real` domain – but the outer loop's
 /// convergence (else-choice search in the finite-model finder) is not yet
 /// there, so the goal may honestly answer `unknown`.  What it must never
 /// do is answer `unsat`: the two-element model (member always false,
@@ -316,11 +316,11 @@ fn set16_family_is_never_wrong() {
     );
 }
 
-/// The extensional family's middle dressing — the shape that stayed
+/// The extensional family's middle dressing – the shape that stayed
 /// `unknown` after the persistent-model rewrite (the handover's second
 /// named gap): the collision's difference key hidden one application
 /// deeper (`a = difference(union(a b), b)`), where the refutation needs
-/// the literal-tuple instance at `(w, (union a b), b)` — erased from
+/// the literal-tuple instance at `(w, (union a b), b)` – erased from
 /// every engine's candidate space by the semantic-domain collapse until
 /// the literal-binding channel (the assertion gate's materialization
 /// arming the mining's compound points) landed.  z3 refutes; so must we.
@@ -362,7 +362,7 @@ fn extensional_hidden_difference_key_refutes() {
 /// recorded *nothing* for the sort's unpinned classes (the declared
 /// constants had no values), the completion's synthetic seeder minted a
 /// phantom `u!0..u!7` universe, and the enumeration axiom falsified at
-/// every phantom forever — `unknown` on a goal z3 refutes.  With the
+/// every phantom forever – `unknown` on a goal z3 refutes.  With the
 /// export (the e-graph's classes as the readback's values, gated off
 /// table goals), the universe is the quotient, the falsifier's
 /// identification instances land, and the loop refutes.
@@ -395,7 +395,7 @@ fn pigeonhole_enumeration_refutes_through_the_euf_export() {
 /// the Real variant above): after the ill-typed-diagonal repair, the
 /// artifact-default repair, and the fresh-row-element mint (see the
 /// study's thirteenth follow-up), the constructor tables close and the
-/// family answers `sat` — z3 agrees (`Set!val!0..1`, `a` the empty
+/// family answers `sat` – z3 agrees (`Set!val!0..1`, `a` the empty
 /// set).  This is the arc's convergence pin: a regression here means one
 /// of the three mechanisms regressed.
 #[test]
@@ -439,13 +439,13 @@ fn set16_family_answers_sat() {
 }
 
 /// The `set9` corpus goal, verbatim shape: the same ten axioms with
-/// `not (seteq (difference a b) (difference b a))` — this needs the
+/// `not (seteq (difference a b) (difference b a))` – this needs the
 /// *powerset closure* of the used rows (disjoint non-empty base rows;
 /// union/intersection then demand the full and empty rows), which the
 /// 2-element frozen structure lacks until the fresh-row mint grows it.
 /// It also needed the structure-membership drop of entries keyed at
 /// out-of-domain compounds (`union(a,b)`, `skf!0(difference(a,b),
-/// difference(b,a))` — aux exploit routes the completed structure
+/// difference(b,a))` – aux exploit routes the completed structure
 /// never justified).  z3 answers `sat`; this is the convergence pin
 /// for both mechanisms on the harder half of the family.
 #[test]
@@ -486,7 +486,7 @@ fn set9_family_answers_sat() {
 /// The `set19` corpus goal, verbatim shape: `subset a d` plus
 /// `not (subset (difference b a) (difference b d))` over the same ten
 /// axioms.  z3 4.16.0 TIMES OUT on this goal; nixie answers `sat`
-/// (~2 min) — a strict improvement over the reference, pinned so the
+/// (~2 min) – a strict improvement over the reference, pinned so the
 /// mechanism that closes it (the fresh-row mint plus the
 /// structure-membership drop) cannot silently regress to `unknown`.
 #[test]
@@ -530,7 +530,7 @@ fn set19_family_answers_sat() {
 /// model's universes contain bound-variable artifact terms (entry args
 /// harvested by `collect_universes_from_model`), and folding
 /// `(= ?s1 ?s2)` to `false` for symbolic operands fabricates a
-/// pointwise-constant body the completion does not justify — on
+/// pointwise-constant body the completion does not justify – on
 /// `(or (not (= s1 s2)) (not (seteq s1 s2)))`-shaped bodies it would
 /// certify satisfaction of an axiom that fails at every diagonal
 /// (`seteq(z,z) = (z=z) = true`, so the disjunct is false there).  z3
@@ -574,8 +574,8 @@ fn set16_diagonal_diseq_disjunct_is_never_falsely_satisfied() {
 
 /// The emission-side binder collapse: an instance of
 /// `(forall z. (forall x. P(x) => P(x)) => g(z))` must reach the ground
-/// solver with its tautological antecedent folded away — the forcing unit
-/// `g(z)` — instead of a wrapper the SAT core can dodge by committing the
+/// solver with its tautological antecedent folded away – the forcing unit
+/// `g(z)` – instead of a wrapper the SAT core can dodge by committing the
 /// binder's free Boolean FALSE.  With `(not (g 0))` asserted the goal is
 /// refuted exactly by the instance at `z := 0`.
 #[test]
@@ -599,10 +599,10 @@ fn tautological_antecedent_instance_becomes_a_forcing_unit() {
 /// The `quant_fuzz` false-`unsat` (2026-09-14, found within 120 generated
 /// cases): a tautological-antecedent axiom over two disequal constants,
 /// where the falsifier miner's *substituted completed body* bakes in the
-/// entry-chain conditions — one of which is the asserted
+/// entry-chain conditions – one of which is the asserted
 /// `(not (= c1 c0))`.  The (now removed) blocking-clause emission
 /// recorded that disequality as a "commitment" and blocked it, asserting
-/// `c1 = c0` against the assertion — instant refutation of a goal whose
+/// `c1 = c0` against the assertion – instant refutation of a goal whose
 /// only models keep the constants distinct (z3: `sat`).  The verdict must
 /// never be `unsat`.
 #[test]
@@ -623,7 +623,7 @@ fn tautological_axiom_over_disequal_constants_is_never_unsat() {
     let status = last_status(&output);
     assert!(
         status == "sat" || status == "unknown",
-        "the axiom's antecedent is valid, so P is forced everywhere — satisfiable \
+        "the axiom's antecedent is valid, so P is forced everywhere – satisfiable \
          with c0 != c1 (z3: sat); got {status}"
     );
 }
@@ -631,13 +631,13 @@ fn tautological_axiom_over_disequal_constants_is_never_unsat() {
 /// The strengthened `quant_fuzz` false-`sat` (2026-09-14, seed 42): two
 /// definitional axioms that contradict (`P = not (phi => phi)` makes `P`
 /// pointwise false; the tautological-antecedent axiom forces `P`
-/// everywhere) — z3 refutes; the solver certified `sat` once the
+/// everywhere) – z3 refutes; the solver certified `sat` once the
 /// ground-universe filter admitted free constants (`2700e3d7`, since
 /// reverted).  Root-cause trail (see the study's sixth pass): an
 /// artifact variable outside the check's bound set leaked into the
 /// completion's entry chains, survived the falsifier substitution, and
 /// the mining eval's *empty* bound set made the groundness fold vacuous
-/// — the fabrication class the filter admission exposed.  The verdict
+/// – the fabrication class the filter admission exposed.  The verdict
 /// must never be `sat`.
 #[test]
 fn contradictory_definitional_twins_are_never_sat() {
@@ -668,7 +668,7 @@ fn contradictory_definitional_twins_are_never_sat() {
 /// has a *collapsed* nested-quantifier premise that mentions no bound
 /// variable, so the fragment certifier's EU walk admitted the body, the
 /// round-0 instances were asserted with the raw `forall z. true` wrapper
-/// (a free Boolean the SAT core committed FALSE — the dodge), and
+/// (a free Boolean the SAT core committed FALSE – the dodge), and
 /// `sat_certify` saturation later observed "every relevant instance
 /// emitted + a ground model" over a set the model only satisfied in its
 /// Tseitin encoding.  z3 refutes; the verdict must never be `sat`.

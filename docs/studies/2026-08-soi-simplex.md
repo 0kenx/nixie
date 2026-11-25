@@ -8,7 +8,7 @@ FMCAD'13; cvc5 `soi_simplex.cpp`), flag-gated (`SimplexConfig::enable_soi`,
 default off; `NIXIE_ARITH_SOI=1` experiment knob), objective over exact
 delta-rationals, existing degeneracy discipline, **the current
 one-violation path as fallback, and all conflicts through the existing
-exact explanation path** (no new certificate surface — the doc's own
+exact explanation path** (no new certificate surface – the doc's own
 requirements, which this slice followed exactly).
 
 Go/no-go: deterministic work metrics on the arithmetic corpora; a reduced
@@ -26,7 +26,7 @@ pivot count is insufficient if row work increases; Z3 parity required.
   own opposite bound (bound flips), exact delta propagation;
 * **frozen-focus discipline** (added mid-experiment, cvc5
   `adjustFocusAndError` parity): the objective is built from a frozen
-  error set and driven to its box minimum before re-focusing — rebuilding
+  error set and driven to its box minimum before re-focusing – rebuilding
   the objective every iteration lets the total violation ratchet (fix
   error A by creating error B; each round's own sum decreases while the
   union does not) and the descent wanders;
@@ -46,7 +46,7 @@ pivot count is insufficient if row work increases; Z3 parity required.
 * **End-to-end: neutral.** Paired 40-cell A/B over the QF_LIA/QF_UFLIA/
   QF_IDL/QF_UFIDL/QF_NIA differential sample (15 s matched caps,
   CPU-pinned, process-group-safe): solved 19/40 in BOTH arms, one flip
-  (`1527.smt2`, `unknown` → timeout — a file that bails quickly off-arm).
+  (`1527.smt2`, `unknown` → timeout – a file that bails quickly off-arm).
   Spot timings: c10_i 19.5→20.3 s, hash_sat_05_06 9.0→9.2 s.
 * **Pivot metrics: inconclusive on a toy generator.** The random-system
   bench makes extremely degenerate boxes where BOTH drivers thrash
@@ -58,12 +58,12 @@ a win; end-to-end neutral. This is the go/no-go gate doing its job.
 
 ## Why the simplified driver is neutral (the delta to the published gains)
 
-cvc5's SOI is not "a global objective instead of one violation" — that
+cvc5's SOI is not "a global objective instead of one violation" – that
 simplification is what this slice measured neutral. The published gains
 rest on machinery this slice deliberately did not port:
 
 1. **ErrorSet with signals** (`error_set.cpp`): incremental error tracking
-   and `SUM_METRIC` selection — not a per-iteration rebuild;
+   and `SUM_METRIC` selection – not a per-iteration rebuild;
 2. **witness-improvement classes** (`ConflictFound / ErrorDropped /
    FocusImproved / ...`): step acceptance and Bland arming keyed on
    classified outcomes, not raw objective deltas;
@@ -83,7 +83,7 @@ bound-flip delta propagation, and the differential harness.
 
 1. **A verdict-flip table built from mismatched runs is garbage.** The
    first A/B compared a 10 s-cap differential run against quick off-runs
-   whose output parser returned `?` for 45 cells — reported as "45
+   whose output parser returned `?` for 45 cells – reported as "45
    regressions", which a proper paired rerun reduced to **one** noise
    flip. Same file, same caps, real verdict extraction, or nothing.
 2. **Toy generators can be unmeasurable.** Random ±1-3-coefficient rows

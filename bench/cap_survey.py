@@ -9,7 +9,7 @@ This survey measures the two things a re-tuning decision needs:
 
 1. **Where the workloads actually sit.** Generators span element counts
    4..64 over the bag and set surfaces, and report the verdict at the
-   default caps vs raised caps (`NIXIE_CAPS=…`), with runtimes — the
+   default caps vs raised caps (`NIXIE_CAPS=…`), with runtimes – the
    completeness each band buys and what it costs.
 2. **What the corpora hit.** Any `.smt2` files passed as arguments are run
    under `NIXIE_DEBUG_CAPS=1` and the `[cap]` lines tallied.

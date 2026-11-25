@@ -3,7 +3,7 @@
 //!
 //! Those corpora are **gitignored external data** (see `.gitignore`: they
 //! are multi-hundred-thousand-file trees that are deliberately not
-//! tracked), which means **git worktrees do not contain them** — only the
+//! tracked), which means **git worktrees do not contain them** – only the
 //! primary checkout has them on disk.  A test that reads a corpus file
 //! from a worktree therefore used to fail in one of three confusing ways:
 //! a cryptic `No such file or directory` panic that looked like a solver
@@ -13,12 +13,12 @@
 //!
 //! This crate makes the failure mode uniform and actionable:
 //!
-//! * [`read`] / [`require_path`] — the default: **fail loudly** with a
+//! * [`read`] / [`require_path`] – the default: **fail loudly** with a
 //!   `[corpus-missing]` diagnosis that detects linked worktrees, prints
 //!   the exact `ln -s` command to import the corpus from the primary
 //!   checkout, and names the opt-out.  A soundness test that cannot run
 //!   its input must never report success.
-//! * `NIXIE_CORPUS_MISSING=skip` — an explicit, per-run opt-out: tests
+//! * `NIXIE_CORPUS_MISSING=skip` – an explicit, per-run opt-out: tests
 //!   written with [`read_or_skip!`] print a visible per-file note and
 //!   return early (the test then shows as *passed*, so reserve this for
 //!   environments that intentionally run corpus-less).
@@ -58,7 +58,7 @@ pub fn corpus_path(rel: &str) -> PathBuf {
 /// materialised in the primary checkout; a linked worktree used to fail
 /// every corpus test with `[corpus-missing]` until the operator symlinked
 /// the roots by hand. Since a worktree shares the primary's repository,
-/// reading the primary's copy is exactly equivalent to that symlink — so
+/// reading the primary's copy is exactly equivalent to that symlink – so
 /// the reader now does it automatically. Returns `None` only when the file
 /// exists in neither checkout (the loud diagnosis covers both paths).
 fn resolve_existing(rel: &str) -> Option<PathBuf> {
@@ -105,8 +105,8 @@ pub fn read_opt(rel: &str) -> Option<String> {
 ///
 /// # Panics
 ///
-/// With a `[corpus-missing]` message when the file is not present —
-/// including worktree detection and the exact symlink command to fix it —
+/// With a `[corpus-missing]` message when the file is not present –
+/// including worktree detection and the exact symlink command to fix it –
 /// unless `NIXIE_CORPUS_MISSING=skip`, in which case this still panics:
 /// use [`read_or_skip!`] for the visible-skip form.
 pub fn read(rel: &str) -> String {
@@ -139,7 +139,7 @@ pub fn require_path(rel: &str) -> String {
 ///
 /// Expands to an expression of type `String`: the file's content when
 /// present; when absent, prints a `[corpus-skip]` note (only under
-/// `NIXIE_CORPUS_MISSING=skip`) and `return`s from the enclosing test —
+/// `NIXIE_CORPUS_MISSING=skip`) and `return`s from the enclosing test –
 /// which must therefore return `()`.
 #[macro_export]
 macro_rules! read_or_skip {
@@ -184,7 +184,7 @@ fn missing_diagnosis(rel: &str, path: &Path) -> String {
 
 /// If `root` is a linked git worktree, resolve its primary checkout's
 /// root directory (best effort; `None` when not a worktree or anything is
-/// unexpected — diagnostics then fall back to the generic message).
+/// unexpected – diagnostics then fall back to the generic message).
 fn linked_worktree_primary(root: &Path) -> Option<PathBuf> {
     let dot_git = root.join(".git");
     if !dot_git.is_file() {

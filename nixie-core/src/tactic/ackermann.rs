@@ -189,7 +189,7 @@ impl<'a> AckermannizeTactic<'a> {
     /// Apply ackermannization to a list of assertions, returning the
     /// transformed assertion list together with the application→fresh-
     /// variable substitution map (for callers that must publish values
-    /// for the original application terms — the transcendental δ-ICP
+    /// for the original application terms – the transcendental δ-ICP
     /// dispatcher).  `None` when nothing was eliminated.
     ///
     /// This is the core both of [`Self::apply_mut_with_converter`] and of
@@ -359,7 +359,7 @@ impl<'a> AckermannizeTactic<'a> {
                     // The arguments are compared as the terms the
                     // SUBSTITUTION leaves behind: a nested application
                     // (`f(f x)`) has applications as arguments, and the
-                    // goal's assertions no longer contain them — the
+                    // goal's assertions no longer contain them – the
                     // congruence must speak about their fresh variables
                     // (the raw `Apply` terms here made every downstream
                     // consumer that had eliminated applications see a

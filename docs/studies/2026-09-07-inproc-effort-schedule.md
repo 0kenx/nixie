@@ -15,12 +15,12 @@ cadical `limit.hpp SET_EFFORT_LIMIT`: **every** inprocessing pass gets
 `effort‰ × (search work since that pass's last run)`, and is **skipped
 entirely** when the allowance is below `thresh × clauses` (kimits: probe 8‰,
 vivify 50‰/thresh 20, subsume 1000‰, factor 50‰).  Round interval
-`inprobe.cpp`: `25 × inprobeint × log10(rounds + 9)` conflicts — log-growing,
+`inprobe.cpp`: `25 × inprobeint × log10(rounds + 9)` conflicts – log-growing,
 not flat.  kissat `kimits.h` is the same shape (effort-per-mille windows,
 `probeint × nlogn × size-factor`).
 
 Our port before this study: flat `inprocessing_interval = 4000` conflicts
-forever, and **absolute** budgets — vivify 10M props **per round** (measured:
+forever, and **absolute** budgets – vivify 10M props **per round** (measured:
 g2-slp spends 5–9M round props against ~2.9M search props per interval; the
 rounds cost 0.4–3.6× the search work between them, vs the references' 5–100‰).
 No skip threshold anywhere.
@@ -43,7 +43,7 @@ No skip threshold anywhere.
 
 Per-pass cost/yield attribution added to `NIXIE_INPROC_TRACE` (propagation per
 pass; the old trace attributed only yield, and `shr` counts conflict-side
-minimization, not vivify — vivify's cost was invisible).
+minimization, not vivify – vivify's cost was invisible).
 
 ### Matched null (lag-2 window scramble)
 
@@ -77,23 +77,23 @@ their true window.
 
 Round cost collapsed 100–1000× (g2-slp 5–9M → ~5k props/round; crypto1
 ~300k → ~60) with subsumption yield preserved.  **No observable separates the
-τ=0 winners from the τ=0 losers** (DB size, window ratio, SAT/UNSAT all mix) —
+τ=0 winners from the τ=0 losers** (DB size, window ratio, SAT/UNSAT all mix) –
 the split is chaos-dominated, consistent with the 2026-08 rephase study's
 null-beats-signal finding at decision points of this kind.
 
-`Timetable` root-caused during screening: any single round — even zero-yield,
-zero-prop (interval 8 000/20 000/50 000, probing off) — re-rolls its
+`Timetable` root-caused during screening: any single round – even zero-yield,
+zero-prop (interval 8 000/20 000/50 000, probing off) – re-rolls its
 walk-solved trajectory (off solves via walk #2's phase descent at 33 k
 conflicts; the round's root backtrack is trajectory-identical in shape to a
 restart, and restarts already interrupt descents every ~23 conflicts there).
 It is a variance file, not a mechanism casualty: 64_25 (22.6 M clauses) is the
-same class — off's 4.5 k-conflict solve is lucky, any round re-rolls it.
+same class – off's 4.5 k-conflict solve is lucky, any round re-rolls it.
 
 ## Arms (decision measurement)
 
 | arm | env | role |
 |---|---|---|
-| `off` | (env-unset) | baseline — must reproduce stored `aa293fc` cells bit-exactly (identity gate) |
+| `off` | (env-unset) | baseline – must reproduce stored `aa293fc` cells bit-exactly (identity gate) |
 | `sched` | `INPROCESS=1 NIXIE_INPROC_SCHED=1` | treatment (cadical-literal τ=20) |
 | `sched-vivon` | `INPROCESS=1 NIXIE_INPROC_SCHED=1 NIXIE_INPROC_VIVON=1` | treatment variant (τ=0) |
 | `schednull` | `INPROCESS=1 NIXIE_INPROC_SCHED_NULL=1` | matched null (lag-2) |
@@ -113,12 +113,12 @@ same class — off's 4.5 k-conflict solve is lucky, any round re-rolls it.
   corpus geomean ≤ **0.95** vs off AND solved-at-60s ≥ **50/54** AND T/N ≤
   1.05 AND ≥ 2/3 of winner-tail medians ≤ 0.95 AND parity/differential clean
   at the new default.
-- **Neutral**: geomean in (0.95, 1.05] — report, no landing.
-- **No-go**: geomean > 1.05 or solved < 50/54 — negative result documented
+- **Neutral**: geomean in (0.95, 1.05] – report, no landing.
+- **No-go**: geomean > 1.05 or solved < 50/54 – negative result documented
   here with per-family data; the schedule stays env-gated default-off.
 
 Falsification: apparent wins living only on high-variance files (§6), or
-inverting at fresh seeds, or solved-at-cap losses — trajectory reshuffle, not
+inverting at fresh seeds, or solved-at-cap losses – trajectory reshuffle, not
 effect.  A geomean win with a score loss is **not** landable at default, but
 the negative result must name the flip list and its seed-stability.
 
@@ -131,18 +131,18 @@ All 162 cells recorded (suite `sc24f-effort`, sha `5ca1eaf`, binary sha256
 verdict disagreements.
 
 **Identity gate**: the `off` arm reproduces the stored standing-table cells
-(0223f8e suite) — 36/36 decisive cells conflicts-bit-identical, 0 mismatches
+(0223f8e suite) – 36/36 decisive cells conflicts-bit-identical, 0 mismatches
 (the other 18 stored cells are concurrent-layout TOs, not comparable).  The
 default binary is trajectory-identical to the shipped baseline.
 
 | arm | solved / 54 | conflicts geomean vs off (both-decisive, n=31) | sat / unsat split |
 |---|---|---|---|
-| off | **50** | 1.00× | — |
+| off | **50** | 1.00× | – |
 | sched (τ=20) | 44 | 0.972× | 1.065× (n=22) / **0.779×** (n=9) |
 | sched-vivon (τ=0) | 44 | 0.979× | 1.059× (n=22) / **0.809×** (n=9) |
 
 The geomeans sit **inside the ±5 % neutrality band** (and miss the ≤ 0.95 go
-bar); the solved-at-cap bar (≥ 50/54) fails outright — **6 sat→TO flips per
+bar); the solved-at-cap bar (≥ 50/54) fails outright – **6 sat→TO flips per
 arm, 0 gains**:
 
 * sched loses: mp1-klieber, Timetable, noL-11-14, af-synthesis, frb65-12-2,
@@ -151,15 +151,15 @@ arm, 0 gains**:
   64_25.
 * **Every loss is a SAT file the off-arm solves by a short lucky trajectory**
   (walk descent or early model); the flip sets differ between arms with no
-  observable separating winners from losers — the τ-split screening found the
+  observable separating winners from losers – the τ-split screening found the
   same wall (DB size, window ratio, SAT/UNSAT all mix).
 
 The per-family structure is consistent and real: **UNSAT-family 0.78–0.81×**
-(refutation benefits from the maintained clause DB — 6s167 0.74×, FEC 0.195×,
+(refutation benefits from the maintained clause DB – 6s167 0.74×, FEC 0.195×,
   x9-09054 0.37×, worker 0.52×), **SAT-family 1.06×** (model-finding files pay
 for rounds that cannot help them).  This is the same split the 2026-09-04
 study measured for the flat bundle, now with round cost no longer a
-confounder: the 100–1000× round-cost collapse did not rescue the SAT side —
+confounder: the 100–1000× round-cost collapse did not rescue the SAT side –
 the harm is the rounds' trajectory perturbation, not their cost.
 
 **Verdict: no-go per the pre-registered rule** (solved < 50/54; geomean in
@@ -167,7 +167,7 @@ the neutral band).  The schedule stays env-gated, default off.  What the
 study did establish as reusable: the cost/yield attribution telemetry, the
 budget plumbing (window marks, per-pass budgets), the cadical-faithful round
 shape, and the measured fact that **the mid-search inprocessing lever is a
-refutation-side lever on this corpus** — its wins and losses are verdict-class
+refutation-side lever on this corpus** – its wins and losses are verdict-class
 correlated, which any future gating policy must respect.
 
 ### Tails (10 seeds winners / 5 seeds losers, CRN, 330 cells recorded)
@@ -179,13 +179,13 @@ correlated, which any future gating policy must respect.
 | worker_550 | 50 870 | 17 996 | 15 155 | 45 734 | **0.746** | 0.585 | 0.470 | 0/0/1/2 |
 | summle_X4044 | 81 122 | 67 458 | 79 275 | 75 768 | **0.781** | 0.694 | 0.855 | 0/0/0/0 |
 | mrpp_4x4 | 275 267 | 243 154 | 201 547 | 154 664 | **1.670** | 1.015 | 0.803 | 0/0/0/0 |
-| noL-11-14 | 2 851 084 | TO 10/10 | 1 723 271 | 815 582 | — | — | — | 9/10/9/8 |
-| Timetable_C_392 | 458 262 | TO 5/5 | TO 5/5 | — | — | — | — | 2/5/5/– |
-| af-synthesis | 397 619 | 210 605 | 145 163 | — | — | 0.464 | 0.340 | 1/0/2/– |
-| frb65-12-2 | 349 098 | 679 071 | 294 722 | — | — | 3.622 | 0.537 | 1/0/0/– |
-| g2-slp | 414 236 | 387 143 | 336 822 | — | — | 0.867 | 0.712 | 2/1/0/– |
-| rbsat | TO 5/5 | 321 902 | 824 606 | — | — | — | — | 5/2/4/– |
-| 64_25 | 8 315 | 4 746 | TO 5/5 | — | — | 0.932 | — | 0/4/5/– |
+| noL-11-14 | 2 851 084 | TO 10/10 | 1 723 271 | 815 582 | – | – | – | 9/10/9/8 |
+| Timetable_C_392 | 458 262 | TO 5/5 | TO 5/5 | – | – | – | – | 2/5/5/– |
+| af-synthesis | 397 619 | 210 605 | 145 163 | – | – | 0.464 | 0.340 | 1/0/2/– |
+| frb65-12-2 | 349 098 | 679 071 | 294 722 | – | – | 3.622 | 0.537 | 1/0/0/– |
+| g2-slp | 414 236 | 387 143 | 336 822 | – | – | 0.867 | 0.712 | 2/1/0/– |
+| rbsat | TO 5/5 | 321 902 | 824 606 | – | – | – | – | 5/2/4/– |
+| 64_25 | 8 315 | 4 746 | TO 5/5 | – | – | 0.932 | – | 0/4/5/– |
 
 Three findings the tails add beyond the corpus row:
 
@@ -198,16 +198,16 @@ Three findings the tails add beyond the corpus row:
    seed-robust systematic loss is **Timetable (TO 5/5 under both
    treatments)**; noL-11-14 is a borderline file in every arm (off TOs it
    9/10).  A single-seed 44-vs-50 corpus score is not a P(solve)
-   statement — the definitive score experiment is the pre-registered
+   statement – the definitive score experiment is the pre-registered
    multi-seed corpus below.
 2. **The tail WINS are seed-robust and large**: 6s167 0.63–0.66×, FEC
    0.46–0.49×, worker 0.47–0.59×, af-synthesis 0.34–0.46×, frb65-vivon
-   0.54×, g2-slp-vivon 0.71× — every one wins at every paired seed.
+   0.54×, g2-slp-vivon 0.71× – every one wins at every paired seed.
 3. **T/N (reactivity) is negative**: 1.546 / 1.371 / 1.670 vs 0.781 /
-   0.746, aggregate ≈ **1.156** — the lag-2 scrambled window beats the
+   0.746, aggregate ≈ **1.156** – the lag-2 scrambled window beats the
    reactive window on 3 of 5 anchors, and the null's medians are the best
    of all arms on 4 of 6.  The *reactivity* (budget ∝ work since the last
-   round) carries no positive signal — whatever value the schedule has
+   round) carries no positive signal – whatever value the schedule has
    lives in the budget LEVEL (rounds bounded to a small share of search)
    and the interval growth, not in tracking the window.  This joins the
    repo's matched-null-beats-treatment series (random deletion vs glue
@@ -218,7 +218,7 @@ Three findings the tails add beyond the corpus row:
 **No-go per the pre-registered rule** (corpus solved 44 < 50; geomean
 0.972/0.979 inside the ±5 % band).  The effort schedule stays env-gated,
 default off.  Landed as reusable infrastructure: the window/budget plumbing,
-the per-pass cost attribution telemetry, and the measured decomposition —
+the per-pass cost attribution telemetry, and the measured decomposition –
 mid-search inprocessing on this corpus is a **refutation-side lever**
 (UNSAT-family 0.78–0.81×, seed-robust) whose harm concentrates on
 walk-luck SAT trajectories; round cost was exonerated (100–1000× collapse
@@ -226,14 +226,14 @@ changed nothing about the SAT side).
 
 Context: kissat runs its full inprocessing pipeline on these same files
 (Timetable: 4 probings, 2 eliminations, backbone/factor/kitten sweeps) and
-solves them — the fragility is our search's dependence on lucky
+solves them – the fragility is our search's dependence on lucky
 walk/descent trajectories, not inprocessing per se.
 
 ### Where the residual conflicts gap lives: kissat tick decomposition (2026-09-07)
 
 After the effort schedule, the anchor files still short of kissat were
 re-examined against kissat's own deterministic tick counters
-(`kissat --statistics`, full solves, 60 s cap) — §12's rule: check first
+(`kissat --statistics`, full solves, 60 s cap) – §12's rule: check first
 whether a gap lives in a component we do not run.
 
 | file | nixie off | nixie best arm | kissat | kissat inproc tick share | dominant components |
@@ -247,28 +247,28 @@ whether a gap lives in a component we do not run.
 Readings, ranked by size:
 
 1. **FEC and mrpp are at kissat conflicts-parity** once the rounds run at
-   bounded effort — the schedule work closed those classes.
+   bounded effort – the schedule work closed those classes.
 2. **worker_550 is a factor/BVA class**: kissat refutes in 2 003 conflicts
    (ours: 28 320 best) while spending **71 % of its ticks in `factor`**
    (kissat 4.0's structured factoring/BVA, mid-search, effort-budgeted).
    The search itself is trivial after the restructuring; no retention or
    branching policy closes a 14× conflicts gap.
 3. **Timetable is not a conflicts gap at all** (kissat 32 k ≈ our off
-   33 k): kissat pays 67 % of its ticks in inprocessing and still solves —
+   33 k): kissat pays 67 % of its ticks in inprocessing and still solves –
    its rounds are self-financing because the components produce structure,
    while ours (subsume/vivify/transred) perturb walk-luck trajectories
    without restructuring the formula.
 4. **6s167's 3.8× residue tracks kissat's 30 % inprocessing share**
-   (probing 18 % + kitten 7.5 %) — our rounds closed the subsume/vivify
+   (probing 18 % + kitten 7.5 %) – our rounds closed the subsume/vivify
    part; the remainder is component depth (kissat's probing sweeps are
    ~26 % of its search work), not retention or branching.
 
 **Campaign redirection**: the conflicts-to-verdict factor (1.33×) does not
-live in search policy — retention shape (screened null, follow-up #3),
+live in search policy – retention shape (screened null, follow-up #3),
 retention signal (2026-09-02 nulls), reactivity (T/N 1.16 above), and
 branching family (VMTF+LRB ≈ kissat EVMTF) are all measured or read out.
 It lives in **inprocessing components we do not run**, ranked by measured
-share: (a) **mid-search factor/BVA** — dominates the worker class
+share: (a) **mid-search factor/BVA** – dominates the worker class
 (14×), large on Timetable/FEC; the landed `solver/bva.rs` infrastructure
 is pre-search-only, so the port is mid-search safety + effort budgets;
 (b) **kitten-class sweeps** (sub-solver equivalences/backbone), 5–11 %;
@@ -286,13 +286,13 @@ Two rewrite rules landed as env-gated, default-off infrastructure in
    groups sharing `|G| ≥ 2` common literals.  Fuzz: 30 k differential +
    10 k null iterations, 0 mismatches, 0 invalid models, introductions
    confirmed.  **Corpus screen: ZERO introductions on every standing
-   file** — the corpus's original clause sets carry no beneficial
+   file** – the corpus's original clause sets carry no beneficial
    `|G| ≥ 2` structure left after pre-search BVE+ELS (consistent with the
    2026-08-23 pre-search SBVA null).  Also fixed en route: the candidate
-   collection iterated a `RandomState` `HashMap` (per-process order —
+   collection iterated a `RandomState` `HashMap` (per-process order –
    nondeterministic rank ties); now sorted-key order.
 2. **AND-gate factoring** (kissat `factor`'s rewrite, single-hop slice):
-   `k ≥ 2` original binaries sharing a tail `q` — `(x_i ∨ q)` — become a
+   `k ≥ 2` original binaries sharing a tail `q` – `(x_i ∨ q)` – become a
    fresh hub `t` with `(¬t ∨ q)` and `(t ∨ x_i)`, originals deleted.
    Deliberately NOT literal-saving (+1 clause, +2 literals per group);
    the return is search structure: the hub centralizes `k` shared
@@ -325,12 +325,12 @@ chaos.  **Pre-registered next step (the full study)**: 54-file corpus ×
 bar: paired P(solve) ≥ baseline AND conflicts geomean ≤ 0.95 AND T/N ≤
 1.05.  kissat's full `factor` generalizes this rule with quotient CHAINS
 (divider binaries per hop, shared-tail matching across hops, structural
-scoring) — the single-hop slice here is the minimal sound core of it.
+scoring) – the single-hop slice here is the minimal sound core of it.
 
 ### The combined 5-seed corpus + tails (2026-09-07 final: 1 230 cells recorded)
 
 Machine layout note: this program ran pinned to **E-cores 10–19** (the
-allocated cores) with the 60 s wall cap — per-file arm pairing keeps every
+allocated cores) with the 60 s wall cap – per-file arm pairing keeps every
 comparison internally consistent, but absolute solved counts are NOT
 comparable to the P-core standing table, and the tails' TO columns are
 E-core-contaminated (files solving in ~20 s on P-cores TO here).  A
@@ -343,36 +343,36 @@ suite `sc24f-ms5b`):
 
 | arm | P(solve) | paired flips vs off | conflicts geomean vs off |
 |---|---|---|---|
-| off | 194/270 | — | 1.00× |
+| off | 194/270 | – | 1.00× |
 | sched-vivon | 191/270 | −16/+13, sign-test **p = 0.711** | **0.8298×** (n=113; sat 0.837 / unsat 0.813) |
 | gate | 187/270 | −22/+15, p = 0.324 | **0.8200×** (n=107) |
 
 **0 verdict mismatches** across all 810 paired cells; the two
 singleton-decisive SATs (mdp gate s1, circuit_64i gate s5) re-run with
 `PRINT_MODEL` and model-validated against the original CNFs (0 violated
-clauses, conflicts reproduced exactly).  gate/vivon = 0.9616× — the
+clauses, conflicts reproduced exactly).  gate/vivon = 0.9616× – the
 AND-gate adds nothing corpus-wide beyond the effort schedule.
 
 **Tails** (12 files × 4 arms × 10 seeds = 420 cells, suite
 `sc24f-effort-tails2`; decisive medians valid, TO columns ignored):
 
-* T/N vivon-vs-schednull ≈ **0.95** (per-file 0.46–1.47, mixed) — the
+* T/N vivon-vs-schednull ≈ **0.95** (per-file 0.46–1.47, mixed) – the
   window-reactivity signal remains null; the schedule's value is the
   budget level + interval growth (consistent with the corpus-level
   1.16 measured earlier).
 * T/N gate-vs-gatenull: 0.875/0.974/1.011 on the three files with valid
-  pairs — the AND-gate rank signal is also ≈ null.
+  pairs – the AND-gate rank signal is also ≈ null.
 * **frb65 damage confirmed**: gate 821 888 conflicts / 4 TOs vs vivon
-  294 722 / 1 TO at 10 seeds — the screen's 0.52× was default-seed luck.
-* worker 10-seed medians: vivon **15 155**, gate 24 022 — even on the
+  294 722 / 1 TO at 10 seeds – the screen's 0.52× was default-seed luck.
+* worker 10-seed medians: vivon **15 155**, gate 24 022 – even on the
   factor class, vivon is the better arm; the single-hop AND-gate's
   worker 0.42× screen was seed luck too.
 
 ### Final verdicts (2026-09-07)
 
 1. **`sched-vivon` (effort schedule + budgeted vivify)**: a large,
-   multi-seed, corpus-wide conflicts win — **0.83× geomean, both
-   verdict families, 0 mismatches** — with P(solve) statistically
+   multi-seed, corpus-wide conflicts win – **0.83× geomean, both
+   verdict families, 0 mismatches** – with P(solve) statistically
    indistinguishable from off (p = 0.71).  The pre-registered letter
    ("P(solve) not lower") fails by 3 cells on the point estimate
    (191 vs 194), so **no default flip**: per §11.1 a ±3-cell deficit on
@@ -382,39 +382,39 @@ AND-gate adds nothing corpus-wide beyond the effort schedule.
    stays ≥ 0.5 the flip lands under the enablement rule (0
    disagreements + solved-not-worse).
 2. **AND-gate factoring**: corpus-neutral over vivon (0.96×, inside the
-   band), tail-negative on frb65/worker medians, rank signal null —
+   band), tail-negative on frb65/worker medians, rank signal null –
    **stays env-gated**.  Its mechanism thesis (hub restructuring of
    shared-tail binaries) remains sound and fuzz-clean; the payoff needs
    kissat's full chain/hop rule, not the single-hop slice.
 3. The effort schedule's round machinery (budgets, interval growth,
    attribution telemetry) is now the standing substrate for every
    future inprocessing component (factor chains, kitten sweeps,
-   deeper probing) — each rides `InprocBudgets` with its own effort
+   deeper probing) – each rides `InprocBudgets` with its own effort
    constant and matched null.
 
 ### Open follow-ups (pre-registered next steps, re-ranked 2026-09-07)
 
-0. **Mid-search factor/BVA port** — **first cut landed** (see the BVA +
+0. **Mid-search factor/BVA port** – **first cut landed** (see the BVA +
    AND-gate slices section above): k-way BVA measured corpus-null (no
    groups anywhere), AND-gate factoring screens 0.42–0.71× on the
    factor classes with the full study pre-registered.  kissat's full rule
    adds quotient chains + structural hops on top of the landed core.
-1. **Multi-seed corpus P(solve) run** — **DONE** (the combined 5-seed run
+1. **Multi-seed corpus P(solve) run** – **DONE** (the combined 5-seed run
    above; the remaining resolver is the 10-seed CI shrink, ~1 620 cells,
    E-core layout fine).
-2. **Flat-budget variant**: T/N ≈ 1.16 says drop the window reactivity —
+2. **Flat-budget variant**: T/N ≈ 1.16 says drop the window reactivity –
    budget = fixed per-mille of a long-horizon EMA, cadical's tier-scheduled
    vivify (glue-weighted candidate selection, per-tier budgets) as the
    faithful shape.
 3. **The 3.7× learned-clause-usage residue on 6s167** (kissat reuses each
    learned clause 5.8×; the tick decomposition above now attributes it to
-   component depth, not retention) — tier-structured retention (core/tier1/tier2 by glue with `used`
+   component depth, not retention) – tier-structured retention (core/tier1/tier2 by glue with `used`
    promotion) is the untested shape; the 2026-09-02 signal studies tested
    ranking-within-cadical-reduce, not kissat's tier structure.
 
-   **Follow-up #3 screen (same day — closed at the telemetry rung):** the
+   **Follow-up #3 screen (same day – closed at the telemetry rung):** the
    `NIXIE_KISSAT_REDUCE` arm implements exactly that shape on top of the
-   cadical-reduce port — per-mode used-by-glue histogram (kissat
+   cadical-reduce port – per-mode used-by-glue histogram (kissat
    `statistics.used[mode].glue[glue]`, bumped at the analysis-use site),
    dynamic tier bounds at the 50 %/90 % usage quantiles (kissat `tiers.c`,
    fallbacks 2/6), deletion fraction growing 50 %→90 % with the reduction
@@ -428,7 +428,7 @@ AND-gate adds nothing corpus-wide beyond the effort schedule.
    benefits consistently → the retention-*shape* lever joins the
    retention-*signal* nulls: the usage residue is not closed by keep-rule
    geometry. What remains untried for it: candidate-selection differences
-   in what gets *learned* (kissat's focused-mode watcher/burning policy) —
+   in what gets *learned* (kissat's focused-mode watcher/burning policy) –
    search-side, not retention-side.
 
 ## The landing and the E-core standing table (2026-09-07, final)
@@ -444,7 +444,7 @@ z3 parity **0 mismatches at the new default**; binary cached at
 `precompile/e943921/`.
 
 **Standing re-measure at the landed default** (162 cells, suite
-`sc24f-standing-e943921`, E-cores 10–19, sequential per file, 60 s cap —
+`sc24f-standing-e943921`, E-cores 10–19, sequential per file, 60 s cap –
 a DIFFERENT layout from the stored P-core table; within-layout ratios
 only):
 
@@ -455,65 +455,65 @@ only):
 | kissat 4.0.4 | 48 | nixie/kissat = 1.61× | nixie/kissat = 1.23× |
 
 0 verdict mismatches.  **Conflicts parity with cadical on the standing
-corpus** (1.0097×, n=25 both-decisive) — the search path no longer has a
+corpus** (1.0097×, n=25 both-decisive) – the search path no longer has a
 conflicts deficit against its port source; the kissat residue (1.23×) is
 the component-depth gap (factor chains, kitten sweeps) quantified in the
 tick decomposition.
 
 **Wall decomposition of the flip** (from the 810-cell ms5b data):
-conflicts 0.8298× × per-conflict-wall 1.1359× = **wall 0.9426×** — the
+conflicts 0.8298× × per-conflict-wall 1.1359× = **wall 0.9426×** – the
 rounds cost ~14 % more wall per conflict (the per-round watch/BIG rebuild
 is bandwidth-hungry, and E-cores punish it), but the conflicts saving
 dominates: the flip is a net wall win.  The 39-vs-48 solved gap against
 the references at THIS layout is dominated by the pre-existing
 per-conflict wall disadvantage (≈1.4× vs cadical on E-cores, versus
-≈0.88× on the P-core stored table) — an E-core bandwidth amplification,
+≈0.88× on the P-core stored table) – an E-core bandwidth amplification,
 not a flip regression: the ms5b P(solve) comparison on the same layout
 showed the old and new defaults statistically tied.
 
 **Pre-registered follow-ups**: (a) the P-core standing re-measure (the
-official table's layout — outside this session's core allocation);
+official table's layout – outside this session's core allocation);
 (b) amortize the round rebuild (incremental watch attach instead of
-whole-DB rebuild — the per-conflict-wall 1.14× headroom); (c) kissat's
+whole-DB rebuild – the per-conflict-wall 1.14× headroom); (c) kissat's
 chain/hop factor for the 1.23× conflicts residue.
 
 ## Follow-up work log (2026-09-07, items 2+3)
 
-### Item 2: round wall amortization — first slice landed, target measured
+### Item 2: round wall amortization – first slice landed, target measured
 
 Per-pass WALL telemetry added to the round trace (`pass_us
 els/bva/pure_sub/vivify/tred`).  Measured split on the big-DB files:
 `pure_sub` owns the round wall (28–78 ms/round on g2-slp/FEC vs vivify
 2–21 ms).  Direct experiments exonerated both the per-round ~90 MB
 occurrence-array allocation (removed by the landed solver-level scratch
-reuse — trajectory-identical by construction and by full-counter
+reuse – trajectory-identical by construction and by full-counter
 verification) and the schedule sort (a no-sort arm measured within
 noise).  The remaining cost is the intrinsic O(DB) scan+connect:
 **the amortization target is cadical's persistent occurrence-list
 design** (occurrences maintained across rounds, only changed clauses
-re-scheduled — the pair-stability argument makes it sound: two
+re-scheduled – the pair-stability argument makes it sound: two
 unchanged clauses' subsumption relation cannot change).  Pre-registered
 as its own study (same shape as the eliminator-persistence work).
 
-### Item 3: pair-mode factoring — landed as opt-in, screen negative on the target class
+### Item 3: pair-mode factoring – landed as opt-in, screen negative on the target class
 
 `NIXIE_ANDGATE=2` implements kissat's 2-chain shape faithfully: one hub
 per pivot PAIR across ALL shared tails (`2|Q|` binaries become `|Q|+2`
-clauses — the economical form vs one hub per tail; equisatisfiability
+clauses – the economical form vs one hub per tail; equisatisfiability
 and model preservation argued in `solver/bva.rs`, 15 k-iteration
 differential fuzz clean with introductions confirmed).  Screen (default
 seed, on the landed default bundle): FEC 602 k→604 k (tie with mode 1),
 frb65 359 k→243 k (single-seed; mode 1's 10-seed median says treat with
-suspicion), 6s167 88 k→73 k, **worker 12 k→29 k — worse on exactly the
+suspicion), 6s167 88 k→73 k, **worker 12 k→29 k – worse on exactly the
 class the port targeted**.  The degree-ranked top-256 pair enumeration
 over-consolidates worker's densest region while covering a sliver of
 its structure.
 
 **Conclusion**: the AND-gate family (both modes) does not reproduce
 kissat's worker-class factor win.  The faithful port needs the full
-machinery — quotient CHAINS with `distinct_paths` watch-graph scoring
+machinery – quotient CHAINS with `distinct_paths` watch-graph scoring
 (structure-aware pivot selection, not degree), the eliminate-round
-interleave (factor→BVE→factor iteration across rounds — kissat spends
+interleave (factor→BVE→factor iteration across rounds – kissat spends
 284 M factor ticks on worker, i.e. repeated deep factoring), and
 incremental watcher maintenance.  Pre-registered as its own study with
 the semantics extracted above; the landed `NIXIE_ANDGATE` modes are the
@@ -535,25 +535,25 @@ funnel, a matched null, and 30k fuzz (0 mismatches, 0 invalid models).
 | dirty (recency) | 1.0835× | 1.0195× | 169 |
 | **random slice (null)** | **0.9084×** | **0.9102×** | **179** |
 
-| AND-gate mode 1 (bonus arm) | 0.9893× | — | 170 |
+| AND-gate mode 1 (bonus arm) | 0.9893× | – | 170 |
 
-(The runner accidentally retained a fourth arm — mode-1 AND-gate on the
-new default — 270 cells recorded with the rest: 0.99× conflicts,
-P(solve) 170 vs 176 — confirming the AND-gate family stays
+(The runner accidentally retained a fourth arm – mode-1 AND-gate on the
+new default – 270 cells recorded with the rest: 0.99× conflicts,
+P(solve) 170 vs 176 – confirming the AND-gate family stays
 corpus-neutral-to-negative and default-off.)
-**T/N = 1.153 — the recency semantic is negative at our round cadence.**
+**T/N = 1.153 – the recency semantic is negative at our round cadence.**
 The same-size RANDOM literal slice beats both the full scan and the
-recency schedule.  Mechanism: rotating partial hygiene — each round
+recency schedule.  Mechanism: rotating partial hygiene – each round
 subsumes a fresh random slice of the database, so coverage cycles
 through everything over rounds without the full scan's re-checking of
 known-clean pairs and without recency's systematic blind spots.
 (Working through the semantics also corrected an earlier claim: new-
-clause dedup is COMPLETE under the dirty scheme — any subsumer of an
-all-dirty clause is itself all-dirty — so the recency arm's losses are
+clause dedup is COMPLETE under the dirty scheme – any subsumer of an
+all-dirty clause is itself all-dirty – so the recency arm's losses are
 lost old-vs-old hygiene, which the random slice restores stochastically.)
 
 The `fullk` (periodic full rounds) and `hotp` (hot-literal probabilistic
-connect — connect on a dirty literal the clause contains, so candidates
+connect – connect on a dirty literal the clause contains, so candidates
 scanning dirty literals can find it) arms were implemented and screened:
 they interpolate (hotp recovers 6s167 to parity; fullk recovers neither
 mrpp nor FEC fully) but no configuration dominated the random slice.
@@ -563,25 +563,25 @@ schedule (env `NIXIE_SUBSUME2=0|1|2` selects full/recency/random).
 The default binary reproduces the recorded random-slice corpus cells
 bit-exactly.  This is the fifth matched-null-beats-treatment result in
 this codebase (rephase actions, retention signals, budget reactivity,
-AND-gate rank, dirty scheduling) — and this one is novel against the
+AND-gate rank, dirty scheduling) – and this one is novel against the
 references: cadical's scheme loses at our round frequency, and the
 randomized variant wins.  Gates: nextest 10 571, doc tests, clippy,
 doc, z3 parity 0 mismatches; fuzz 30k clean.
 
 ## The 1.23× kissat residue: calibration of both levers (2026-09-07)
 
-**Worker class (14.14× — the factor lever).**  kissat's own statistics
+**Worker class (14.14× – the factor lever).**  kissat's own statistics
 on `worker_550` calibrate the target precisely: **factored = 51 466
 introductions (55 % of its 93 713 variables), eliminated = 0, 227
-decisions per conflict, 2 003 conflicts** — the magic is pure factoring
+decisions per conflict, 2 003 conflicts** – the magic is pure factoring
 at scale, NOT factor→BVE interplay (BVE eliminated nothing), producing a
 formula so restructured that refutation is nearly direct.  Our
 experiments at the landed rewrite rules: mode-1 at scale (flat schedule,
-~10 k intros/round) bloats the DB (+8 k/round — the eliminator cannot
+~10 k intros/round) bloats the DB (+8 k/round – the eliminator cannot
 pace per-tail introduction volume) and TOs on wall; pair-mode (the
 economical 2|Q|→|Q|+2 form) with the degree cap raised (TOP=1000/2000,
 MAXI=30 k/60 k) is non-monotone and wall-bound (34 424 / 15 951 vs base
-28 984 vs kissat 2 003) — the per-clause `remove_clause` hygiene over
+28 984 vs kissat 2 003) – the per-clause `remove_clause` hygiene over
 10 M-clause rounds costs more than the simplified rewrite returns.
 Study knobs landed: `NIXIE_ANDGATE_TOP`, `NIXIE_ANDGATE_MAXI`.
 **The faithful port spec** (quotient chains with `distinct_paths`
@@ -589,38 +589,38 @@ watch-graph scoring, incremental rounds across the solve rather than
 mega-rounds, eager watch surgery instead of remove+rebuild) stands as
 pre-registered with this calibration.
 
-**6s167 class (3.77× — the probing lever).**  A probe-effort sweep
+**6s167 class (3.77× – the probing lever).**  A probe-effort sweep
 (`NIXIE_PROBE_PERMILLE` = 80/200/400/800, knob landed) is flat:
-identical conflicts at every effort — the probe budget is not binding;
+identical conflicts at every effort – the probe budget is not binding;
 **the depth limit is the candidate schedule** (`generate_probes` queues
 binary-implication roots only, and the queue exhausts).  kissat's
 probing on this class = 18 % of its ticks and includes look-ahead
 failed literals over non-binary structure, congruence closure
-(equivalence classes), and kitten sub-solver sweeps — none of which our
+(equivalence classes), and kitten sub-solver sweeps – none of which our
 `probe_round` has.  Pre-registered as the look-ahead/congruence port.
 
-Both levers are therefore **calibrated, specified, and open** — neither
+Both levers are therefore **calibrated, specified, and open** – neither
 closes with the landed infrastructure's knobs alone.
 
 ## Both residue levers: first rigorous slices landed (2026-09-07, `2f14a8a`)
 
-**Probe widening (landed default-on)** — the probing-depth lever: the
+**Probe widening (landed default-on)** – the probing-depth lever: the
 candidate queue now includes variables with binaries in BOTH polarities
 (the legacy single-polarity filter skipped them entirely; on the 6s167
-class this emptied the queue — the effort sweep's flatness was the
+class this emptied the queue – the effort sweep's flatness was the
 schedule binding, not the budget).  5-seed screen: **6s167 0.80×, mrpp
 0.79×, FEC 0.89×** (medians), frb65/worker identical (no harm).
 `NIXIE_PROBE_WIDE=0` restores the legacy schedule.  20k differential
 fuzz clean, all gates green, z3 parity 0 mismatches.
 
-**Tombstone factor retirement (landed)** — the wall fix for the factor
+**Tombstone factor retirement (landed)** – the wall fix for the factor
 lever: pair-mode AND-gate uses raw `clauses::remove` (no per-clause BIG
 purge / watcher removal / DRAT; the caller rebuilds once after the pass)
 with live-reason group skipping.  Removes the 100+-retirements-per-
 introduction × 50k-introductions bottleneck on 10M-clause graphs.
 Full-scale still needs watch-based quotient lists (kissat's incremental
 construction from live watch structures rather than our fresh HashMap
-scan — pre-registered as the next port increment).
+scan – pre-registered as the next port increment).
 
 **Remaining work on both levers**:
 - Factor: the `distinct_paths` scoring (structure-aware pivot-pair
@@ -628,7 +628,7 @@ scan — pre-registered as the next port increment).
   incremental quotient-list construction.  Both are performance-and-
   selection fixes for the scale the calibration demands (51k+ intros).
 - Probing: congruence closure (equivalence classes from the BIG after
-  each probe round — the cheapest unexplored component) and look-ahead
+  each probe round – the cheapest unexplored component) and look-ahead
   hyper-binary resolution at the widened probe depth.
 
 ## Both levers: BIG-based factor construction + polarity fixes (2026-09-07, `071d372`)
@@ -637,21 +637,21 @@ scan — pre-registered as the next port increment).
 with sorted-vector intersections read from the BIG's CSR edge lists.
 Two polarity bugs found and fixed (both were false-UNSAT class, caught
 by cross-seed verdict checking on worker_550, NOT by the small-formula
-fuzz — lesson recorded): the divider clauses and the hub ranking both
+fuzz – lesson recorded): the divider clauses and the hub ranking both
 had the wrong BIG edge direction.
 
 The construction finds **344-tail hub pairs** on worker (vs 0 with the
-HashMap version — the polarity error was silently emptying every
-intersection).  At TOP=256 (default): worker 5-seed screen is mixed —
+HashMap version – the polarity error was silently emptying every
+intersection).  At TOP=256 (default): worker 5-seed screen is mixed –
 seed 5 solves where base TOs, seeds 2-4 are 2.8-7.5× worse.  The bulk
 all-shared-tails intersection over-consolidates: 344 tails per
 introduction is too aggressive (688 clauses replaced by 346 in one
-step).  kissat's chain discipline — incremental matched-tail selection
+step).  kissat's chain discipline – incremental matched-tail selection
 (the quotient list grows one tail at a time, checking that the clause
-remains matched) — is the remaining port increment, pre-registered.
+remains matched) – is the remaining port increment, pre-registered.
 
 **ELS re-test knob** (`NIXIE_ELS_FORCE=1`): 3-seed screen under the new
-defaults shows FEC 0.84× (real — the equivalence-chain structure is its
+defaults shows FEC 0.84× (real – the equivalence-chain structure is its
 name), 6s167 1.04×, frb65 mixed.  Not default-on: the ELS round's SCC +
 substitution work needs the same effort-budget treatment the other
 passes got before it can be re-evaluated (pre-registered).
@@ -672,28 +672,28 @@ E-core layout, sequential per file, 60 s cap, 0 verdict mismatches):
 | wall geomean | 2.06× | 1.41× |
 | **conflicts geomean** | 1.12× | **0.88×** |
 
-**MILESTONE: nixie/cadical conflicts = 0.88× — the search path now
+**MILESTONE: nixie/cadical conflicts = 0.88× – the search path now
 BEATS its port source.**  The three compounded defaults (effort
 schedule 0.83×, randomized subsumption 0.91×, probe widening ~0.85×)
 multiply to close and reverse the cadical conflicts gap.  The kissat
 residue dropped from 1.33× (campaign start) to **1.12×**.
 
 Solved counts dropped for ALL arms (39→35 nixie, 48→44 cadical, 48→46
-kissat) — system load, not code (the E-core layout is
+kissat) – system load, not code (the E-core layout is
 contention-sensitive; per-file verdicts are 0-mismatch).
 
 Wall remains dominated by per-conflict cost (1.41× at 0.88× conflicts).
 
 **Chain-discipline negative result**: the tail-cap knob
 (`NIXIE_ANDGATE_MAXT` = 5/10/20/40) does NOT fix the AND-gate's worker
-regression — even with only 5 tails per introduction, seeds 2-4 are
+regression – even with only 5 tails per introduction, seeds 2-4 are
 1.9-2.7× worse than base.  The over-consolidation is not about the
 NUMBER of tails per step; the hub introduction itself disrupts
 worker's search dynamics.  The full quotient-chain mechanism (kissat's
 incremental chain construction with structural scoring) is the only
 remaining path for the worker-class 12.75× residue, pre-registered.
 
-## Conflicts-gap levers: both-polarity probing and ELS — calibrated negatives (2026-09-07)
+## Conflicts-gap levers: both-polarity probing and ELS – calibrated negatives (2026-09-07)
 
 Both remaining probing-depth levers were implemented, screened at 5
 seeds, and show the **same per-file structural tradeoff**:
@@ -705,20 +705,20 @@ seeds, and show the **same per-file structural tradeoff**:
 
 Equivalence-heavy structures (FmlaEquivChain, mp1-klieber) benefit
 dramatically; combinatorial instances (frb65 graph coloring) are
-destroyed.  **This is not a tuning issue** — the mechanism (deeper
+destroyed.  **This is not a tuning issue** – the mechanism (deeper
 propagation cones / equivalence substitution) fundamentally helps one
 class and hurts the other.  No single default works for both.
 
 Both knobs landed opt-in (`NIXIE_PROBE_BOTH=1`, `NIXIE_ELS_FORCE=1`)
 with the tradeoff documented.  The adaptive-gating question (can an
 observable separate the classes before the choice?) remains the
-pre-registered open path — the 2026-09-02 adaptive-retention study's
+pre-registered open path – the 2026-09-02 adaptive-retention study's
 methodology applies.
 
 **Campaign summary at this point**: kissat conflicts residue 1.12×,
-decomposed into worker 12.75× (factor chains — simplified rewrites
+decomposed into worker 12.75× (factor chains – simplified rewrites
 measured negative), shuffling 5.81× (probe-sensitive), 6s167 3.25×
-(probing depth — widened single-polarity landed, both-polarity and ELS
+(probing depth – widened single-polarity landed, both-polarity and ELS
 are per-file), and a long tail < 2×.  The remaining gap needs either
 the full kissat factor port or adaptive gating, both pre-registered.
 
@@ -737,13 +737,13 @@ Direct measurement on 6s167 (E-core 10, sequential, all arms same file):
 *kissat search_ticks only.
 
 **The wall gap decomposes into two independent factors**:
-1. **More conflicts needed** (3.7× vs cadical on this file) — the
+1. **More conflicts needed** (3.7× vs cadical on this file) – the
    search-quality gap (the campaign's heuristic work)
-2. **Lower throughput** (1.8× vs cadical, 3× vs kissat) — the
+2. **Lower throughput** (1.8× vs cadical, 3× vs kissat) – the
    implementation gap
 
 Our per-conflict WORK is actually the lowest (325 ticks vs cadical's
-902) — we do less work per conflict but need more conflicts, and each
+902) – we do less work per conflict but need more conflicts, and each
 unit of work takes longer.  At ~770 cycles per propagation (vs
 cadical's ~430, kissat's ~256), the cost is dominated by cache misses:
 ~8 entries per propagation (BIG edges + watchers), each involving
@@ -752,15 +752,15 @@ read), at ~30 cycles per L2/L3 access.
 
 **Pre-registered optimization targets** (multi-session engineering,
 ranked by estimated impact):
-1. **Clause arena locality** — cadical sorts clauses by size in the
+1. **Clause arena locality** – cadical sorts clauses by size in the
    arena; we allocate in random order.  Watch-scan arena reads would
    hit adjacent memory for same-sized clauses.
-2. **Watcher compression** — 12 bytes (id + slot + blocker); the id
+2. **Watcher compression** – 12 bytes (id + slot + blocker); the id
    and slot could share a u32 if slots were index-based rather than
    byte-offset.
-3. **BIG/watch single-pass** — binaries and large clauses use separate
+3. **BIG/watch single-pass** – binaries and large clauses use separate
    iteration passes (BIG CSR + watch list); a merged single pass
    would halve the loop overhead.
-4. **`propagate_step_limit` hoisting** — the `Option` check runs per
+4. **`propagate_step_limit` hoisting** – the `Option` check runs per
    propagation step but is always `None` during search; a specialized
    unbounded loop would remove a branch + register test.

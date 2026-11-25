@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Semantic parity: evaluate lowered KerA terms and compare against TLC.
 #
-# Everything else in this front end is checked *structurally* — SANY parity,
+# Everything else in this front end is checked *structurally* – SANY parity,
 # level parity, lowering coverage. None of that can tell a correct lowering
 # from a well-formed wrong one; the INSTANCE visibility bug produced a
 # perfectly valid kernel term that read the wrong module's variables and
@@ -13,7 +13,7 @@
 #      nullary definition and evaluate it to a value.
 #   2. Emit a probe module that EXTENDS the *original* module and `PrintT`s
 #      those same definitions. TLC therefore evaluates the SOURCE, not a
-#      re-printed kernel term — which is what makes this a test of lowering
+#      re-printed kernel term – which is what makes this a test of lowering
 #      rather than only of the evaluator.
 #   3. Compare the two sets of values structurally.
 #
@@ -53,7 +53,7 @@ sort -u -o "$work/files.txt" "$work/files.txt"
 echo "corpus: $(wc -l < "$work/files.txt") files"
 
 # Honor CARGO_TARGET_DIR: the shared target/ on a full disk cannot host a
-# link step (SIGBUS), and a relocated build must be the binary that runs —
+# link step (SIGBUS), and a relocated build must be the binary that runs –
 # the hardcoded target/ path would silently pick a stale one.
 TARGET_DIR="${CARGO_TARGET_DIR:-$repo/target}"
 cargo build --release -p nixie-tla --example evalcov || exit 2

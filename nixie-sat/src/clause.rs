@@ -246,8 +246,8 @@ impl Clause {
     #[must_use]
     pub fn self_subsuming_resolvent(&self, other: &Clause) -> Option<Lit> {
         // `>`, not `>=` (ported from upstream v0.3.3): the old `>=` rejected
-        // *equal-length* pairs — the single most common shape
-        // (`(a∨b∨c)` against `(a∨b∨¬c)` → `(a∨b)`) — so the rule fired on
+        // *equal-length* pairs – the single most common shape
+        // (`(a∨b∨c)` against `(a∨b∨¬c)` → `(a∨b)`) – so the rule fired on
         // almost nothing, which is also why its zero production callers went
         // unnoticed.  (`subsume_round` implements strengthening independently;
         // this method stays as the Clause-level primitive.)
@@ -738,7 +738,7 @@ impl ClauseDatabase {
     /// to be rewritten in the same breath.
     pub fn compact_arena(&mut self, watches: &mut WatchLists) -> bool {
         if !self.arena.should_compact() {
-            // No garbage to collect — but the doubling overshoot may still
+            // No garbage to collect – but the doubling overshoot may still
             // dominate RSS (mass deletion under the compaction gate, or a
             // doubling just before a stable phase). Pure capacity trim,
             // never a relocation; see `ClauseArena::trim_slack`.
@@ -764,8 +764,8 @@ impl ClauseDatabase {
     /// Capacity-only reclaim of the arena's `Vec`-doubling overshoot,
     /// without collecting garbage and without relocating anything
     /// (see [`ClauseArena::trim_slack`]). Called from points that are
-    /// about to allocate a large transient — pre-search and before every
-    /// walk round — so the transient does not stack on top of the overshoot
+    /// about to allocate a large transient – pre-search and before every
+    /// walk round – so the transient does not stack on top of the overshoot
     /// (the same shape as cadical running `garbage_collection()` before
     /// its walk). Ids, clause bytes and visit orders are untouched.
     pub fn trim_arena_slack(&mut self) {
@@ -805,7 +805,7 @@ impl ClauseDatabase {
     /// Pre-reserve `n` id→ref slots for a bulk load whose clause count is
     /// known up front (the DIMACS `p cnf` line). Purely an allocation-shape
     /// hint: contents, ids and order are untouched, and the reserve never
-    /// changes what `add_*` does — without it the `refs` table's doubling
+    /// changes what `add_*` does – without it the `refs` table's doubling
     /// growth peaks at up to 2x live bytes (a ~41 MB table on a 10.3
     /// M-clause instance transiently holds ~66 MB). The caller-side bound
     /// (`min(header_count, 2^27)`) keeps an attacker-inflated header from
@@ -827,8 +827,8 @@ impl ClauseDatabase {
     }
 
     /// Single-pass live-clause scan: one view construction per id
-    /// (`iter_ids` + `get` per body builds TWO — the deleted filter's and
-    /// the body's — over a database whose headers are scattered across
+    /// (`iter_ids` + `get` per body builds TWO – the deleted filter's and
+    /// the body's – over a database whose headers are scattered across
     /// cache lines; whole-DB scan passes like inprocessing pay double the
     /// memory traffic for the same result).  Deleted clauses are skipped
     /// here; id order matches `iter_ids`.

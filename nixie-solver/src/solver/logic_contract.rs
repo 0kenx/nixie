@@ -6,16 +6,16 @@
 //! a declared logic is a **contract over the permitted input language**,
 //! not a routing hint. Three concerns stay separate:
 //!
-//! * `DeclaredLogic` — what the header says (known spec, `ALL`, missing,
+//! * `DeclaredLogic` – what the header says (known spec, `ALL`, missing,
 //!   or an unsupported name);
-//! * `Capabilities` — what the asserted formula actually requires,
+//! * `Capabilities` – what the asserted formula actually requires,
 //!   collected structurally from the parsed DAG;
-//! * engine routing — derived from `Capabilities`, refined (never
+//! * engine routing – derived from `Capabilities`, refined (never
 //!   widened) by the declared spec.
 //!
 //! The registry entries follow the SMT-LIB 2.7 logic catalog
 //! (<https://smt-lib.org/logics-all.shtml>). Semantics are decoded from
-//! the entry TABLE, never from substrings of names — the acceptance tests
+//! the entry TABLE, never from substrings of names – the acceptance tests
 //! pin exactly the failure modes substring decoding produces (an invented
 //! name containing "NIA" must not install the nonlinear backend).
 
@@ -83,7 +83,7 @@ impl LogicSpec {
 /// of integer-sorted indices over nonlinear integer arithmetic) carries
 /// its own entry; its semantics never decode from its name.
 const REGISTRY: &[(&str, LogicSpec)] = &[
-    // --- Uninterpreted functions ---
+    // ======== Uninterpreted functions ========
     (
         "QF_UF",
         LogicSpec {
@@ -99,7 +99,7 @@ const REGISTRY: &[(&str, LogicSpec)] = &[
             ..LogicSpec::NONE
         },
     ),
-    // --- Arithmetic (quantifier-free) ---
+    // ======== Arithmetic (quantifier-free) ========
     ("QF_LIA", LogicSpec::linear_arith(true, false)),
     ("QF_LRA", LogicSpec::linear_arith(false, false)),
     (
@@ -120,7 +120,7 @@ const REGISTRY: &[(&str, LogicSpec)] = &[
         },
     ),
     // Nonlinear real arithmetic WITH transcendental functions (dReal's
-    // fragment: exp/log/sin/cos/atan/sqrt, decided by delta-ICP — see
+    // fragment: exp/log/sin/cos/atan/sqrt, decided by delta-ICP – see
     // docs/TRANS.md).  `unsat` is exact; `sat` is delta-satisfiability.
     (
         "QF_NRT",
@@ -206,7 +206,7 @@ const REGISTRY: &[(&str, LogicSpec)] = &[
             ..LogicSpec::NONE
         },
     ),
-    // --- Combinations ---
+    // ======== Combinations ========
     (
         "QF_UFLIA",
         LogicSpec {
@@ -419,7 +419,7 @@ const REGISTRY: &[(&str, LogicSpec)] = &[
             ..LogicSpec::NONE
         },
     ),
-    // --- Bit-vectors ---
+    // ======== Bit-vectors ========
     (
         "QF_BV",
         LogicSpec {
@@ -452,7 +452,7 @@ const REGISTRY: &[(&str, LogicSpec)] = &[
             ..LogicSpec::NONE
         },
     ),
-    // --- Arrays ---
+    // ======== Arrays ========
     (
         "QF_AUF",
         LogicSpec {
@@ -468,7 +468,7 @@ const REGISTRY: &[(&str, LogicSpec)] = &[
             ..LogicSpec::NONE
         },
     ),
-    // --- Floating point ---
+    // ======== Floating point ========
     (
         "QF_FP",
         LogicSpec {
@@ -508,7 +508,7 @@ const REGISTRY: &[(&str, LogicSpec)] = &[
             ..LogicSpec::NONE
         },
     ),
-    // --- Finite fields ---
+    // ======== Finite fields ========
     (
         "QF_FF",
         LogicSpec {
@@ -527,7 +527,7 @@ const REGISTRY: &[(&str, LogicSpec)] = &[
             ..LogicSpec::NONE
         },
     ),
-    // --- Strings ---
+    // ======== Strings ========
     (
         "QF_S",
         LogicSpec {
@@ -552,7 +552,7 @@ const REGISTRY: &[(&str, LogicSpec)] = &[
             ..LogicSpec::NONE
         },
     ),
-    // --- Datatypes ---
+    // ======== Datatypes ========
     (
         "QF_UFDT",
         LogicSpec {
@@ -597,13 +597,13 @@ const REGISTRY: &[(&str, LogicSpec)] = &[
             ..LogicSpec::NONE
         },
     ),
-    // --- SMT-LIB catalog completion (2026-08-24) ---
+    // ======== SMT-LIB catalog completion (2026-08-24) ========
     // The 43 benchmark-catalog logics the table above was missing, decoded
     // with the cvc5 grammar (`src/theory/logic_info.cpp`): a leading `QF_`
     // drops quantifiers; `A`=arrays, `UF`, `BV`, `FP`, `DT`, `S`; one
     // arithmetic suffix sets linear/nonlinear, integer/real/diff.  Mixed
     // Int+Real shapes (`LIRA`/`NIRA`) follow the table's shipped convention
-    // (`AUFLIRA`, `AUFNIRA`, `QF_UFDTLIRA`): `integer: false` — provenance
+    // (`AUFLIRA`, `AUFNIRA`, `QF_UFDTLIRA`): `integer: false` – provenance
     // is deliberately unenforced in `validate`, the flag only routes the
     // linear fallback.  The completeness test pins the full 89-name catalog.
     (
@@ -1126,7 +1126,7 @@ pub struct Capabilities {
 impl Capabilities {
     /// Collect requirements from one assertion DAG (explicit heap stack;
     /// terms are hash-consed so `visited` prunes the shared subterms).
-    /// `None` = a term the walk could not classify — the caller must
+    /// `None` = a term the walk could not classify – the caller must
     /// treat the formula as unvalidated rather than guess.
     pub fn collect(assertion: TermId, manager: &TermManager) -> Option<Self> {
         let mut caps = Self::default();
@@ -1166,7 +1166,7 @@ impl Capabilities {
                     // Sort-driven classification (structural, no name
                     // matching): classify by the RESULT-SORT family first.
                     // `((as const (Array Int Int)) v)` is an Apply with an
-                    // Array result — an array constructor, not UF (the
+                    // Array result – an array constructor, not UF (the
                     // first version of this arm sent every non-bool/non-
                     // arith apply to `uf` and rejected valid QF_ANIA).
                     // Under-detection in exotic corners (a genuine UF
@@ -1183,7 +1183,7 @@ impl Capabilities {
                         // is a declared `QF_UFFF` function: the only
                         // FF-result `Apply` shapes are declared symbols
                         // (every builtin FF operation is a dedicated
-                        // `TermKind`). Flag BOTH capabilities — `ff` for
+                        // `TermKind`). Flag BOTH capabilities – `ff` for
                         // the field vocabulary, `uf` so that a function
                         // under plain `QF_FF` is a contract violation
                         // (SMT-LIB: the FF letter does not include UF)
@@ -1194,7 +1194,7 @@ impl Capabilities {
                         }
                         // This AST represents many BUILTINS as generic
                         // Apply (`str.len`, `str.indexof`, …, and declared
-                        // functions) — sort shape alone cannot separate
+                        // functions) – sort shape alone cannot separate
                         // them.  The DEFINITIONAL UF signal is an
                         // uninterpreted RESULT sort; Int/Bool-result
                         // applications (builtins, `h: Bool -> Int` UF
@@ -1248,7 +1248,7 @@ impl Capabilities {
                     // Nonlinear iff a Mul multiplies two operands that
                     // are not CONCRETE COEFFICIENTS.  SMT-LIB's QF_LIA
                     // permits "multiplication only by concrete
-                    // coefficients" — a coefficient is a numeric literal,
+                    // coefficients" – a coefficient is a numeric literal,
                     // possibly negated (`(- 1)` is NOT folded by the
                     // parser; treating `Neg(IntConst)` as nonconstant
                     // misclassified every Dillig-family LIA benchmark as
@@ -1275,7 +1275,7 @@ impl Capabilities {
                 | TermKind::Gt(a, b)
                 | TermKind::Ge(a, b) => {
                     // A comparison over STRINGS-DERIVED operands (e.g.
-                    // `(>= (str.len s) 6)`) is strings capability — QF_S's
+                    // `(>= (str.len s) 6)`) is strings capability – QF_S's
                     // signature includes the length function and its
                     // comparisons (z3 accepts them).  Only comparisons
                     // whose operands are genuinely arith terms set the
@@ -1329,7 +1329,7 @@ impl Capabilities {
                     stack.push(*a);
                 }
                 TermKind::Neg(a) => {
-                    // Negation of a literal (`(- 1)`) is a literal —
+                    // Negation of a literal (`(- 1)`) is a literal –
                     // string conversions compare against `-1` sentinels
                     // routinely; only negation of a non-constant term is
                     // an arithmetic operation.
@@ -1369,7 +1369,7 @@ impl Capabilities {
                     // BV/FP builtins with dedicated TermKinds): classify by
                     // sort FAMILY only.  An Int-RESULT sort must NOT set
                     // `arith` (str.len returns Int but is a strings
-                    // builtin — the fallback's old arith-by-sort arm
+                    // builtin – the fallback's old arith-by-sort arm
                     // rejected every QF_S length constraint).  Arith
                     // capability comes exclusively from the explicit
                     // operation/comparison arms above.
@@ -1384,7 +1384,7 @@ impl Capabilities {
                             SortFamily::Other => {}
                         }
                     }
-                    // Unhandled kinds contribute no child walk here —
+                    // Unhandled kinds contribute no child walk here –
                     // their operands are specific to each kind and adding
                     // them piecemeal risks misclassification; the sort
                     // classification above is the contract-relevant fact.
@@ -1395,7 +1395,7 @@ impl Capabilities {
     }
 }
 
-/// A numeric literal, possibly under negation — SMT-LIB's "concrete
+/// A numeric literal, possibly under negation – SMT-LIB's "concrete
 /// coefficient" (`2`, `(- 1)`, `4.5`, `(- 0.5)`).  The parser keeps unary
 /// minus as `Neg` over a literal, so both shapes are coefficients.
 fn is_concrete_coefficient(kind: &TermKind, manager: &TermManager) -> bool {
@@ -1508,7 +1508,7 @@ pub fn validate(spec: &LogicSpec, caps: &Capabilities) -> Option<String> {
     // NOTE: integer/real PROVENANCE is deliberately not enforced.  SMT-LIB
     // coerces Int literals to Real in mixed comparisons (`(< (+ x x) 1)`
     // under QF_NRA carries an Int-sorted `1`), and Int/Real sorts appear
-    // as UF decoration in mixed scripts (`h: Bool -> Int` under QF_UF) —
+    // as UF decoration in mixed scripts (`h: Bool -> Int` under QF_UF) –
     // both shapes are in-contract while setting the provenance flags, so
     // enforcing them rejects valid files.  The flags remain collected for
     // diagnostics.  The ENFORCED arithmetic distinctions are `arith`
@@ -1540,7 +1540,7 @@ mod tests {
 
     /// Grammar decode of the SMT-LIB catalog completion: quantifier presence,
     /// theory composition, and the mixed-Int+Real convention (`integer:
-    /// false` — provenance unenforced, the flag routes the linear fallback)
+    /// false` – provenance unenforced, the flag routes the linear fallback)
     /// must match the cvc5 decoder semantics (`src/theory/logic_info.cpp`).
     #[test]
     fn smt_lib_catalog_decodes_grammar_semantics() {
@@ -1589,7 +1589,7 @@ mod tests {
         // Real entries decode from the table.
         assert!(lookup("QF_NIA").is_ok());
         assert!(lookup("QF_ANIA").is_ok());
-        // ANIA has arrays; NIA does not — semantics from the table.
+        // ANIA has arrays; NIA does not – semantics from the table.
         let (ania, nia) = (
             lookup("QF_ANIA").ok().flatten(),
             lookup("QF_NIA").ok().flatten(),
@@ -1609,7 +1609,7 @@ mod tests {
         };
         assert!(validate(&spec, &pure_ff).is_none());
         // An FF-result application flags BOTH capabilities (it is a
-        // declared function): under plain QF_FF that is a violation —
+        // declared function): under plain QF_FF that is a violation –
         // the FF letter does not include UF.
         let with_uf = Capabilities {
             uf: true,

@@ -19,7 +19,7 @@
 //!   it degrades gracefully).
 //! * **Sparse engine** (this module's `ConstraintGraph` + SPFA, Z3
 //!   `theory_diff_logic`): a constraint graph with seeded incremental
-//!   Bellman-Ford checks — O(affected nodes) per added edge — over exact
+//!   Bellman-Ford checks – O(affected nodes) per added edge – over exact
 //!   `Rational64` weights. Used for **real** difference logic (QF_RDL) and
 //!   as the integer fallback when a weight or the node budget exceeds the
 //!   dense core's exactness envelope.
@@ -170,7 +170,7 @@ impl DiffLogicSolver {
     /// from 0 on: they are created only by [`DenseDlCore::push`], so a lazily
     /// created core would carry no marks for the levels that preceded its
     /// first use, and the first backtrack past that point would exhaust the
-    /// marks and hit `pop`'s no-mark early return — permanently stranding
+    /// marks and hit `pop`'s no-mark early return – permanently stranding
     /// every edge asserted below the oldest mark as an unexplained phantom
     /// constraint (observed as unexplainable dense conflicts that broke the
     /// pure-DL route on the DTP/queens/qlock/gryzzles families).
@@ -255,8 +255,8 @@ impl DiffLogicSolver {
     }
 
     /// Disable the dense core after the fact (used when an atom's weight
-    /// exceeds the envelope; the core keeps its already-derived facts — they
-    /// remain sound implications of the asserted subset — but the caller
+    /// exceeds the envelope; the core keeps its already-derived facts – they
+    /// remain sound implications of the asserted subset – but the caller
     /// stops feeding new edges and defers completeness to the simplex).
     pub fn dense_disable(&mut self) {
         self.dense_degraded = true;
@@ -278,7 +278,7 @@ impl DiffLogicSolver {
     }
 
     /// Model value of a sparse-graph term under the last full multi-source
-    /// distances — a feasible potential: every edge `u → v` of weight `w`
+    /// distances – a feasible potential: every edge `u → v` of weight `w`
     /// satisfies `d(v) ≤ d(u) + w`, so `value = d` satisfies every asserted
     /// difference constraint.  Requires a [`Self::check`] (or a
     /// `distances_valid` state) no older than the last add/pop; the pure
@@ -452,13 +452,13 @@ impl DiffLogicSolver {
     /// `y`.  O(affected nodes) per added edge.
     ///
     /// Soundness of the seeded test (the potential argument): the cached
-    /// multi-source distances `d̂` — from the last [`Self::check`] or seeded
+    /// multi-source distances `d̂` – from the last [`Self::check`] or seeded
     /// run; every edge they cover is still asserted, since pops invalidate
-    /// and adds only extend — are shortest-path potentials, so any path
+    /// and adds only extend – are shortest-path potentials, so any path
     /// over the OLD edges obeys `d(x → y) ≥ d̂(y) − d̂(x)` (sum the
     /// potential inequality `d̂(v) ≤ d̂(u) + w(u,v)` along the path).  A
     /// cycle through the new edge `y → x` needs an old `x → y` path with
-    /// `d(x→y) + w < 0`, which forces `d̂(y) + w < d̂(x)` — i.e. relaxing
+    /// `d(x→y) + w < 0`, which forces `d̂(y) + w < d̂(x)` – i.e. relaxing
     /// the new edge IMPROVES `x`.  So a seeded run that relaxes nothing
     /// through the new edge proves no cycle exists ("absorption" is a
     /// certificate, not a miss), and when it does relax, the propagated
@@ -468,7 +468,7 @@ impl DiffLogicSolver {
     /// times) falls back to the full multi-source SPFA for the explanation.
     ///
     /// (An earlier revision replaced this with a fresh single-source SPFA
-    /// per added edge on the belief that absorption could hide a cycle —
+    /// per added edge on the belief that absorption could hide a cycle –
     /// the argument above shows it cannot; the observed false-SAT on
     /// `qlock-4-10-11.base` was the `ConstraintGraph::push` rollback-mark
     /// bug, fixed separately.  The per-add SPFA never refreshed the cached
@@ -490,7 +490,7 @@ impl DiffLogicSolver {
         };
         if cycle.is_some() {
             // A negative cycle exists, but the seeded run's partial parent
-            // forest cannot explain it — re-run the full multi-source SPFA
+            // forest cannot explain it – re-run the full multi-source SPFA
             // (complete forest) and extract the genuine conflict terms.
             self.stats.conflicts += 1;
             self.distances_valid = false;
@@ -531,7 +531,7 @@ impl DiffLogicSolver {
     }
 
     /// Propagate implied bounds (legacy API; the dense core propagates
-    /// incrementally — see `dense_take_propagations`).
+    /// incrementally – see `dense_take_propagations`).
     pub fn propagate(&mut self) -> Vec<DiffLogicResult> {
         let mut results = Vec::new();
         if !self.config.propagate {
@@ -680,7 +680,7 @@ impl DiffLogicSolver {
     ///
     /// This is the SOUND foundation for theory propagation: the true
     /// shortest-path distance `d(src, node)` over asserted edges, not a
-    /// multi-source distance difference (a lower bound — see
+    /// multi-source distance difference (a lower bound – see
     /// [`Self::would_conflict`]).
     pub fn sssp_from(&self, src: DiffVar) -> Option<SsspResult> {
         let zero = Rational64::from_integer(0);
@@ -1012,7 +1012,7 @@ mod tests {
     /// earlier adds, the closing edge (`y→x, 0`) does NOT absorb (it improves
     /// `d(x)`), the seeded run propagates the relaxation around `x→y→x`, and
     /// the negative cycle of weight −1 is detected without a full check.
-    /// The observed false-SAT was never an absorption miss — it was the
+    /// The observed false-SAT was never an absorption miss – it was the
     /// `ConstraintGraph::push` rollback-mark wipe (see
     /// [`Self::push_without_adds_does_not_wipe_lower_levels`]); this test
     /// pins that the seeded path stays sound on the shaped case regardless.
@@ -1047,7 +1047,7 @@ mod tests {
 
     /// Regression (constraint wipe on routine backtrack): `ConstraintGraph::push`
     /// used to initialize the new level's rollback mark to 0, so a pop to a
-    /// level that had seen no constraint additions truncated EVERYTHING —
+    /// level that had seen no constraint additions truncated EVERYTHING –
     /// including level-0 facts.  A push/pop round-trip must preserve them.
     #[test]
     fn push_without_adds_does_not_wipe_lower_levels() {

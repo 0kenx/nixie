@@ -98,7 +98,7 @@ fn operator_levels_propagate_to_applications() {
     assert_eq!(r.level_of("Uses"), Some(Level::Action));
 }
 
-// ---- violations -----------------------------------------------------------
+// ======== violations ========
 
 fn violation(src: &str) -> String {
     let r = levels(src);
@@ -134,7 +134,7 @@ fn priming_a_temporal_formula_is_a_violation() {
     assert!(msg.contains("`'`"), "got {msg}");
 }
 
-// ---- the deliberate under-reporting contract ------------------------------
+// ======== the deliberate under-reporting contract ========
 
 #[test]
 fn violations_depending_on_unresolved_names_are_not_reported() {
@@ -179,7 +179,7 @@ fn deep_expressions_do_not_overflow_the_stack() {
     assert_eq!(r.level_of("A"), Some(Level::State));
 }
 
-// ---- rules found by the SANY parity run -----------------------------------
+// ======== rules found by the SANY parity run ========
 
 #[test]
 fn fairness_is_temporal() {

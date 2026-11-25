@@ -1,17 +1,17 @@
 //! The `QF_FF` decision procedure for a conjunction
 //! (the OKTB23 core; `docs/FF_THEORY_DESIGN.md` §5).
 //!
-//! Input: the asserted literals over one field — `p(x⃗) = 0` and `q(x⃗) ≠ 0`:
+//! Input: the asserted literals over one field – `p(x⃗) = 0` and `q(x⃗) ≠ 0`:
 //!
-//! * **Step 1 — encode** (two passes, like cvc5's `cocoa_encoder`): equalities
+//! * **Step 1 – encode** (two passes, like cvc5's `cocoa_encoder`): equalities
 //!   become generators `enc(a) − enc(b)`; disequalities become
 //!   `(enc(a) − enc(b))·w − 1` with a fresh witness `w` (exact: in a field,
 //!   `a ≠ b ⟺ a − b` is invertible); bitsum definitions get a fresh sum
-//!   variable and their own generator set (a definition, not a fact —
+//!   variable and their own generator set (a definition, not a fact –
 //!   cores exclude them).
-//! * **Step 2 — Gröbner** (degrevlex). Basis `{nonzero constant}` →
+//! * **Step 2 – Gröbner** (degrevlex). Basis `{nonzero constant}` →
 //!   **UNSAT**, core = the traced subset of asserted facts.
-//! * **Step 3 — `FindZero`** (model construction): an explicit heap stack —
+//! * **Step 3 – `FindZero`** (model construction): an explicit heap stack –
 //!   never native recursion (`AGENTS.md` → deep input must not overflow
 //!   the stack). At each node: every variable has a linear univariate
 //!   `xᵢ − cᵢ` → model; otherwise a brancher: a super-linear univariate
@@ -19,16 +19,16 @@
 //!   variable's minimal polynomial; positive-dimensional → round-robin
 //!   over values (complete but `p`-sized: at a 254-bit prime it will not
 //!   finish, and the budget says so honestly).
-//! * **Step 4 — the honesty gate**: [`FfOutcome`] separates `Exhausted`
+//! * **Step 4 – the honesty gate**: [`FfOutcome`] separates `Exhausted`
 //!   (search genuinely closed → UNSAT) from `OutOfBudget` (→ `Unknown`,
 //!   never `Unsat`).
-//! * **Step 5 — validate the model, always**: substitute and evaluate
+//! * **Step 5 – validate the model, always**: substitute and evaluate
 //!   every asserted literal in 𝔽_p. A model that fails validation is an
 //!   internal error surfaced as `Unknown` plus a loud diagnostic, never
 //!   `Sat`.
 //!
 //! `p = 2` has no Montgomery form (the modulus is even), so small fields
-//! fall back to **complete enumeration** over the term semantics — the
+//! fall back to **complete enumeration** over the term semantics – the
 //! design's "brute enumeration is viable and complete at tiny fields",
 //! on the same code path, not a second architecture.
 //!
@@ -38,8 +38,8 @@
 //! enumerator assigns it like one, and the exact evaluator looks it up
 //! in the assignment. Application *arguments* are never descended into
 //! (they may belong to other fields, whose slices own them). Everything
-//! EUF knows about these variables — asserted equalities and
-//! disequalities, and the congruences `x = y ⟹ f(x) = f(y)` — arrives as
+//! EUF knows about these variables – asserted equalities and
+//! disequalities, and the congruences `x = y ⟹ f(x) = f(y)` – arrives as
 //! ordinary literals from the combination layer
 //! (`nixie-solver/src/solver/check_ff.rs`'s `dpll_ufff`), so this module
 //! needs no e-graph of its own.
@@ -75,7 +75,7 @@ pub enum FfOutcome {
     Unsat(FfCore),
     /// The branching was exhaustive and empty: UNSAT is genuine. The
     /// payload is the §8 case-tree certificate when the search could
-    /// record one (the monolithic root, budget permitting) — `None`
+    /// record one (the monolithic root, budget permitting) – `None`
     /// for the enumeration path and aborted tracking, where certified
     /// mode keeps downgrading honestly.
     Exhausted {
@@ -127,7 +127,7 @@ pub struct FfCore {
     /// witnesses) are excluded by construction.
     pub fact_indices: Vec<usize>,
     /// The checkable object that justifies the UNSAT (§8). `None` on the
-    /// paths with no certificate (branch exhaustion, enumeration) — those
+    /// paths with no certificate (branch exhaustion, enumeration) – those
     /// must degrade to `Unknown` in certified mode, never pose as proved.
     pub certificate: Option<FfCertificate>,
 }
@@ -138,7 +138,7 @@ pub struct FfCore {
 pub enum FfCertificate {
     /// Weak Nullstellensatz: `Σ cᵢ · fᵢ = 1` over the listed asserted
     /// literals' encoded generators. Verification re-encodes the literals
-    /// and re-multiplies — one pass of polynomial arithmetic, independent
+    /// and re-multiplies – one pass of polynomial arithmetic, independent
     /// of the Gröbner machinery that produced the cofactors.
     IdealMembership {
         /// The field the certificate lives in.
@@ -182,7 +182,7 @@ pub enum FfCertificate {
 }
 
 /// The index (into `basis.basis`) of the first nonzero-constant
-/// element — the refutation witness for a dead node.
+/// element – the refutation witness for a dead node.
 fn witness_index(basis: &nixie_math::ff::grobner::GrobnerBasis) -> Option<usize> {
     basis
         .basis
@@ -266,7 +266,7 @@ fn literal_index(literals: &[(Var, BigUint)], var: Var, value: &BigUint) -> Opti
 /// [`FfCertificate::CaseTree`]).
 #[derive(Debug, Clone)]
 pub enum CaseEntry {
-    /// `1 ∈ ⟨atoms⟩` at this node's path (a nonzero constant suffices —
+    /// `1 ∈ ⟨atoms⟩` at this node's path (a nonzero constant suffices –
     /// rescaleable, exactly like the ideal-membership rule): the node's
     /// basis hit a constant. `cofactors` are atom-indexed.
     Refuted {
@@ -288,7 +288,7 @@ pub enum CaseEntry {
         cofactors: Vec<MPoly>,
     },
     /// The node enumerated ALL of 𝔽p for `var` (round-robin at full
-    /// width — only reachable when p ≤ the horizon). A semantic axiom:
+    /// width – only reachable when p ≤ the horizon). A semantic axiom:
     /// every variable ranges over the field; the checker confirms the
     /// children cover every residue.
     FullEnum {
@@ -311,7 +311,7 @@ impl FfCertificate {
     /// Re-verify the certificate against the original assertions:
     /// re-encode the named literals and re-multiply (IdealMembership), or
     /// re-read the distinct count and the field order (Cardinality).
-    /// `false` on any mismatch — the caller fails closed.
+    /// `false` on any mismatch – the caller fails closed.
     #[must_use]
     pub fn verify(&self, manager: &TermManager, assertions: &[TermId]) -> bool {
         match self {
@@ -331,7 +331,7 @@ impl FfCertificate {
                 };
                 // Replay the deterministic encoding over the same
                 // assertions: same variable registration order, same
-                // witness minting, bitsum definitions last — the
+                // witness minting, bitsum definitions last – the
                 // generator list must reproduce exactly.
                 let Ok((_enc, replay)) =
                     encode_generators(manager, *field, &f, assertions, 1 << 24)
@@ -447,7 +447,7 @@ impl FfCertificate {
                                 return false;
                             };
                             // Root completeness: f = ∏(x − rᵢ)·q with
-                            // gcd(q, x^p − x) = 1 — the listed roots are
+                            // gcd(q, x^p − x) = 1 – the listed roots are
                             // exactly the 𝔽p-roots. Dividing by every
                             // claimed root must be exact, each claimed
                             // root must annihilate f, and the leftover
@@ -548,11 +548,11 @@ impl FfCertificate {
 
 /// The eager whole-problem FF dispatcher: decides a conjunctive `QF_FF`
 /// goal for one field. `assertions` must be literals (`=`, `not =`,
-/// `true`, `false`) — the caller (the solver) routes only pure
+/// `true`, `false`) – the caller (the solver) routes only pure
 /// conjunctive goals here, matching the design's Phase-3 scope.
 ///
 /// `budget_steps` bounds every phase in tick counters (encoding steps,
-/// S-pairs, reductions, search nodes, root finding) — never wall-clock.
+/// S-pairs, reductions, search nodes, root finding) – never wall-clock.
 #[must_use]
 pub fn check_conjunction(
     manager: &TermManager,
@@ -572,7 +572,7 @@ pub fn check_conjunction(
         return FfOutcome::InvalidModel("field has no prime modulus".to_string());
     };
 
-    // An asserted `false` is UNSAT regardless of the path — and only this
+    // An asserted `false` is UNSAT regardless of the path – and only this
     // fast path can name it as a single-literal core.
     if let Some(&false_lit) = assertions.iter().find(|&&a| a == manager.false_id) {
         let index = assertions.iter().position(|&a| a == false_lit).unwrap_or(0);
@@ -584,12 +584,12 @@ pub fn check_conjunction(
         });
     }
 
-    // ---- The cardinality guard (§7) ----
+    // ======== The cardinality guard (§7) ========
     // A `distinct` over k terms of 𝔽_p (or any set of terms forced
     // pairwise-distinct) requires k ≤ p: the field HAS p elements. For
     // ZK primes this is vacuous; for 𝔽₂/𝔽₃ omitting the check hands the
     // GB a pigeonhole refutation it must find through k·(k−1)/2 witness
-    // generators of exponentially growing certificate degree — and the
+    // generators of exponentially growing certificate degree – and the
     // design names the omission as a false-`sat` class in the
     // combination setting. Checked here, up front, for every field size.
     if let Some((index, k)) = distinct_set_exceeding_field(manager, field, assertions, &modulus) {
@@ -603,7 +603,7 @@ pub fn check_conjunction(
         });
     }
 
-    // Collect the field's variables first — needed by both paths, and the
+    // Collect the field's variables first – needed by both paths, and the
     // enumeration cap decision is theirs to make.
     let vars = collect_field_variables(manager, field, assertions);
     match vars {
@@ -617,7 +617,7 @@ pub fn check_conjunction(
                 // The linear core runs even on enumeration-eligible goals:
                 // an inconsistent linear system is refuted in one pass
                 // WITH a checkable certificate, where the exhaustive
-                // search has none — certified mode would otherwise
+                // search has none – certified mode would otherwise
                 // decline every tiny-field UNSAT (the F_3..F_13 goals).
                 // 𝔽₂ has no Montgomery form (even modulus) and skips
                 // straight to the exhaustive path.
@@ -658,7 +658,7 @@ pub fn check_conjunction(
 /// verification: encode the assertions into generators. Deterministic
 /// (fixed variable registration, fixed witness minting, bitsum
 /// definitions appended last), so a replay from the same assertions
-/// reproduces the same generator list — the property the UNSAT
+/// reproduces the same generator list – the property the UNSAT
 /// certificate's verifier relies on.
 fn encode_generators<'f>(
     manager: &TermManager,
@@ -742,20 +742,20 @@ fn encode_generators<'f>(
 
 /// A two-way split Gröbner basis (Phase 7; cvc5 `split_gb.cpp`, the
 /// [split-GB] paper's SplitGb): a LINEAR ideal and a NONLINEAR ideal,
-/// exchanged under cvc5's `admit` discipline —
+/// exchanged under cvc5's `admit` discipline –
 ///
 /// * the linear ideal accepts every linear consequence of either
 ///   basis (it stays linear under Buchberger: S-pairs of linear
 ///   polynomials are linear, so it can never re-inflate);
 /// * the nonlinear ideal accepts only **linear binomials** (`x − c`,
 ///   `x − y`), so the dense linear content (definitions, RREF rows)
-///   never enters the cascade — the exact re-expansion failure the two
+///   never enters the cascade – the exact re-expansion failure the two
 ///   flattening studies root-caused (a pivot row substituted into a
 ///   product rebuilds the expansion inside the S-pairs).
 ///
 /// With the encoder's operand flattening, a circuit-shaped generator
 /// `⟨a,z⟩·⟨b,z⟩ − c` reaches the nonlinear ideal as the binomial
-/// `t·u − k` plus two linear definitions in the linear ideal — binomial
+/// `t·u − k` plus two linear definitions in the linear ideal – binomial
 /// cleanliness AND decomposition, the property both studies converged
 /// on.
 ///
@@ -766,7 +766,7 @@ fn encode_generators<'f>(
 /// grows one of the two ideals or the fixpoint stops); in practice the
 /// shared budget bounds the work.
 struct SplitBasis {
-    /// The merged basis for FindZero (NOT itself inter-reduced — a
+    /// The merged basis for FindZero (NOT itself inter-reduced – a
     /// union of two Gröbner bases; every element is in the component's
     /// ideal, which is all FindZero's branchers need).
     merged: GrobnerBasis,
@@ -818,7 +818,7 @@ fn split_grobner_basis(
             );
             gens.append(&mut new_l);
             // The split never mints certificates (its merged inputs are
-            // not replayable) — the rows are pure overhead here.
+            // not replayable) – the rows are pure overhead here.
             let r = grobner_basis_untraced(f, &gens, budget);
             if std::env::var_os("NIXIE_FF_STATS").is_some() {
                 eprintln!(
@@ -908,8 +908,8 @@ fn split_grobner_basis(
 /// A window decomposition result: the merged union of the window
 /// bases, plus whether the union completed into a true Gröbner basis
 /// of the component ideal (the union of window ideals EQUALS the
-/// component ideal — each window ideal contains its generators and is
-/// contained in the component ideal — so a completing cascade over the
+/// component ideal – each window ideal contains its generators and is
+/// contained in the component ideal – so a completing cascade over the
 /// union is the component's basis, and the minimal-polynomial brancher
 /// is valid for it).
 struct WindowBasis {
@@ -919,7 +919,7 @@ struct WindowBasis {
     /// variables cannot be pinned by any exchange (an exchanged
     /// polynomial's support must fit its target's fixed variable set),
     /// so over a prime bigger than the round-robin horizon FindZero on
-    /// the union is a guaranteed-budget-out walk — the caller refuses
+    /// the union is a guaranteed-budget-out walk – the caller refuses
     /// fast instead (capacity, never soundness: the search is sound
     /// over the subideal, just hopeless).
     any_skipped: bool,
@@ -950,7 +950,7 @@ fn form_windows(component: &[&FrontGen], var_cap: usize, gen_cap: usize) -> Vec<
             // growth is wrong on front-end-processed components: the
             // linear core appends all pivot rows AFTER the substituted
             // nonlinear generators, so index order separates the rows
-            // from the quadratics they pin — window 0 of the chain then
+            // from the quadratics they pin – window 0 of the chain then
             // collects 42 product generators with no linear content
             // (underdetermined, budget-out) while the rows trail behind
             // as their own micro-windows. Overlap-driven growth keeps
@@ -989,18 +989,18 @@ fn form_windows(component: &[&FrontGen], var_cap: usize, gen_cap: usize) -> Vec<
 /// discipline, then (as a completion attempt) one cascade over the
 /// union. Attacks the coupling-DENSITY failure mode of the monolithic
 /// cascade and the 2-way split: a locality-structured chain of n
-/// coupled constraints becomes ~n/W windows of ≤ W variables each —
-/// inside the regime the monolithic path completes — with only
+/// coupled constraints becomes ~n/W windows of ≤ W variables each –
+/// inside the regime the monolithic path completes – with only
 /// boundary consequences crossing.
 ///
 /// **Admit discipline** (support-fitting, two classes, each with a
 /// termination story):
 /// * every polynomial of degree ≤ 1 whose support fits the target
-///   window's variables — the linear part of a window's ideal lives in
+///   window's variables – the linear part of a window's ideal lives in
 ///   a (|V_w|+1)-dimensional space, so strict growth is bounded and
 ///   the fixpoint stabilizes (cvc5's discipline, generalized from two
 ///   ideals to windows);
-/// * every univariate (any degree) — principal ideals of 𝔽_p[x] ascend
+/// * every univariate (any degree) – principal ideals of 𝔽_p[x] ascend
 ///   finitely, and univariates are exactly the brancher fuel FindZero
 ///   consumes, so boundary variables pinned by a neighbour's univariate
 ///   reach every window that owns the variable.
@@ -1025,7 +1025,7 @@ fn window_grobner_basis(
     // window-cap sweep on the chain corpus (caps 4–8 all solve both
     // frontier goals in ~3–5 s with identical verdicts; 12/24 solve
     // slower, 16/20 leave windows that budget-out at the default
-    // budget): windows of ~8 variables — one to two constraint cores —
+    // budget): windows of ~8 variables – one to two constraint cores –
     // have individually trivial cascades, and the union cascade closes
     // the cycle. The cap governs GROWTH only; a seed generator whose
     // own support exceeds it still forms its (oversized) window, so
@@ -1036,7 +1036,7 @@ fn window_grobner_basis(
     let windows = form_windows(component, WINDOW_VAR_CAP, WINDOW_GEN_CAP);
     let n_w = windows.len();
     // Each window's FIXED variable set (the union of its generators'
-    // supports — admissions never grow it: an admitted polynomial's
+    // supports – admissions never grow it: an admitted polynomial's
     // support fits by definition).
     let wvars: Vec<FxHashSet<Var>> = windows
         .iter()
@@ -1057,7 +1057,7 @@ fn window_grobner_basis(
     let mut bases: Vec<Option<GrobnerBasis>> = vec![None; n_w];
     // Windows that budget-out are SKIPPED, not fatal: the union of the
     // survivors' bases generates a SUBIDEAL of the component ideal, and
-    // every consumer downstream is sound under ideal SHRINKAGE — a
+    // every consumer downstream is sound under ideal SHRINKAGE – a
     // constant in any subideal refutes the component ideal, and a
     // search exhausted over V(J⊇I) refutes V(I) (the component's zeros
     // are a subset), while a candidate model is validated against the
@@ -1072,15 +1072,15 @@ fn window_grobner_basis(
     // offers its admissible elements to every fitting window, and a
     // window with pending offers recomputes at once (FIFO). The
     // round-synchronized sweep this replaces moves the pin wavefront
-    // ONE window per round — the chain's rigidity propagates along the
-    // ring — so the frontier goal (1024 vars, 171 windows) died at the
+    // ONE window per round – the chain's rigidity propagates along the
+    // ring – so the frontier goal (1024 vars, 171 windows) died at the
     // 64-round cap seven rounds short (measured, the pre-registered
     // falsification criterion). The worklist walks the same wavefront
     // in arrival order: one pass propagates the whole chain.
     // Determinism: FIFO order, index-ordered scans. Termination: the
     // same Noetherian argument (every admission either is
     // membership-skipped or strictly grows the target window's ideal),
-    // bounded in practice by a total-admissions cap — a capacity
+    // bounded in practice by a total-admissions cap – a capacity
     // limit, never an answer.
     let mut worklist: std::collections::VecDeque<usize> = (0..n_w).collect();
     let mut admissions = 0usize;
@@ -1088,7 +1088,7 @@ fn window_grobner_basis(
     // Skipped windows (budget-out on recompute) stay dead; offers into
     // them are pointless. A not-yet-COMPUTED window is different: it is
     // still on the worklist with its generators pending, and an offer
-    // to it must ACCUMULATE (admitted without a membership check — its
+    // to it must ACCUMULATE (admitted without a membership check – its
     // basis does not exist yet; the recompute subsumes the check).
     // Dropping such offers (the first worklist cut) lost every
     // forward-edge into a not-yet-computed window and the fixpoint
@@ -1103,7 +1103,7 @@ fn window_grobner_basis(
             .map(|b| b.basis.iter().map(|t| t.poly.clone()).collect())
             .unwrap_or_default();
         gens.append(&mut pending[w]);
-        // Each recompute gets its own budget — the components'
+        // Each recompute gets its own budget – the components'
         // discipline ("component counts are small; a shared cap would
         // starve late components") applies verbatim: windows are small
         // independent subproblems, and a shared cap would let an early
@@ -1129,7 +1129,7 @@ fn window_grobner_basis(
         };
         // Offer THIS window's admissible elements to every fitting
         // window that does not already contain them (cvc5's `admit` /
-        // `!contains`). Only the recomputed window is scanned — the
+        // `!contains`). Only the recomputed window is scanned – the
         // neighbors' elements were offered when THEY recomputed.
         let mut offered = 0usize;
         for t in &new_basis.basis {
@@ -1182,7 +1182,7 @@ fn window_grobner_basis(
     // The completion attempt: one cascade over the union of all window
     // bases. The union generates the component ideal (each window
     // ideal ⊆ it, and every component generator sits in some window
-    // ideal), so a completing cascade IS the component's Gröbner basis —
+    // ideal), so a completing cascade IS the component's Gröbner basis –
     // the minimal-polynomial brancher is valid for it. Within-window
     // pairs reduce to zero quickly (the window bases are already
     // Gröbner for their ideals); the cross-window pairs are the new
@@ -1240,7 +1240,7 @@ fn grobner_path(
     assertions: &[TermId],
     budget_steps: u64,
 ) -> FfOutcome {
-    // ---- Step 1: encode (two passes) ----
+    // ======== Step 1: encode (two passes) ========
     let (enc, generators) = match encode_generators(manager, field, f, assertions, budget_steps) {
         Ok(x) => x,
         Err(outcome) => return outcome,
@@ -1255,7 +1255,7 @@ fn grobner_path(
         return FfOutcome::Model(model);
     }
 
-    // ---- Phase 5 front end, before any Gröbner work ----
+    // ======== Phase 5 front end, before any Gröbner work ========
     // The linear core: sparse Gaussian elimination over 𝔽_p on the
     // linear generators; pivots substitute into the nonlinear part; an
     // inconsistent row is an immediate UNSAT whose core is that row's
@@ -1263,10 +1263,10 @@ fn grobner_path(
     // propagation falls out: a pivot row with no other variables IS
     // `x − c`, and the substitution applies it everywhere at once. This
     // is the LRA tableau discipline with every hard part removed (no
-    // bounds, no ordering, no anti-cycling rule) — the design's "do not
+    // bounds, no ordering, no anti-cycling rule) – the design's "do not
     // make Gröbner the front line".
     // The rewriting carries each generator's expression over the
-    // ORIGINAL (replayable) encoding — certificates compose through it.
+    // ORIGINAL (replayable) encoding – certificates compose through it.
     // `originals` is what the certificate replay reproduces.
     let originals = generators.clone();
     let generators_and_exprs = match linear_core(f, field, generators) {
@@ -1285,7 +1285,7 @@ fn grobner_path(
     // subproblems: no polynomial mentions variables of two components,
     // so the ideal is a direct sum and a point of the whole is exactly a
     // point per component. The design calls this "the single most
-    // reliable way to keep basis sizes sane" — a 20-constraint circuit
+    // reliable way to keep basis sizes sane" – a 20-constraint circuit
     // decomposing into 5 four-variable systems turns an intractable
     // Macaulay blowup into five trivial ones. Each component gets its
     // own budget (component counts are small; a shared cap would starve
@@ -1301,8 +1301,8 @@ fn grobner_path(
             budget_steps.ilog2()
         );
     }
-    // Per component: the MONOLITHIC basis first — the proven path,
-    // exactly the pre-split behavior and budget semantics — and the
+    // Per component: the MONOLITHIC basis first – the proven path,
+    // exactly the pre-split behavior and budget semantics – and the
     // split basis as the FALLBACK for components whose monolithic
     // cascade is the blowup: separated linear/nonlinear ideals under
     // cvc5's admit discipline, then FindZero over the merged union.
@@ -1318,13 +1318,13 @@ fn grobner_path(
         // The untraced fast path for WIDE components: the certificate
         // tracer's cofactor-row maintenance costs ~n_inputs× per
         // operation (the measured ~1 s-per-S-pair blocker on the chain
-        // corpus). Below the threshold the tracer runs as always —
+        // corpus). Below the threshold the tracer runs as always –
         // small components are where certificates are minted and the
         // row cost is negligible. Above it, the cascade runs untraced
-        // (identical trajectory — rows never influence reductions); a
+        // (identical trajectory – rows never influence reductions); a
         // basis constant (the traced-UNSAT witness) triggers ONE traced
-        // re-run, so UNSAT costs what it costs today and SAT — the
-        // capacity frontier — gets the speed.
+        // re-run, so UNSAT costs what it costs today and SAT – the
+        // capacity frontier – gets the speed.
         const UNTRACED_MIN_INPUTS: usize = 40;
         let use_fast_path = input_polys.len() >= UNTRACED_MIN_INPUTS;
         let run_traced = |budget: &mut GrobnerBudget| -> Result<GrobnerBasis, GrobnerError> {
@@ -1383,10 +1383,10 @@ fn grobner_path(
             }
             Err(GrobnerError::Budget) => {
                 // First fallback: the 2-way linear/nonlinear split (a
-                // fresh budget — the monolithic attempt's burn is
+                // fresh budget – the monolithic attempt's burn is
                 // sunk cost, and the separated ideals' work is
                 // disjoint from it). Second fallback: the §6.5 window
-                // decomposition — the 2-way split separates by DEGREE
+                // decomposition – the 2-way split separates by DEGREE
                 // and never decomposes a single dense component,
                 // which is exactly the chain's shape; the window
                 // split decomposes by variable support into
@@ -1427,7 +1427,7 @@ fn grobner_path(
         // reach: over a prime beyond the round-robin horizon FindZero on
         // the union is a guaranteed-budget-out walk (every such variable
         // ends in truncated enumeration), and each walked node pays a
-        // union-scale basis recompute. Refuse fast instead — Unknown,
+        // union-scale basis recompute. Refuse fast instead – Unknown,
         // never a verdict. (At small p the search stays complete and
         // cheap, so it still runs.)
         if any_skipped {
@@ -1456,7 +1456,7 @@ fn grobner_path(
             if !is_split {
                 // The monolithic refutation: compose the witness through
                 // the component generators' expressions over the
-                // originals — the traced core and the replayable
+                // originals – the traced core and the replayable
                 // certificate.
                 let comp_exprs: Vec<Vec<MPoly>> = component
                     .iter()
@@ -1473,7 +1473,7 @@ fn grobner_path(
             // A split-path refutation: the derivation runs through both
             // ideals (or the exchanged polys detach the tracer from the
             // component's generators), so the core is the component's
-            // origins and no certificate is claimed — certified mode
+            // origins and no certificate is claimed – certified mode
             // honestly downgrades.
             let core: Vec<usize> = component
                 .iter()
@@ -1487,7 +1487,7 @@ fn grobner_path(
         let vars = component_variables(component);
         // The case-tree atom map: the component's generators at their
         // global slots (only meaningful for the monolithic root, whose
-        // inputs ARE those generators in component order — the split
+        // inputs ARE those generators in component order – the split
         // root's merged inputs are not replayable and track nothing).
         // The case-tree tracking composes through the rewriting: the
         // root's input expressions are the component generators'
@@ -1497,7 +1497,7 @@ fn grobner_path(
         // tracer rows; an untraced basis's empty rows would compose to
         // silently-zero memberships). `is_split` covers the 2-way AND
         // window roots: the window union may be a true Gröbner basis
-        // (`root_is_gb` — the minimal-polynomial brancher is valid), but
+        // (`root_is_gb` – the minimal-polynomial brancher is valid), but
         // it was computed UNTRACED over window elements, so no
         // certificate can be minted from it.
         let basis_is_traced = !is_split && root_is_gb && (!use_fast_path || basis_traced_rewind);
@@ -1656,7 +1656,7 @@ fn component_variables(component: &[&FrontGen]) -> Vec<Var> {
 #[derive(Debug, Clone)]
 struct FrontGen {
     /// The asserted literal this generator encodes (`None` for bitsum
-    /// definitions — a definition is not a fact and cores exclude it).
+    /// definitions – a definition is not a fact and cores exclude it).
     literal: Option<usize>,
     /// The polynomial.
     poly: MPoly,
@@ -1672,7 +1672,7 @@ fn traced_unsat(
     field: FieldId,
     // `input_exprs`: the refuting basis's inputs' expressions over the
     // ORIGINAL (replayable) encoding, aligned with `basis.inputs`;
-    // `originals`: the encoding's own output — the certificate's
+    // `originals`: the encoding's own output – the certificate's
     // generator list.
     input_exprs: &[Vec<MPoly>],
     originals: &[FrontGen],
@@ -1684,7 +1684,7 @@ fn traced_unsat(
         };
     };
     // §8's "easy half", checked EVERY time, not only in certified mode:
-    // re-multiply Σ cᵢ·fᵢ and compare with the constant — one pass of
+    // re-multiply Σ cᵢ·fᵢ and compare with the constant – one pass of
     // polynomial arithmetic, orders of magnitude cheaper than the basis
     // that produced it, and the difference between "the GB says so" and
     // "here is a checkable object". A tracer or arithmetic defect that
@@ -1695,7 +1695,7 @@ fn traced_unsat(
     if !witness.verify(f, &basis.inputs) {
         return FfOutcome::InvalidModel(
             "UNSAT certificate failed verification (cofactor identity \
-             broken) — declining to an honest Unknown"
+             broken) – declining to an honest Unknown"
                 .to_string(),
         );
     }
@@ -1704,7 +1704,7 @@ fn traced_unsat(
     // `Σⱼ expr[i][j] · originalⱼ`, so the replayable certificate is
     // `1 = Σⱼ (Σᵢ cofᵢ·expr[i][j]) · originalⱼ`. (Certifying the
     // REWRITTEN list instead handed the verifier a list its replay
-    // cannot reproduce — a length mismatch that silently downgraded
+    // cannot reproduce – a length mismatch that silently downgraded
     // every substituted refutation; found by the case-tree probe,
     // 2026-09-16.)
     let n_orig = originals.len();
@@ -1733,7 +1733,7 @@ fn traced_unsat(
         }
     }
     if core.is_empty() {
-        // The certificate rests only on definitions — not reachable with
+        // The certificate rests only on definitions – not reachable with
         // a sound encoder, but an empty core must never be returned as
         // "UNSAT by nothing": fall back to naming every fact.
         core = originals
@@ -1742,7 +1742,7 @@ fn traced_unsat(
             .collect();
     }
     // The certificate: the FULL original generator list (facts,
-    // witnesses, bitsum definitions — index-aligned with the composed
+    // witnesses, bitsum definitions – index-aligned with the composed
     // cofactors). Verification replays `encode_generators` over the
     // same assertions, which deterministically reproduces this list.
     let mut cert_generators: Vec<(Option<usize>, MPoly)> = Vec::new();
@@ -1761,11 +1761,11 @@ fn traced_unsat(
     })
 }
 
-// ================= Step 1: the encoder =================
+// ======== Step 1: the encoder ========
 
 /// Term → polynomial encoder. Pass 1 registers every FF-sorted variable
 /// (assigning ring indices); pass 2 builds polynomials against that fixed
-/// variable map — the two-pass discipline cvc5's `cocoa_encoder` uses,
+/// variable map – the two-pass discipline cvc5's `cocoa_encoder` uses,
 /// because the ring's variables must be known before any polynomial is
 /// built.
 struct Encoder<'a> {
@@ -1774,7 +1774,7 @@ struct Encoder<'a> {
     var_index: FxHashMap<TermId, Var>,
     next_var: Var,
     /// Bitsum definition generators accumulated during encoding, each
-    /// with the literal whose encoding minted it — provenance for cores
+    /// with the literal whose encoding minted it – provenance for cores
     /// (a definition is not a fact, but the fact that REQUIRED it
     /// belongs in any core the definition participates in).
     bitsum_generators: Vec<(std::collections::BTreeSet<usize>, MPoly)>,
@@ -1812,7 +1812,7 @@ impl<'a> Encoder<'a> {
         )
     }
 
-    /// Pass 1 for one term: register FF variables (explicit stack — user
+    /// Pass 1 for one term: register FF variables (explicit stack – user
     /// terms can be arbitrarily deep).
     fn register_vars(
         &mut self,
@@ -1843,7 +1843,7 @@ impl<'a> Encoder<'a> {
             }
             // A `QF_UFFF` application with an FF result sort of THIS field
             // is an opaque variable (see the module doc): mint it, and do
-            // NOT descend into the arguments — they may belong to other
+            // NOT descend into the arguments – they may belong to other
             // fields whose slices own them, and nothing this field's
             // polynomials can say about them is sound.
             if let TermKind::Apply { .. } = &term.kind
@@ -1877,7 +1877,7 @@ impl<'a> Encoder<'a> {
     }
 
     /// A fresh witness ring variable for the disequality between `a` and
-    /// `b` (one per pair — deduplicated so repeated disequalities share).
+    /// `b` (one per pair – deduplicated so repeated disequalities share).
     fn fresh_witness(&mut self, a: TermId, b: TermId) -> Var {
         let key = if a.0 <= b.0 { (a, b) } else { (b, a) };
         *self.witnesses.entry(key).or_insert_with(|| {
@@ -1889,7 +1889,7 @@ impl<'a> Encoder<'a> {
 
     /// Pass 2: the polynomial of a term. ONE frame stack: `Expand` frames
     /// push `Combine` frames *under* their children, so a combine pops
-    /// exactly when its own children have all produced values — a
+    /// exactly when its own children have all produced values – a
     /// separate combine list would let sibling operands bleed across
     /// windows (the first version's Add consumed the neighbour's operands
     /// and fabricated `x₀x₁x₂` monomials out of linear sums; the planted
@@ -1971,7 +1971,7 @@ impl<'a> Encoder<'a> {
                                 stack.push(Frame::Expand(c));
                             }
                         }
-                        _ => return None, // unsupported shape — refused
+                        _ => return None, // unsupported shape – refused
                     }
                 }
                 Frame::Combine(kind) => {
@@ -2045,7 +2045,7 @@ impl<'a> Encoder<'a> {
     }
 }
 
-// ================= Step 3: FindZero =================
+// ======== Step 3: FindZero ========
 
 /// The branching search for a rational point: one explicit heap stack of
 /// nodes (basis + partial assignment), never native recursion.
@@ -2055,7 +2055,7 @@ struct FindZeroCert<'a> {
     /// Whether the root basis is a true Gröbner basis (see `Node::is_gb`).
     root_is_gb: bool,
     /// The root's input expressions over the replayable originals
-    /// (`None` disables tracking — the split root's merged inputs are
+    /// (`None` disables tracking – the split root's merged inputs are
     /// not replayable).
     root_input_exprs: Option<&'a [Vec<MPoly>]>,
 }
@@ -2072,7 +2072,7 @@ fn find_zero(
         basis: nixie_math::ff::grobner::GrobnerBasis,
         /// Whether `basis` is an inter-reduced Gröbner basis of
         /// `inputs`' ideal. The split path's root is a UNION of two
-        /// Gröbner bases — sound for every rule that only consumes
+        /// Gröbner bases – sound for every rule that only consumes
         /// ideal members (univariate branching, linear univariates,
         /// whole-ring detection), but NOT for the minimal-polynomial
         /// rule, whose quotient arithmetic is valid only for a true
@@ -2090,7 +2090,7 @@ fn find_zero(
 
     // ---- §8 case-tree tracking (advisory: never affects the verdict).
     // The atoms are the component's generators (mapped to global
-    // generator indices by `atom_map` — the replay re-encodes the full
+    // generator indices by `atom_map` – the replay re-encodes the full
     // slice, so the component's atoms must sit at their global slots)
     // plus one monic `x − r` per minted branch literal. Expressions
     // compose through the per-node tracer rows; composition runs on its
@@ -2110,7 +2110,7 @@ fn find_zero(
         /// tracer row over the node's inputs (parent basis elements,
         /// then the branch literal that created the node), each input
         /// replaced by its own expression. Charged to the TRACKING
-        /// budget — a failure returns `None` and the caller disables
+        /// budget – a failure returns `None` and the caller disables
         /// tracking (the verdict is never at stake).
         fn expr_of(
             &self,
@@ -2130,7 +2130,7 @@ fn find_zero(
                 let is_literal_input = self.extra_atom.is_some() && j + 1 == row.len();
                 if is_literal_input {
                     // The atom slot is base + registry index (the
-                    // registry index alone addresses a GENERATOR slot —
+                    // registry index alone addresses a GENERATOR slot –
                     // the first version wrote the literal's term into
                     // the wrong atom and the membership identity came
                     // out silently wrong).
@@ -2257,12 +2257,12 @@ fn find_zero(
 
         // Brancher 1: a super-linear univariate element of the GB.
         // SELECTION: among all candidates, take the one of SMALLEST
-        // degree — the branching factor is the root count, so the
+        // degree – the branching factor is the root count, so the
         // min-degree choice is the smallest tree. First-found order once
         // produced a degree-8 brancher where a degree-2 sat beside it,
         // and a 16-constraint sparse goal ground for minutes on the
         // 8-way tree (a 64-constraint goal with no such element solved
-        // in seconds — the chaos is the selection, not the size).
+        // in seconds – the chaos is the selection, not the size).
         let mut candidates: Vec<(usize, Var, UniPoly, usize)> = Vec::new();
         for (g_idx, g) in node.basis.basis.iter().enumerate() {
             let Some(lm) = g.poly.lm(nixie_math::ff::grobner::DEGREVLEX) else {
@@ -2307,7 +2307,7 @@ fn find_zero(
         };
 
         // The branch decision, with its certificate entry (the
-        // univariate rule's polynomial is a basis element — membership
+        // univariate rule's polynomial is a basis element – membership
         // comes from the tracer; the minpoly rule's polynomial is
         // certified by a traced normal form).
         let mut branch_entry: Option<CaseEntry> = None;
@@ -2322,7 +2322,7 @@ fn find_zero(
                 ) {
                     Some(cofactors) => {
                         // The branch polynomial is the RECONSTRUCTED
-                        // combination Σ row_j·input_j — not the basis
+                        // combination Σ row_j·input_j – not the basis
                         // element itself: the basis's normalization can
                         // scale an element without scaling its tracer
                         // row, and the checker demands exact membership.
@@ -2459,7 +2459,7 @@ fn find_zero(
                 // residues LAZILY, in value order 0, 1, 2, …, up to a
                 // small horizon. Complete for p ≤ horizon; beyond it,
                 // a truncated enumeration is recorded and the exhausted
-                // stack reports OutOfBudget, never Exhausted — the
+                // stack reports OutOfBudget, never Exhausted – the
                 // honest form of "this will not finish at a big prime".
                 // Structured systems tolerate the horizon well: a wrong
                 // guess on a product chain dies in one node (the branch
@@ -2489,11 +2489,11 @@ fn find_zero(
         }
 
         // Branch: add x − value, recompute the basis (recompute, never
-        // incrementally roll back — the design's scoping discipline).
+        // incrementally roll back – the design's scoping discipline).
         // Node accounting charges CHILDREN PUSHED, not nodes popped: a
         // round-robin node pushes its whole horizon (256 at a big
         // prime) and a pop-per-step count let those 256-ary expansions
-        // run to a 2^24-NODE cap — minutes of child GB recomputes after
+        // run to a 2^24-NODE cap – minutes of child GB recomputes after
         // the verdict was already hopeless (the window-split study's
         // degraded-union case: an 82 s refusal whose every node was a
         // dead 40-element recompute). Charging the fan-out is the T5
@@ -2505,7 +2505,7 @@ fn find_zero(
             };
         }
         // The child's generators are the node's BASIS ELEMENTS plus the
-        // branch literal — the same ideal as the raw inputs (a basis
+        // branch literal – the same ideal as the raw inputs (a basis
         // generates its ideal; the split root's union generates the
         // component ideal), but already reduced, so each branch
         // bootstraps from the reduced basis instead of re-running the
@@ -2568,12 +2568,12 @@ fn find_zero(
             }
         }
     }
-    // The stack emptied without a model: the branching was exhaustive —
+    // The stack emptied without a model: the branching was exhaustive –
     // UNSAT is genuine (Step 4's honesty gate: this is *not* a budget
-    // outcome) — UNLESS a round-robin branch enumerated fewer than p
+    // outcome) – UNLESS a round-robin branch enumerated fewer than p
     // values: then unexplored assignments remain, the empty stack proves
     // nothing, and the verdict is Unknown. (The first version of the
-    // lazy round-robin dropped exactly this gate — a planted BN254 goal
+    // lazy round-robin dropped exactly this gate – a planted BN254 goal
     // whose satisfying values all exceeded the horizon came back
     // `unsat`; the planted corpus caught it, the tiny-prime oracle
     // could not, because p ≤ 256 never truncates there.)
@@ -2619,7 +2619,7 @@ fn find_zero(
     FfOutcome::Exhausted { certificate }
 }
 
-// ================= Enumeration path (tiny fields) =================
+// ======== Enumeration path (tiny fields) ========
 
 /// The first `distinct` literal whose term count exceeds the field's
 /// order: (literal index, term count). Pigeonhole makes it unsatisfiable
@@ -2681,7 +2681,7 @@ fn collect_field_variables(
             // opaque variable the enumerator must assign (see the module
             // doc). Arguments are not walked: same-field subterms reach
             // `vars` through the literals that mention them directly, and
-            // foreign-field arguments belong to other slices — walking
+            // foreign-field arguments belong to other slices – walking
             // them here would both over-collect and mis-route.
             TermKind::Apply { .. } => {
                 if matches!(
@@ -2728,7 +2728,7 @@ fn enumerate(
     // Mixed-radix enumeration over p^n points. The caller's cap
     // (p^n ≤ 2^22, checked in [`check_conjunction`]) guarantees the
     // point count fits u64, and any modulus with n ≥ 1 under that cap
-    // is far below 2^64 — so the counter and its digits run in u64
+    // is far below 2^64 – so the counter and its digits run in u64
     // (the first version did BigUint div/mod per digit per point, which
     // made a 2^15-point enumeration cost ~a second; the combination
     // loop runs thousands of those).
@@ -2778,7 +2778,7 @@ fn enumerate(
 }
 
 /// Exact literal evaluation under an assignment (the term-language
-/// semantics — the same fold the model validator cross-checks against the
+/// semantics – the same fold the model validator cross-checks against the
 /// polynomial encoding).
 fn eval_literal(
     manager: &TermManager,
@@ -2807,7 +2807,7 @@ fn eval_literal(
 }
 
 /// Exact FF-term evaluation in `BigUint` arithmetic mod `p`. ONE frame
-/// stack (Expand/Combine interleaved) — a separate combine list lets
+/// stack (Expand/Combine interleaved) – a separate combine list lets
 /// sibling operands bleed across windows, which mis-evaluated nested
 /// `(ff.mul (ff.add …) (ff.add …))` shapes and made the validator reject
 /// correct witnesses (caught by the planted-solution fuzzer).
@@ -2855,7 +2855,7 @@ fn eval_term(
                     // `QF_UFFF` opaque application: its value is whatever the
                     // assignment gives the term (the combination layer
                     // guarantees those values satisfy congruence; this fold
-                    // deliberately knows nothing about it). Atomic — the
+                    // deliberately knows nothing about it). Atomic – the
                     // arguments are not evaluated here.
                     TermKind::Apply { .. } => {
                         results.push(assignment.get(&t).cloned()?);
@@ -2932,13 +2932,13 @@ fn eval_term(
     results.pop()
 }
 
-/// Exact evaluation of an FF term of `field` under a term→residue map —
+/// Exact evaluation of an FF term of `field` under a term→residue map –
 /// the public face of the [`validate_model`] fold, for callers outside
 /// this crate (the `QF_UFFF` combination layer's function-hood scan:
 /// given candidate values for the opaque applications and variables, a
 /// congruence check needs the *argument* values, and arguments are
 /// arbitrary FF terms). Returns `None` on an unassigned leaf, a foreign
-/// constant, or a non-FF shape — never a guess.
+/// constant, or a non-FF shape – never a guess.
 #[must_use]
 pub fn evaluate_term_exact(
     manager: &TermManager,
@@ -2950,15 +2950,15 @@ pub fn evaluate_term_exact(
     eval_term(manager, field, &modulus, root, assignment)
 }
 
-// ================= Step 5: validation =================
+// ======== Step 5: validation ========
 
-/// Substitute the model into every asserted literal and evaluate in 𝔽_p —
+/// Substitute the model into every asserted literal and evaluate in 𝔽_p –
 /// through the *polynomial* encoding, so the validator is a second,
 /// independent implementation of the semantics (an encoder bug that made
 /// the search accept a non-model is exactly what this catches).
 ///
 /// `Ok(())` when the model satisfies everything; the error string
-/// describes the first violated literal (a loud diagnostic — the caller
+/// describes the first violated literal (a loud diagnostic – the caller
 /// turns this into `Unknown`, never `Sat`).
 pub fn validate_model(
     manager: &TermManager,
@@ -2990,19 +2990,19 @@ pub fn validate_model(
     Ok(())
 }
 
-// ================= Phase 5: the field-aware front end =================
+// ======== Phase 5: the field-aware front end ========
 
 /// The linear core's verdict.
 enum FrontResult {
     /// The generator list, rewritten: pivots eliminated, linear rows in
-    /// reduced form, origins merged — plus each rewritten generator's
+    /// reduced form, origins merged – plus each rewritten generator's
     /// expression over the INPUT list (aligned with the generators;
     /// identity vectors for untouched ones), so certificates compose
     /// through the rewriting to the replayable originals.
     Rewritten(Vec<FrontGen>, Vec<Vec<MPoly>>),
     /// An inconsistent linear row; the payloads are the literal indices
     /// of its origin and (when tracked) the ideal-membership certificate
-    /// — the row's own combination IS one: `Σ combo_i · gᵢ = c ≠ 0`.
+    /// – the row's own combination IS one: `Σ combo_i · gᵢ = c ≠ 0`.
     Inconsistent(std::collections::BTreeSet<usize>, Option<FfCertificate>),
 }
 
@@ -3069,7 +3069,7 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
         }
         // The combination's unit sits at the generator's TRUE index in
         // the input list (the first version used `linear_gens.len()`,
-        // the linear-subsequence position — every certificate on a goal
+        // the linear-subsequence position – every certificate on a goal
         // whose linear generators follow a nonlinear one certified the
         // wrong generator, and the replay's cofactor identity came out
         // wrong; caught by the deep-tree probe, 2026-09-16).
@@ -3129,7 +3129,7 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
         // Eliminate from every other row, merging provenance.  The pivot
         // row is TAKEN out of the arena for the sweep (rows[ri] holds an
         // empty placeholder that nothing reads: every access below is
-        // either the taken row or rows[rj != ri]) — the previous version
+        // either the taken row or rows[rj != ri]) – the previous version
         // cloned the pivot's coeffs/constant/origin/combo once per
         // eliminated row purely to split the borrow, and those deep
         // BTreeMap/Limbs copies were the FF chains' dominant cost
@@ -3172,7 +3172,7 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
     }
 
     // Inconsistent row: no variables, nonzero constant → immediate
-    // UNSAT, certified by the row's own combination (rescaled to monic —
+    // UNSAT, certified by the row's own combination (rescaled to monic –
     // the identity Σ comboᵢ·gᵢ = 1 holds exactly for the normalized row,
     // since normalization divided the whole row, combination included,
     // by the leading coefficient... which for a variable-less row IS the
@@ -3199,10 +3199,10 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
     // `g_next = g_prev − h·(x − repl)` with h = (g_prev − g_next)/(x −
     // repl) in closed form (Σₖ cₖ·Σ_{j<k} xʲ·repl^{k−1−j} over the
     // x-degree decomposition), and the row itself is Σ combo[i]·gᵢ over
-    // the INPUT generators — so each rewritten generator's expression
+    // the INPUT generators – so each rewritten generator's expression
     // over the inputs is `expr − h·combo`, and the UNSAT certificate
     // composes through the rewriting instead of certifying the
-    // rewritten list (which the replay cannot reproduce — the length
+    // rewritten list (which the replay cannot reproduce – the length
     // mismatch that silently downgraded every substituted refutation).
     let mut result: Vec<FrontGen> = Vec::new();
     let mut result_exprs: Vec<Vec<MPoly>> = Vec::new();
@@ -3253,7 +3253,7 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
     result_exprs.extend(nonlinear_exprs);
     // The pivot rows themselves survive as generators (they carry the
     // linear constraints; FindZero's linear-univariate detection reads
-    // them). Dependent rows reduced to 0 = 0 are dropped — no
+    // them). Dependent rows reduced to 0 = 0 are dropped – no
     // information lost.
     for (pivot_var, ri) in &pivots {
         let row = &rows[*ri];
@@ -3279,7 +3279,7 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
 /// Substitute `var := repl` in a polynomial (ideal-preserving when the
 /// substitution comes from an ideal member defining var).
 /// The quotient h in `g_prev − g_next = h·(x − repl)`, in closed form
-/// over the x-degree decomposition (`None` when the delta is zero —
+/// over the x-degree decomposition (`None` when the delta is zero –
 /// nothing was substituted). `g_next` must be `g_prev` with `x`
 /// replaced by `repl`.
 fn quotient_by_monic_linear(
@@ -3381,13 +3381,13 @@ fn mul_by_monomial_pub(f: &FieldCtx, p: &MPoly, m: &Monomial) -> MPoly {
 mod window_tests {
     //! Direct soundness pins for the §6.5 window decomposition (the
     //! corruption-probe discipline of the oracle suites): a small
-    //! locality-structured corpus goal runs BOTH paths — the monolithic
-    //! cascade (cheap at this size) and the window decomposition — and
+    //! locality-structured corpus goal runs BOTH paths – the monolithic
+    //! cascade (cheap at this size) and the window decomposition – and
     //! every merged window element must be a member of the component's
     //! ideal (normal form ≡ 0 mod the full Gröbner basis). A window
     //! that leaked a non-member would fabricate refutations downstream.
     //! Routing cannot be forced at this scale (the monolithic cascade is
-    //! the cheapest strategy for small goals — the window split only
+    //! the cheapest strategy for small goals – the window split only
     //! pays when the monolithic path budget-outs), so these tests pin
     //! the MECHANISM's soundness, not the routing; the routing and
     //! capacity pin is `bench/ff`'s chain corpus (see
@@ -3464,7 +3464,7 @@ mod window_tests {
         assert_eq!(components.len(), 1, "the chain is one component");
         let component: Vec<FrontGen> = components.into_iter().next().unwrap();
         let comp_refs: Vec<&FrontGen> = component.iter().collect();
-        // The full monolithic basis (cheap at this size, traced OFF —
+        // The full monolithic basis (cheap at this size, traced OFF –
         // membership is what is being probed, not certificates).
         let input_polys: Vec<MPoly> = comp_refs.iter().map(|g| g.poly.clone()).collect();
         let mut full = GrobnerBudget::new(1 << 24);
@@ -3511,7 +3511,7 @@ mod window_tests {
         );
         // The union of window variable sets covers every variable the
         // component mentions (else a variable would be unreachable by
-        // exchange — the fast-refuse gate's precondition).
+        // exchange – the fast-refuse gate's precondition).
         let all_vars: FxHashSet<Var> = comp_refs.iter().flat_map(|g| g.poly.variables()).collect();
         let window_vars: FxHashSet<Var> = windows
             .iter()

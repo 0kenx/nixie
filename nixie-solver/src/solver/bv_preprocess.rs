@@ -64,7 +64,7 @@ const MAX_MONOMIALS: usize = 100_000;
 /// minimum count of constant-distance shift shapes in an assertion's DAG
 /// before the extract/concat normal form engages.  Ladders carry one
 /// shift per stage per direction (`bitrev0032`: 10; wider: more), while
-/// ordinary shift use is sparse — 2 keeps every ladder wired and ordinary
+/// ordinary shift use is sparse – 2 keeps every ladder wired and ordinary
 /// goals on the untouched path.
 const WIRING_MIN_CONST_SHIFTS: u32 = 2;
 
@@ -121,7 +121,7 @@ pub(super) struct BvPreprocessor {
     /// Memo of the const-shift count of a subtree (the activation scan).
     wiring_scan: rustc_hash::FxHashMap<TermId, u32>,
     /// Created-node budget of the wiring rules for the current assertion:
-    /// the normal form is an optional equivalence — on exhaustion every
+    /// the normal form is an optional equivalence – on exhaustion every
     /// rule falls back to the plain rebuild (sound either way).
     wiring_budget: usize,
     /// Memoized segment lists of concat spines (`None` = declined: not a
@@ -212,7 +212,7 @@ impl BvPreprocessor {
     pub(super) fn rewrite(&mut self, root: TermId, manager: &mut TermManager) -> TermId {
         // Bit-permutation wiring activation (the `bitrev` lever): Z3's
         // shift/mask/concat extract normal form runs only for assertions
-        // that *smell* like a wiring ladder — at least
+        // that *smell* like a wiring ladder – at least
         // [`WIRING_MIN_CONST_SHIFTS`] constant-distance shift shapes
         // anywhere in the DAG.  The rules are equivalences, so an
         // over-broad gate is never unsound, but the concat spines they
@@ -230,7 +230,7 @@ impl BvPreprocessor {
         out
     }
 
-    /// The walk behind [`BvPreprocessor::rewrite`] — the memoized
+    /// The walk behind [`BvPreprocessor::rewrite`] – the memoized
     /// post-order traversal proper.  Activation-sensitive: nested
     /// normalization calls (extract slicing, wiring rebuilds) enter here
     /// so the current assertion's `wiring` flag and budget stay in force;
@@ -306,7 +306,7 @@ impl BvPreprocessor {
             // collapses `brummayerbiere3/maxandminor016`'s 16-round
             // bound-propagation chain to one near-mirror equality (nixie on
             // z3's simplified form: unsat in 8.3 s vs 28-43 s raw; z3
-            // 0.068 s) — the cascade is what makes the two sides converge
+            // 0.068 s) – the cascade is what makes the two sides converge
             // syntactically, and `flatten_bitwise`'s sorted operand lists
             // then hash-cons them together.
             TermKind::BvNot(a) => {
@@ -318,7 +318,7 @@ impl BvPreprocessor {
                 // Wiring first (bit-permutation lever): a constant-mask AND
                 // splits into zero/extract concat segments (the direct
                 // form of Z3's `mk_bv_and`-via-De-Morgan into the OR mask
-                // rule — implemented directly so the standalone-AND normal
+                // rule – implemented directly so the standalone-AND normal
                 // form below is preserved for non-wired goals).
                 if self.wiring
                     && let Some(split) = self.mask_split(ra, rb, manager, BitwiseOp::And)
@@ -565,13 +565,13 @@ impl BvPreprocessor {
                 }
                 // Broadcast ite: `ite((= t #b1), ones, zeros)` is the
                 // width-`w` REPLICATION of the bit `t` (Z3's simplify does
-                // this on the way into the blaster — `smulov`'s conditional
+                // this on the way into the blaster – `smulov`'s conditional
                 // sign extensions `concat(ite(bit, 0xFFF, 0), v)` become
                 // literal `concat(bit…bit, v)` chains, sharing terms with
                 // every other sign extension of `v` and killing one mux
                 // per bit).  The mirrored form selects the inverted
                 // replication.  Width 1 included: `ite((= t #b1), #b1, #b0)`
-                // IS `t` (a 1-bit mux selecting the bit's own value) — the
+                // IS `t` (a 1-bit mux selecting the bit's own value) – the
                 // literal form `smulov`'s low-bit selectors are written
                 // in, and the blocker that kept two otherwise-equal sign
                 // extensions from hash-consing into one multiplier.
@@ -642,11 +642,11 @@ impl BvPreprocessor {
                 // Seam-merge incrementally (O(1) amortized for the
                 // left-associated spines): adjacent windows of one base
                 // fuse, constants splice.  Z3 runs this UNCONDITIONALLY
-                // in `mk_concat` — it is the canonicalization that turns
+                // in `mk_concat` – it is the canonicalization that turns
                 // per-bit reconstruction chains (`calypto`) back into
                 // windows, and it only ever shrinks terms.  (A full
                 // flatten per visited node instead measured quadratic on
-                // wide ladders — `bitrev0512`: 20 k flattens totalling
+                // wide ladders – `bitrev0512`: 20 k flattens totalling
                 // 3.9 M segments.)
                 self.append_segment(ra, rb, manager)
             }
@@ -660,7 +660,7 @@ impl BvPreprocessor {
                 // Wiring: slice windows over concat spines DIRECTLY.  The
                 // visit's recursive re-walk of built pieces (below) re-enters
                 // the walk per piece, and with wiring-built spines that
-                // re-assembles every sub-spine per window — the measured
+                // re-assembles every sub-spine per window – the measured
                 // 2 M-append storm at width 1024.
                 if self.wiring
                     && matches!(
@@ -671,7 +671,7 @@ impl BvPreprocessor {
                     return slice_direct(high, low, ra, manager);
                 }
                 // Full-width extraction is the identity (`extract[w-1:0](X)
-                // = X`): completes the product-narrowing fixed point below —
+                // = X`): completes the product-narrowing fixed point below –
                 // a `lo = 0` window over an all-`hi+1`-wide product drops
                 // the wrapper and leaves the bare product.
                 if low == 0
@@ -740,8 +740,8 @@ impl BvPreprocessor {
                 // Extract-window narrowing over products (the multiplier-
                 // identity class, `2017-BuchwaldFried`/`Sage2`/`sage-app*`):
                 // product bits `[hi:lo]` depend only on operand bits `[hi:0]`
-                // — `(A·B) mod 2^(hi+1) = ((A mod 2^(hi+1))·(B mod 2^(hi+1)))
-                // mod 2^(hi+1)` — so every factor may be read at width
+                // – `(A·B) mod 2^(hi+1) = ((A mod 2^(hi+1))·(B mod 2^(hi+1)))
+                // mod 2^(hi+1)` – so every factor may be read at width
                 // `hi+1`: wider factors truncate, narrower factors zero-
                 // extend, and the product itself runs at `hi+1`.  This
                 // canonicalizes products modulo the zero-extension width,
@@ -796,7 +796,7 @@ impl BvPreprocessor {
     // aligns segment-wise over concat operands (`distribute_concat`),
     // and concat flattening fuses adjacent windows of one base.
     // Composed, a `rev∘rev` ladder collapses to `extract[w-1:0](x)` → `x`
-    // syntactically — the identity the bit-blaster cannot see through
+    // syntactically – the identity the bit-blaster cannot see through
     // (`bitrev1024+` were 10 s-cap timeouts while Z3 refutes in ≤0.8 s
     // with `sat-mk-var 1`; with the wiring they fold at preprocessing
     // with ZERO SAT decisions, `bitrev0032..4096` in 0.03–3.5 s).
@@ -811,7 +811,7 @@ impl BvPreprocessor {
     /// memoized over the preprocessing run (assertions share subterms).
     /// A "shape" is either a `bvshl`/`bvlshr` with a constant distance
     /// (wide widths the builder has not wired, env-off) or the builder's
-    /// wired residue `concat(extract, 0ᵏ)` / `concat(0ᵏ, extract)` —
+    /// wired residue `concat(extract, 0ᵏ)` / `concat(0ᵏ, extract)` –
     /// the builder's shift wiring is default-on (2026-09-12), so at
     /// preprocessing time a ladder's shifts appear as these residues.
     fn const_shift_count(&mut self, root: TermId, manager: &TermManager) -> u32 {
@@ -879,7 +879,7 @@ impl BvPreprocessor {
     /// The segment list of the concat spine rooted at `t` (high bit
     /// first), memoized and shared.  `None` when `t` is not a concat,
     /// its widths do not bookkeep to `w`, or the materialization exceeds
-    /// the share cap (`2w + 64` segments) — diamond-shared concat DAGs
+    /// the share cap (`2w + 64` segments) – diamond-shared concat DAGs
     /// expand exponentially and are declined, never mis-flattened.
     fn spine_of(
         &mut self,
@@ -967,7 +967,7 @@ impl BvPreprocessor {
     }
 
     /// The 1-bit term behind an `ite` condition of the form `(= t #b1)`
-    /// (either orientation), when `t` is itself width 1 — the condition
+    /// (either orientation), when `t` is itself width 1 – the condition
     /// IS the bit.  `None` for any other shape.
     fn ite_condition_bit(&self, cond: TermId, manager: &TermManager) -> Option<TermId> {
         let (a, b) = match manager.get(cond).map(|d| d.kind.clone()) {
@@ -1025,7 +1025,7 @@ impl BvPreprocessor {
         let w = bv_width_opt(manager, &value)?;
         let k64 = const_bits(&dist, manager)?.to_u64()?;
         if k64 == 0 || k64 >= u64::from(w) {
-            return None; // identity / wipe — the builder folds those
+            return None; // identity / wipe – the builder folds those
         }
         if self.wiring_budget < 4 {
             return None;
@@ -1045,14 +1045,14 @@ impl BvPreprocessor {
     }
 
     /// The Z3 "OR/AND is a mask" rule, directly for both operators:
-    /// `c OP t` splits at the constant's bit runs — for OR a run of 1s is
+    /// `c OP t` splits at the constant's bit runs – for OR a run of 1s is
     /// an all-ones segment and a run of 0s an extract of `t`; for AND a
     /// run of 0s is a zero segment and a run of 1s an extract.  Requires
     /// exactly one constant side (both-constant folds in the builder; the
     /// trivial masks 0 and all-ones are the builder's identities).
     ///
     /// The output segments (constant runs, window pieces) are collected
-    /// into one flat list and assembled once — every appended item is
+    /// into one flat list and assembled once – every appended item is
     /// non-concat, so each append is O(1) with seam fusion (appending a
     /// multi-piece window term per run instead re-peels its depth per
     /// append: a measured 2 M-append storm at width 1024).
@@ -1122,14 +1122,14 @@ impl BvPreprocessor {
         acc
     }
 
-    /// Append one low-side segment to a concat, CANONICALLY — but only
+    /// Append one low-side segment to a concat, CANONICALLY – but only
     /// on NON-wired goals: the wiring owns concat normalization on its
     /// ladders, and rebuilding its spines pre-empts the shapes its rules
     /// match (hdp/3365 lost its preprocessing fold when the rebuild ran
     /// under the wiring).  When both sides flatten within
     /// [`CONCAT_CANON_MAX`] segments, the flattened linear content is
     /// merged (adjacent constants splice, adjacent windows of one base
-    /// fuse) and rebuilt left-associated — so any two groupings of the
+    /// fuse) and rebuilt left-associated – so any two groupings of the
     /// same ≤64-segment content produce the SAME term.  That
     /// canonical-form property is what lets `bvmul`'s AC fold see equal
     /// operands through differently-nested replication chains
@@ -1169,7 +1169,7 @@ impl BvPreprocessor {
     /// its nesting, and an unbounded peel re-walks deep tails per append.
     /// Depth 8 covers every input shape the wiring owns (builder residues
     /// are binary; flat-list assembly never peels); a deeper nesting
-    /// keeps its concat unfused — sound, and the flat-list assembler still
+    /// keeps its concat unfused – sound, and the flat-list assembler still
     /// fuses its own seams.
     fn append_segment_depth(
         &mut self,
@@ -1207,7 +1207,7 @@ impl BvPreprocessor {
     /// Fuse two adjacent (high, low) segments when they merge to one:
     /// adjacent windows of one base (composing through nested extracts),
     /// or two constants (the builder splices those).  Otherwise the plain
-    /// concat.  Direct builder calls only — the wiring layer never
+    /// concat.  Direct builder calls only – the wiring layer never
     /// re-enters the walk (re-normalizing constructed trees measured as a
     /// 2 M-append storm at width 1024).
     fn fuse_pair(&mut self, x: TermId, y: TermId, manager: &mut TermManager) -> TermId {
@@ -1228,12 +1228,12 @@ impl BvPreprocessor {
     /// Z3 `distribute_concat(OP_BOR, …)` as a lockstep merge over shared
     /// segment lists: when one side of a `bvor` is a concat with a proper
     /// head segment, align BOTH sides over the common refinement of their
-    /// segmentations and or piecewise — `(A|B) = concat(A₁|B₁, A₂|B₂, …)`.
+    /// segmentations and or piecewise – `(A|B) = concat(A₁|B₁, A₂|B₂, …)`.
     /// The lists come from [`Self::spine_of`] (materialized once, shared);
     /// Z3 reaches the same normal form by repeated single-boundary peels,
     /// which re-descend the spines per boundary and are quadratic.  The
     /// per-segment ors hit the builder's constant identities
-    /// (`or(t,0) → t`, `or(t,1) → 1`) — which is what makes complementary
+    /// (`or(t,0) → t`, `or(t,1) → 1`) – which is what makes complementary
     /// masks collapse.
     fn distribute_or_over_concat(
         &mut self,
@@ -1342,7 +1342,7 @@ impl BvPreprocessor {
         }
         non_const.sort_unstable();
         // Z3 `bv_rewriter::mk_mul_hoist`: a `shl` operand factors out of a
-        // product — `x · shl(z, u) → shl(x · z, u)` (multiplication is
+        // product – `x · shl(z, u) → shl(x · z, u)` (multiplication is
         // associative in ℤ/2ʷ, so the shift-as-multiplication hoists to
         // the outside).  This is what closes the Noetzli rewrite-rule
         // identities (`bvshl (bvmul s t) (bvshl s s) = bvmul s (bvshl t …)`
@@ -1363,7 +1363,7 @@ impl BvPreprocessor {
                 break;
             };
             // Flatten `z`'s own product factors: the hoisted shift's
-            // multiplicand may itself be a (reassociated) product —
+            // multiplicand may itself be a (reassociated) product –
             // `t · shl(s·t, u)` must rebuild to the same sorted flat
             // product both sides converge to, or a pure
             // associativity/commutativity identity (`t·(s·(t<<s)) =
@@ -1506,9 +1506,7 @@ fn ring_poly(
     Some(poly)
 }
 
-// =====================================================================
-// Monomial helpers
-// =====================================================================
+// ======== Monomial helpers ========
 
 fn modulus(width: u32) -> BigInt {
     BigInt::one() << width as usize
@@ -1522,7 +1520,7 @@ fn bv_width_opt(manager: &TermManager, term: &TermId) -> Option<u32> {
 /// Flatten a concat spine into its segment list, high bit first.  A
 /// non-concat term is its own single-element list.  The flatten is a
 /// TREE view of a hash-consed DAG (a shared subtree contributes its
-/// segments per occurrence), so `cap` bounds the expansion — over the
+/// segments per occurrence), so `cap` bounds the expansion – over the
 /// cap the flatten fails and callers fall back (`None`, sound).
 fn flatten_spine_capped(t: TermId, cap: usize, manager: &TermManager) -> Option<Vec<TermId>> {
     let mut out = Vec::new();
@@ -1573,12 +1571,12 @@ fn decompose_window(t: TermId, manager: &TermManager) -> Option<(TermId, u32, u3
     Some((base, hi, lo))
 }
 
-/// The window `extract(hi, lo, t)` built DIRECTLY — no walk, no memo, no
+/// The window `extract(hi, lo, t)` built DIRECTLY – no walk, no memo, no
 /// re-normalization: compose through nested extract windows, slice through
 /// concat arms, fold constants via the builder.  This is the wiring-era
 /// replacement for the extract visit's recursive re-walk on built pieces:
 /// with wiring-built spines in the tree those walks re-visit (and
-/// re-assemble, append by append) every sub-spine per window — a measured
+/// re-assemble, append by append) every sub-spine per window – a measured
 /// 2 M-append storm at width 1024.  Iterative throughout (the
 /// repository-wide stack-safety rule); the piece count is capped at the
 /// window's own bound (shared concat structure expands per occurrence,
@@ -1600,7 +1598,7 @@ fn slice_direct(hi: u32, lo: u32, t: TermId, manager: &mut TermManager) -> TermI
         // Compose through extract chains and single-arm concats
         // iteratively; a straddling concat enqueues both arms (the high
         // arm first: the stack is LIFO, so push the low arm first) and
-        // emits nothing here — falling through after the enqueue would
+        // emits nothing here – falling through after the enqueue would
         // ALSO emit the un-split window as a duplicate piece (the width
         // inflation this guard fixed: a 31-bit window produced 61 pieces
         // totalling 526 bits).
@@ -1729,10 +1727,10 @@ fn atom_mono(term: TermId) -> Mono {
     }
 }
 
-// =====================================================================
+// ========  ========
 // Monomial helpers (shared by the shrink-only rewrites and the
 // polynomial-identity proofs)
-// =====================================================================
+// ========  ========
 
 /// Append the monomials of a sum operand: flattens any depth of `BvAdd`
 /// with a worklist, then parses each monomial's coefficient and factors out
@@ -1937,9 +1935,7 @@ fn cancel_monomials(lhs: &mut Vec<Mono>, rhs: &mut Vec<Mono>, width: u32) {
     *rhs = new_r;
 }
 
-// =====================================================================
-// Comparison rewrites
-// =====================================================================
+// ======== Comparison rewrites ========
 
 fn const_bits(term: &TermId, manager: &TermManager) -> Option<BigInt> {
     match manager.get(*term).map(|t| &t.kind) {
@@ -2118,9 +2114,7 @@ fn leq_overflow(
     Some(manager.mk_and([ge_lower, le_upper]))
 }
 
-// =====================================================================
-// Bitwise flattening
-// =====================================================================
+// ======== Bitwise flattening ========
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BitwiseOp {
@@ -2147,7 +2141,7 @@ impl BitwiseOp {
 /// Iterative (worklist) flattening; the result is rebuilt sorted, so equal
 /// operands of and/or deduplicate canonically.
 /// Whether the simplify-cascade bitwise normal form is active
-/// (`NIXIE_BV_SIMCASCADE=1`; default off — see the `BvAnd` arm's comment
+/// (`NIXIE_BV_SIMCASCADE=1`; default off – see the `BvAnd` arm's comment
 /// for the measurement).
 fn simcascade_enabled() -> bool {
     #[cfg(feature = "std")]
@@ -2158,7 +2152,7 @@ fn simcascade_enabled() -> bool {
         // solved with zero verdict flips, and the deterministic serial
         // gains land on the `bvnot (bvand …)`-shape family (`maxxor016`
         // 2.2× faster and under the cap, `maxandminor016` −24 %, `btfnt`
-        // −16 %) while `bitrev` is untouched — only the NOT-descent ships,
+        // −16 %) while `bitrev` is untouched – only the NOT-descent ships,
         // not the AND-elimination that regressed `bitrev` 10×.
         *FLAG.get_or_init(
             || !matches!(std::env::var("NIXIE_BV_SIMCASCADE"), Ok(v) if v == "0" || v.is_empty()),
@@ -2173,7 +2167,7 @@ fn simcascade_enabled() -> bool {
 /// Normalizing bitwise complement: the cascade's NOT rules (Z3
 /// `bv_rewriter::mk_bv_not`).  `~~x → x`, constants fold, `~(x ++ y) →
 /// `~x ++ ~y`, `~(ite(c, k, z)) → ite(c, ~k, ~z)` when a branch is
-/// constant, and — only under the cascade flag — `~(a & b) → ~a | ~b`
+/// constant, and – only under the cascade flag – `~(a & b) → ~a | ~b`
 /// (the De Morgan descent; with the flag off, `~(a & b)` keeps its input
 /// shape so the flag-off arm reproduces the historical term stream).
 fn mk_not_norm(t: &TermId, manager: &mut TermManager) -> TermId {
@@ -2248,14 +2242,14 @@ fn flatten_bitwise(a: TermId, b: TermId, manager: &mut TermManager, op: BitwiseO
             for f in factors {
                 if let Some(v) = const_bits(&f, manager) {
                     let v = v % &modulus;
-                    // Bitwise conjunction — both operands are normalized
+                    // Bitwise conjunction – both operands are normalized
                     // into [0, 2ʷ), so `&` is the plain non-negative
                     // bit-and.  (This arm historically multiplied the
-                    // constants — `c₁·c₂ mod 2ʷ` — which only coincides
+                    // constants – `c₁·c₂ mod 2ʷ` – which only coincides
                     // with `c₁∧c₂` when a factor is 0 or all-ones; any
                     // non-trivial mask pair (`0x00ffffff` over
                     // `0xff00ffff`) folded to a wrong mask and, on a
-                    // second rewrite of the chain, a false `unsat` —
+                    // second rewrite of the chain, a false `unsat` –
                     // regression: `and_chain_double_rewrite_is_sound`.)
                     folded = Some(match folded {
                         Some(acc) => acc & v,
@@ -2411,7 +2405,7 @@ fn bool_const(term: &TermId, manager: &TermManager) -> Option<bool> {
 pub(crate) struct PreprocessOutcome {
     /// The rewritten assertion list.  Every rewrite is *implied* by the
     /// originals (plain solve-eqs substitutes definitions; the ring pass
-    /// isolates variables over odd — unit — coefficients in equations
+    /// isolates variables over odd – unit – coefficients in equations
     /// linear in them, which determine the variable), so asserting the
     /// rewrite alongside the originals is sound in both directions.
     pub rewritten: Vec<TermId>,
@@ -2420,7 +2414,7 @@ pub(crate) struct PreprocessOutcome {
     /// Each surviving assertion's original term (unsat-core naming).
     pub origins: Vec<TermId>,
     /// Whether the ring pass rewrote anything.  Its rewrites are
-    /// implication-preserving (odd/unit pivots in linear equations — see
+    /// implication-preserving (odd/unit pivots in linear equations – see
     /// the struct doc), so asserting them alongside the originals is
     /// *sound*; the flag exists because asserting the *non-literal* ones
     /// measurably regressed three 25 s-boundary goals on the 509-file
@@ -2452,8 +2446,8 @@ impl Solver {
         manager: &mut TermManager,
     ) -> PreprocessOutcome {
         // Memoize the outcome for the current input set: the eager
-        // dispatch computes it for its routing trial and — when it declines
-        // in favor of the unified path — the stage-4 preprocessing-parity
+        // dispatch computes it for its routing trial and – when it declines
+        // in favor of the unified path – the stage-4 preprocessing-parity
         // pass used to recompute the identical outcome from scratch (on the
         // Sydr predicate files, seconds of duplicated ring elimination),
         // and dispatch retries (`allow_elim=false`) likewise.  Fresh when
@@ -2473,13 +2467,13 @@ impl Solver {
         // constraint-term bookkeeping (unsat cores name the user's input).
         // Nullary `define-fun` equations come first (script order): they
         // are definitionally satisfiable and never user asserts, but
-        // `solve_equations` substitutes them into the real assertions —
+        // `solve_equations` substitutes them into the real assertions –
         // the named form keeps bodies short where parse-time inlining
         // would expand (`sign_extend` → concat trees the cascade cannot
         // fold; see `Self::define_fun_equations`).  The historical
         // implementation carried these as real assertions, which also ran
         // the full per-assert encode/blast pipeline over every chained
-        // body — quadratic on macro-heavy inputs.
+        // body – quadratic on macro-heavy inputs.
         let mut pairs: Vec<(TermId, TermId)> = self
             .define_fun_equations
             .iter()
@@ -2615,7 +2609,7 @@ impl Solver {
         // definition); each resolving round assigns at least one more
         // variable, so `eliminations.len()` rounds is a complete fixpoint
         // bound.  (The previous fixed 4-round cap silently left chains
-        // deeper than 4 unresolved — measured as failed certifications on
+        // deeper than 4 unresolved – measured as failed certifications on
         // `spear` goals with ~400 definition eliminations, flipping `sat`
         // verdicts to `unknown`.)
         for _round in 0..=eliminations.len() {
@@ -2659,9 +2653,7 @@ impl Solver {
     }
 }
 
-// =====================================================================
-// Variable-definition elimination (Z3 `solve-eqs`)
-// =====================================================================
+// ======== Variable-definition elimination (Z3 `solve-eqs`) ========
 
 /// Split top-level conjunctions into separate assertions and strip double
 /// negations, keeping each derived assertion's origin (the user assertion it
@@ -2722,7 +2714,7 @@ thread_local! {
 /// at least one assertion, so the loop terminates.
 ///
 /// Budget diagnostics (`NIXIE_PRE_TRACE`): the per-pass counts of budget
-/// breaks and meganode skips that fired — the two sites whose skipping can
+/// breaks and meganode skips that fired – the two sites whose skipping can
 /// leave a recorded definition body with an unresolved dependency (repaired
 /// by the flatness fixpoint below the worklist).
 fn solve_equations(
@@ -2745,11 +2737,11 @@ fn solve_equations(
     for round in 0..MAX_ROUNDS {
         let tr = std::env::var("NIXIE_PRE_TRACE").is_ok();
         let rt0 = std::time::Instant::now();
-        // ---- collect candidate definitions ----
+        // ======== collect candidate definitions ========
         // Variables defined by the nullary define-fun equations (the head
         // of `pairs` in round 0).  Their bodies are fully inlined chains
         // (the parser expanded every reference, bounded only by the parse
-        // depth guard), so substituting into them walks meganode terms —
+        // depth guard), so substituting into them walks meganode terms –
         // and the result is never read: the equations are dropped at
         // apply, and model replay evaluates each definition with its
         // dependencies already assigned (the worklist resolves them in
@@ -2798,7 +2790,7 @@ fn solve_equations(
             eprintln!("[eqs] round {} collect {:?}", round, rt0.elapsed());
         }
 
-        // ---- Kahn resolution (occurrence-list worklist, linear in edges) ----
+        // ======== Kahn resolution (occurrence-list worklist, linear in edges) ========
         // The naive loop re-scanned every pending body per iteration and
         // re-substituted into all of them; on a 13 k-long definition chain
         // (`uclid/convert-jpg2gif`: x2 = f(x1), x3 = f(x2), …) that is
@@ -2835,15 +2827,15 @@ fn solve_equations(
         }
         // Deterministic substitution budget: chained definitions share the
         // whole inlined prefix, and every resolution substitutes into each
-        // mentioning body — on macro-heavy inputs (the `goto_symex` files
+        // mentioning body – on macro-heavy inputs (the `goto_symex` files
         // feed ~40k chained equations) that is quadratic in bodies walked.
         // The budget bounds the work; unresolved definitions simply stay
-        // as equations (sound either way — see the apply phase below).
+        // as equations (sound either way – see the apply phase below).
         const MAX_SUBSTITUTIONS: usize = 100_000;
         /// Bodies larger than this many DAG nodes are left whole: the
         /// parse-time inlining of `define-fun` chains stuffs every
         /// referencing assertion with the callee's expansion, so user
-        /// equations on macro-heavy inputs are meganode terms —
+        /// equations on macro-heavy inputs are meganode terms –
         /// substituting into one costs a full rebuild, and the equation
         /// stays a valid constraint either way.
         const MAX_SUBSTITUTION_BODY_NODES: usize = 1_000_000;
@@ -2855,8 +2847,8 @@ fn solve_equations(
         let mut size_memo: rustc_hash::FxHashMap<TermId, usize> = rustc_hash::FxHashMap::default();
         // Whether pending body `i` has been substituted into since
         // collection: only a substituted body can mention the variable it
-        // is being resolved to (its collection-time mention set — possibly
-        // empty — changes only through substitution).  Skipping the
+        // is being resolved to (its collection-time mention set – possibly
+        // empty – changes only through substitution).  Skipping the
         // self-check for untouched bodies keeps the giant inlined bodies of
         // definition chains from being re-walked per resolution.
         let mut touched = vec![false; pending.len()];
@@ -2871,7 +2863,7 @@ fn solve_equations(
         // dependencies are always resolved before it becomes ready, so
         // replaying this list under a model evaluates each definition with
         // its dependencies already assigned.  (Recording `resolved.iter()`
-        // instead — HashMap order — broke exactly that.)
+        // instead – HashMap order – broke exactly that.)
         let mut round_elims: Vec<(TermId, TermId)> = Vec::new();
         if tr {
             eprintln!("[eqs] round {} worklist-ready n={}", round, worklist.len());
@@ -2896,7 +2888,7 @@ fn solve_equations(
                 if define_vars.contains(&xj) {
                     // A define-fun equation body: dropping-in at apply, and
                     // the replay evaluates it under dependencies already
-                    // assigned — substituting into the inlined chain is
+                    // assigned – substituting into the inlined chain is
                     // pure cost (meganode bodies × resolutions).
                     if unmet[j] == 0 {
                         worklist.push_back(j);
@@ -2935,19 +2927,19 @@ fn solve_equations(
         if resolved.is_empty() {
             return eliminations;
         }
-        // ---- restore the flatness invariant (see below), then apply ----
+        // ======== restore the flatness invariant (see below), then apply ========
         // The worklist normally guarantees every recorded definition body
         // already has its pending-variable dependencies substituted (Kahn
         // order), so the single-pass apply substitution below hands out
         // fully substituted terms.  The budget bounds break that invariant:
         // a budget break or a meganode skip leaves a body's dependency
         // unsubstituted, and the recorded definition then still mentions a
-        // variable whose own defining equation is dropped at apply — the
+        // variable whose own defining equation is dropped at apply – the
         // dangling reference loses that constraint content entirely (the
         // deferral prototype's false `sat` on `s3_clnt_1`: 583 budget
         // breaks and 141 278 meganode skips left the rewritten set
         // satisfiable against an unsat original).  Fix the recorded map to
-        // a fixpoint — each round substitutes one level of dangling
+        // a fixpoint – each round substitutes one level of dangling
         // reference, bounded by the elimination dependency depth.
         if BUDGET_BREAKS.with(|c| c.get()) > 0 || MEGANODE_SKIPS.with(|c| c.get()) > 0 {
             for _ in 0..64 {
@@ -2965,11 +2957,11 @@ fn solve_equations(
                 resolved = round_elims.iter().copied().collect();
             }
         }
-        // ---- apply: substitute everywhere, drop resolved definitions ----
+        // ======== apply: substitute everywhere, drop resolved definitions ========
         let resolved_vars: rustc_hash::FxHashSet<TermId> = resolved.keys().copied().collect();
         let mut def_indices: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
         // Nullary define-fun equations are definitionally satisfiable (the
-        // named constant occurs nowhere in the user assertions — the parser
+        // named constant occurs nowhere in the user assertions – the parser
         // inlines every use), so dropping them is answer-preserving in both
         // directions; they are never handed downstream.  They occupy the
         // head of `pairs` in round 0 only (the apply phase rebuilds the
@@ -3083,13 +3075,13 @@ fn solve_ring_equations(
     let mut memo: rustc_hash::FxHashMap<TermId, Option<Vec<Mono>>> =
         rustc_hash::FxHashMap::default();
 
-    // ---- incremental index over the working set ----
+    // ======== incremental index over the working set ========
     //
     // The historical implementation rebuilt, on *every* elimination round,
     // the polynomial of every equality and the variable-occurrence table of
     // every assertion (a full DAG walk each).  On definition-dense
-    // industrial inputs — the Sydr/Triton `predicate_*` files assert
-    // thousands of near-linear equations — one variable is eliminable per
+    // industrial inputs – the Sydr/Triton `predicate_*` files assert
+    // thousands of near-linear equations – one variable is eliminable per
     // round, so thousands of rounds each rescanning thousands of deep
     // assertions made the pass the *entire* solve: `master/cjpeg/
     // predicate_2636` burned >390 s inside it and never reached bit-blast.
@@ -3097,7 +3089,7 @@ fn solve_ring_equations(
     // initial full pass, then per elimination only the <= MAX_OTHER_OCCS
     // substituted assertions are walked again.  The elimination *sequence*
     // (candidate rule, tie-breaks, swap-remove pair order, substitution
-    // order) is bit-identical to the historical algorithm — this is a
+    // order) is bit-identical to the historical algorithm – this is a
     // complexity change, not a policy change.
     //
     // `pair_poly`/`pair_vars` are index-parallel to `pairs` and swap with it
@@ -3192,7 +3184,7 @@ fn solve_ring_equations(
         // solving (the pair is then dropped as the defining equation).
         let (_, poly) = pair_poly[eq_idx].take().unwrap_or((0u32, Vec::new()));
 
-        // ---- solve: v = c⁻¹ · (−(P − c·v)) at width w ----
+        // ======== solve: v = c⁻¹ · (−(P − c·v)) at width w ========
         let modulus = modulus(width);
         let inv = mod_inverse_odd(&coeff, &modulus);
         let mut def_monos = Vec::with_capacity(poly.len());
@@ -3220,7 +3212,7 @@ fn solve_ring_equations(
         }
         let def = build_sum(def_monos, manager, width);
 
-        // ---- drop the solved equation, substitute everywhere else ----
+        // ======== drop the solved equation, substitute everywhere else ========
         drop_pair(eq_idx, pairs, &mut pair_poly, &mut pair_vars, &mut mentions);
         let single = std::iter::once((var, def)).collect::<rustc_hash::FxHashMap<TermId, TermId>>();
         // Substitute into exactly the assertions that mention `var` (the
@@ -3412,7 +3404,7 @@ fn mentions_walk(term: TermId, x: TermId, manager: &TermManager) -> bool {
 /// a `(t, x)` verdict never changes; one `solve_equations` call asks the
 /// same (body, var) pairs up to four times (collect + apply phases, both
 /// orientations, and shared meganode bodies recur across pairs), and each
-/// miss is a full DAG walk of the body — on meganode-scale bodies that was
+/// miss is a full DAG walk of the body – on meganode-scale bodies that was
 /// a measurable slice of a minigzip-class run.  The memo lives for one
 /// `bv_preprocess_assertions` call, exactly the scope over which the
 /// queried terms are stable.
@@ -3436,13 +3428,13 @@ fn mentions_memo(
 /// Tree node count of `term` (nodes counted **per occurrence**: a shared
 /// subtree contributes once per reference), memoized on `memo`.  This is an
 /// upper bound of the DAG size by construction, which is the right
-/// direction for both consumers — the meganode gate wants "substituting
-/// here is expensive" and the budget counts "work done" — and per-occurrence
+/// direction for both consumers – the meganode gate wants "substituting
+/// here is expensive" and the budget counts "work done" – and per-occurrence
 /// counting is what the rebuild actually touches when the substitution's
 /// per-call cache is cold.  The accumulation saturates: diamond-shaped
 /// shared chains make the tree count grow exponentially with depth, and an
 /// over-large (saturated) value only makes the gate fire more conservatively.
-/// (The first draft summed true DAG shares bottom-up — that is not
+/// (The first draft summed true DAG shares bottom-up – that is not
 /// compositional, and the debug profile caught the overflow the release
 /// profile silently truncated.)
 fn dag_size(
@@ -3541,7 +3533,7 @@ fn collect_var_mentions(
     }
 }
 
-/// Why a rewritten assertion set is trivially unsatisfiable — the shapes
+/// Why a rewritten assertion set is trivially unsatisfiable – the shapes
 /// [`rewrite_set_trivially_unsat`] can refute without a search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TrivialRewriteUnsat {
@@ -3561,7 +3553,7 @@ pub(super) enum TrivialRewriteUnsat {
 ///
 /// Every rewrite is implied by the original assertion set, so a rewrite
 /// set that is *syntactically* contradictory proves the originals
-/// unsatisfiable outright — this is the delivery half of the
+/// unsatisfiable outright – this is the delivery half of the
 /// folded-identity mechanism: goals whose ring identities collapse under
 /// the normalizer (the `wienand-cav2008` distrib/commute family, whose
 /// miter plumbing reduces to `v = 1 ∧ v = 0`) refute before any bit-blast
@@ -3578,7 +3570,7 @@ pub(super) enum TrivialRewriteUnsat {
 ///   `BitVecConst`.
 ///
 /// One variable pinned to two *equal* constants is consistent (and simply
-/// true); anything else — compound terms, other sorts, `Distinct` — is not
+/// true); anything else – compound terms, other sorts, `Distinct` – is not
 /// a contradiction this detector claims, so unrecognized sets return
 /// `None` and the goal proceeds to the search (sound either way).
 pub(super) fn rewrite_set_trivially_unsat(
@@ -3586,7 +3578,7 @@ pub(super) fn rewrite_set_trivially_unsat(
     manager: &TermManager,
 ) -> Option<TrivialRewriteUnsat> {
     /// The value one assertion pins a variable to.  Booleans encode as
-    /// `(0, 0|1)`; bit-vectors as `(width, value)` — a well-typed `Eq`
+    /// `(0, 0|1)`; bit-vectors as `(width, value)` – a well-typed `Eq`
     /// already forces one width per variable, the width in the key is
     /// defense in depth against an ill-typed rewrite slipping through.
     type PinValue = (u32, BigInt);
@@ -3642,7 +3634,7 @@ pub(super) fn rewrite_set_trivially_unsat(
                             Some((*width, value.clone()))
                         }
                         // `(= b true)` / `(= b false)` normalize to `b` /
-                        // `(not b)` upstream, but accept the direct shapes —
+                        // `(not b)` upstream, but accept the direct shapes –
                         // the detector must not depend on the normalizer's
                         // incidental output form.
                         TermKind::True if is_bool(var_sort) => Some(bool_value(true)),
@@ -3756,7 +3748,7 @@ mod tests {
     fn and_chain_constant_fold_matches_conjunction() {
         // 4-bit exhaustive over all non-trivial mask pairs: the chain
         // `(bvand c1 (bvand c2 x)) = (bvand k x)` must be valid for
-        // `k = c1 ∧ c2` — including the cases where the old multiply
+        // `k = c1 ∧ c2` – including the cases where the old multiply
         // diverges (e.g. c1=7, c2=11: 7∧11=3, 7·11=29≡13 mod 16).
         for c1 in 0u16..16 {
             for c2 in 0u16..16 {
@@ -3937,10 +3929,10 @@ mod tests {
         assert!(verdict == "sat" || verdict == "unsat");
     }
 
-    // ===== extract normal form: window arithmetic (this session's rules) =====
+    // ======== extract normal form: window arithmetic (this session's rules) ========
 
     /// Product narrowing: the low window of a product of zero-extensions is the
-    /// truncated product — `extract[w-1:0](zext(a)·zext(b)) = a·b` (the
+    /// truncated product – `extract[w-1:0](zext(a)·zext(b)) = a·b` (the
     /// BuchwaldFried low-half residual).
     #[test]
     fn extract_low_window_of_extended_product_is_truncated_product() {
@@ -4045,7 +4037,7 @@ mod tests {
     }
 
     /// The BuchwaldFried counterexample shape end-to-end: both equalities of
-    /// the residual are ring identities — the negated conjunction is unsat
+    /// the residual are ring identities – the negated conjunction is unsat
     /// with zero search.
     #[test]
     fn buchwaldfried_residual_both_equalities_fold() {
@@ -4069,7 +4061,7 @@ mod tests {
 
     /// Narrowing must not overfold: the HIGH window of a wide product of
     /// TRUNCATED operands genuinely differs from the high window of the full
-    /// product's low half — the rewrites leave it decidable (sat for the
+    /// product's low half – the rewrites leave it decidable (sat for the
     /// distinction).
     #[test]
     fn narrowing_keeps_high_windows_decidable() {
@@ -4087,7 +4079,7 @@ mod tests {
     }
 
     /// Miter-shape specializations (2026-11-15): `(x − y) = 0`, `0 <u (x − y)`
-    /// and their `≤u` duals encode over the operands — the subtractor circuit
+    /// and their `≤u` duals encode over the operands – the subtractor circuit
     /// never exists (a 32-bit subtractor costs ~210 SAT vars; the specialized
     /// equality ~63).  Semantic regressions for each shape, both polarities.
     #[test]
@@ -4142,7 +4134,7 @@ mod tests {
     }
 
     /// Lean-BV v3 (`Constraint::BoolApp` gate): exactly-QF_BV comparison atoms
-    /// and Boolean connectives skip the EUF intern+truth-node merge — no
+    /// and Boolean connectives skip the EUF intern+truth-node merge – no
     /// congruence can exist there (no UF/select), and the per-assignment merge
     /// walk was 35 % of the asp-class solve (gryzzles.8 profile).  These pin
     /// the semantic envelope: nested comparisons under and/or/distinct still
@@ -4175,7 +4167,7 @@ mod tests {
     /// The exact `wienand-cav2008/Distrib` plumbing shape: the miter's
     /// property chain reduces (after solve-eqs + ring + SoM rewriting) to
     /// ONE variable pinned to `1` by the folded identity and to `0` by the
-    /// asserted property — while the plumbing tail's `Fresh__1` equation
+    /// asserted property – while the plumbing tail's `Fresh__1` equation
     /// keeps the ring pass participating, which is what used to disable
     /// non-literal rewrite emission and strand the search on the raw
     /// multiplier miter (10 s-cap timeouts at every width ≥ 8).
@@ -4238,7 +4230,7 @@ mod tests {
     }
 
     /// Pins that AGREE must not refute: the same variable pinned to the
-    /// same constant through two different chains stays `sat` — the
+    /// same constant through two different chains stays `sat` – the
     /// detector compares values, not occurrence counts.
     #[test]
     fn agreeing_pins_do_not_refute() {
@@ -4296,7 +4288,7 @@ mod tests {
     }
 
     /// Detector unit tests, Boolean shapes: a bare variable asserted both
-    /// true and false — directly and through `not`/`=` normal forms.
+    /// true and false – directly and through `not`/`=` normal forms.
     #[test]
     fn detector_recognizes_bool_pin_pairs() {
         use super::TrivialRewriteUnsat;
@@ -4318,7 +4310,7 @@ mod tests {
             super::rewrite_set_trivially_unsat(&[eq_t, eq_f], &m),
             Some(TrivialRewriteUnsat::PinnedTwice { var, .. }) if var == b
         ));
-        // b ∧ (= b true): agreeing — no contradiction.
+        // b ∧ (= b true): agreeing – no contradiction.
         assert!(super::rewrite_set_trivially_unsat(&[b, eq_t], &m).is_none());
         // A bare `false` rewrite.
         assert!(matches!(
@@ -4328,7 +4320,7 @@ mod tests {
     }
 
     /// Detector unit tests, negatives: shapes that must NOT be claimed as
-    /// pins — var-var equalities, compound sides, mismatched-width consts,
+    /// pins – var-var equalities, compound sides, mismatched-width consts,
     /// other sorts.  A false positive here is a false `unsat` upstream.
     #[test]
     fn detector_ignores_non_pin_shapes() {
@@ -4361,7 +4353,7 @@ mod tests {
 
     /// The `brummayerbiere/bitrev` shape: `rev(rev(x)) = x` where `rev` is
     /// the Hacker's-Delight shift-and-mask ladder.  The bit-permutation
-    /// wiring collapses the composition to `x` at preprocessing — the
+    /// wiring collapses the composition to `x` at preprocessing – the
     /// corpus cells were 10 s-cap timeouts at width ≥ 1024 (z3 refutes
     /// them in ≤ 0.8 s with zero SAT conflicts); the mechanism must hold
     /// at every width.
@@ -4378,7 +4370,7 @@ mod tests {
             while step < width {
                 // The shl arm carries the even-group bits (the corpus's
                 // `(t & 0x55) << 1`): they move UP, the odd-group bits
-                // move DOWN — the phase that makes every stage, and the
+                // move DOWN – the phase that makes every stage, and the
                 // full ladder, an involution.
                 let m_shl: String = (0..width)
                     .rev()
@@ -4439,7 +4431,7 @@ mod tests {
 
     /// Shift-over-mask wiring identity, brute-forced: for every mask and
     /// shift distance at a small width, `(x & m) << k` equals the wired
-    /// concat form the cascade builds — validated end-to-end by the
+    /// concat form the cascade builds – validated end-to-end by the
     /// solver agreeing the negated equality is unsat.  This exercises
     /// mask-split + shift-wiring + slice composition jointly.
     #[test]
@@ -4473,7 +4465,7 @@ mod tests {
 
     /// The broadcast-ite rule: `ite((= t #b1), all-ones, zeros)` is the
     /// replication of the bit `t` (Z3's simplify form for conditional
-    /// sign extensions — the `smulov` family's `concat(ite(bit, 0xFFF, 0),
+    /// sign extensions – the `smulov` family's `concat(ite(bit, 0xFFF, 0),
     /// v)` becomes a literal sign extension, sharing terms with every
     /// other sext of `v`).
     #[test]
@@ -4489,7 +4481,7 @@ mod tests {
     }
 
     /// A NON-broadcast ite must not fold: a mask that is not all-ones
-    /// differs from the replication on the true branch — a false fold
+    /// differs from the replication on the true branch – a false fold
     /// here would be a false `unsat` on every smulov-shaped goal.
     #[test]
     fn partial_mask_ite_does_not_fold() {
@@ -4497,7 +4489,7 @@ mod tests {
         assert_eq!(solve_str(script), "sat");
     }
 
-    /// The width-1 broadcast: `ite((= t #b1), #b1, #b0)` IS `t` — the
+    /// The width-1 broadcast: `ite((= t #b1), #b1, #b0)` IS `t` – the
     /// 1-bit mux selecting the bit's own value.  This is the literal
     /// form `smulov`'s low-bit selectors are written in, and the blocker
     /// that kept two otherwise-equal sign extensions from hash-consing

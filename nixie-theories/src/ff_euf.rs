@@ -1,4 +1,4 @@
-//! Batch congruence closure over finite-field-sorted terms — the EUF half
+//! Batch congruence closure over finite-field-sorted terms – the EUF half
 //! of the `QF_UFFF` combination (`docs/FF_THEORY_DESIGN.md` §7).
 //!
 //! The pure-`QF_FF` dispatch treats an uninterpreted application with an
@@ -16,7 +16,7 @@
 //! CDCL(T) e-graph state, this is a deliberately small, from-scratch
 //! closure. The congruence fixpoint rebuilds its signature table from
 //! scratch each round (no incremental signature maintenance), trading a
-//! log factor for an audit trail the incremental engine cannot offer —
+//! log factor for an audit trail the incremental engine cannot offer –
 //! the same "no stale entries, ever" property that
 //! `euf/solver/congruence.rs`'s `update_sig_entry` exists to restore after
 //! the fact. Term counts here are the applications and subterms of the
@@ -24,7 +24,7 @@
 //!
 //! Determinism: nodes are numbered in registration order (a fixed DFS
 //! over the caller's index-sorted atom list), classes are reported by
-//! ascending node id, and the fixpoint scans parents in index order — no
+//! ascending node id, and the fixpoint scans parents in index order – no
 //! hash-iteration order feeds any output.
 
 use nixie_core::ast::{TermId, TermKind, TermManager};
@@ -43,7 +43,7 @@ pub struct NodeId(u32);
 /// Terms are added with [`CongruenceClosure::register_dag`]; equalities
 /// with [`CongruenceClosure::merge`]; the congruence fixpoint runs in
 /// [`CongruenceClosure::propagate`]. Disequalities are the caller's to
-/// check against [`CongruenceClosure::are_equal`] — the closure only
+/// check against [`CongruenceClosure::are_equal`] – the closure only
 /// ever merges.
 #[derive(Debug, Default)]
 pub struct CongruenceClosure {
@@ -166,7 +166,7 @@ impl CongruenceClosure {
     /// Close under the congruence axiom to a fixpoint: while some two
     /// application nodes have equal (function, argument-class) signatures
     /// but different classes, merge them. Each round rebuilds the
-    /// signature table from the current representatives — a stale entry
+    /// signature table from the current representatives – a stale entry
     /// is structurally impossible because no entry outlives its round.
     pub fn propagate(&mut self) {
         loop {
@@ -180,7 +180,7 @@ impl CongruenceClosure {
                 // representatives. An argument never registered (its term
                 // was not part of any walked DAG) cannot be canonicalized;
                 // registering happens over the same DAGs the caller walks,
-                // so that is a caller bug — skip the parent rather than
+                // so that is a caller bug – skip the parent rather than
                 // fabricate a representative.
                 let mut reps: SmallVec<[u32; 4]> = SmallVec::new();
                 let mut ok = true;
@@ -229,7 +229,7 @@ impl CongruenceClosure {
 
     /// The classes, deterministically: each class ascending by node id
     /// (registration order), the class list ascending by first member.
-    /// Singleton classes are omitted — the caller consumes the implied
+    /// Singleton classes are omitted – the caller consumes the implied
     /// equalities, and a lone term implies nothing.
     #[must_use]
     pub fn nonsingleton_classes(&self) -> Vec<Vec<TermId>> {

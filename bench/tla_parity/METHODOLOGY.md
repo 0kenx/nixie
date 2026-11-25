@@ -1,4 +1,4 @@
-# TLA+ front-end parity — methodology
+# TLA+ front-end parity – methodology
 
 ## What this suite is
 
@@ -13,7 +13,7 @@ right answer is; nothing Nixie ships links it, and the product has no JVM.
 
 ## The two comparisons
 
-### 1. Syntax — a *one-sided* gate
+### 1. Syntax – a *one-sided* gate
 
 Every file SANY parses must parse here. That direction is the gate and must
 stay at zero.
@@ -25,16 +25,16 @@ review, and each one should have a reason:
 
 | File | Why |
 |---|---|
-| `test49b.tla`, `test49c.tla` | `\mod` as a definable infix operator. SANY rejects it. Accepted here with its **own identity** — deliberately not aliased to `%`, since folding them together would make `u \mod v == u` silently redefine `%`. |
+| `test49b.tla`, `test49c.tla` | `\mod` as a definable infix operator. SANY rejects it. Accepted here with its **own identity** – deliberately not aliased to `%`, since folding them together would make `u \mod v == u` silently redefine `%`. |
 
-### 2. Levels — only what was actually established
+### 2. Levels – only what was actually established
 
 For files SANY fully resolves, every definition's constant/state/action/temporal
 level must match.
 
 Only definitions whose level `nixie-tla-syntax` *established* are compared.
 A level that depends on an unresolved `EXTENDS`, or on an operator the max rule
-cannot handle, is marked untrusted and skipped — comparing a guess would
+cannot handle, is marked untrusted and skipped – comparing a guess would
 measure the missing module resolution rather than the level walk. The run
 prints how many were skipped; that number going up is a regression in coverage
 even when mismatches stay at zero.
@@ -45,7 +45,7 @@ SANY is the reference, not scripture. One entry so far, listed in
 `tlaparity.rs` and excluded by name:
 
 - **`x * x` loses its level.** With `VARIABLE x`, SANY reports `x * x` as
-  *constant*. Every neighbouring operator is right — `x + x`, `x - x`,
+  *constant*. Every neighbouring operator is right – `x + x`, `x - x`,
   `x \div x`, `x = x`, `x .. x` and a user-declared `F(x, x)` all give *state*.
   Only `*` is affected. `x * x` plainly depends on the state, so nixie's answer
   is the correct one.
@@ -90,7 +90,7 @@ with levels that are obvious by inspection.
 Set `TLA_LIBRARY` to a `:`-separated list of directories to search for
 imported modules; `run_parity.sh` passes it to both sides. Without it most
 levels depend on unresolved imports, are marked untrusted, and never reach the
-comparison — the suite passes while testing much less than it appears to. The
+comparison – the suite passes while testing much less than it appears to. The
 "definitions skipped (untrusted)" line is the number to watch.
 
 ## Standing result

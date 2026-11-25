@@ -21,9 +21,9 @@ solver.assert(c1, &mut tm);
 solver.assert(c2, &mut tm);
 assert_eq!(solver.check(&mut tm), SolverResult::Sat);
 let m = solver.model().unwrap().clone();
-m.eval(f1, &mut tm);   // IntConst(1)    — correct
-m.eval(f2, &mut tm);   // StringLit("")  — WRONG, the assertion says "a"
-m.eval(c2, &mut tm);   // True           — and the model agrees it is true
+m.eval(f1, &mut tm);   // IntConst(1)    – correct
+m.eval(f2, &mut tm);   // StringLit("")  – WRONG, the assertion says "a"
+m.eval(c2, &mut tm);   // True           – and the model agrees it is true
 ```
 
 The model evaluates the *assertion* `@t2(t) = "a"` to `TRUE` and the *term*
@@ -35,7 +35,7 @@ over a selector application whose value the equality had already fixed.
 ## How it was found
 
 Not by looking for it. `nixie-tla-check` now decodes the counterexample behind
-a reported violation and **replays it** through `nixie-tla`'s evaluator —
+a reported violation and **replays it** through `nixie-tla`'s evaluator –
 `Init` in the first state, `Next` between each pair, the invariant false at the
 end. For
 
@@ -64,7 +64,7 @@ is wrong.
 true, and its selection recognised **arithmetic, bit-vector and
 uninterpreted-function** terms only. A string-sorted name was therefore never
 picked as the "variable" side of `x = "a"`, the equality was skipped, and a
-default of `""` was installed later — a model value contradicting the very
+default of `""` was installed later – a model value contradicting the very
 assertion that pinned it.
 
 The fix is a branch ahead of that selection: when exactly one side of a true

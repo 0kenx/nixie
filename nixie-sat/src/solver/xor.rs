@@ -1,4 +1,4 @@
-//! XOR (parity) constraint extraction and Gaussian elimination — first
+//! XOR (parity) constraint extraction and Gaussian elimination – first
 //! slice: detection of exact parity-class clause groups in the CNF, linear
 //! solve over GF(2), and **phase seeding** of the solution.
 //!
@@ -10,27 +10,27 @@
 //! mix parities (e.g. the pair `(a∨b)∧(¬a∨b)`, which *implies* `b` and is
 //! no parity constraint), or duplicated clauses, is not an XOR
 //! constraint.  Telemetry over the standing corpus (2026-09-05): 22 files
-//! carry strict groups — the simon family (2–3k groups each),
+//! carry strict groups – the simon family (2–3k groups each),
 //! g2-ak128booth (99k groups / 181k vars), summle ×3, mp1-Nb7T42 (25k
-//! groups / 52k vars), g2-slp, pb_300 — and **mdp-28-14, one of the four
+//! groups / 52k vars), g2-slp, pb_300 – and **mdp-28-14, one of the four
 //! standing unsolved files (373 groups over 401 vars ≈ the whole
 //! formula)**.
 //!
 //! **Why phases**: with the saved phases set to a *model* of a
-//! satisfiable formula, CDCL descends without a single conflict — unit
+//! satisfiable formula, CDCL descends without a single conflict – unit
 //! propagation never conflicts under model-consistent decisions (any
 //! clause that becomes unit has its last literal at the model's value).
 //! The oracle-phase measurements of the same day showed exactly this,
 //! with the residual conflicts attributable to `random_polarity_prob`.
 //! Gaussian elimination over the extracted system produces a satisfying
 //! assignment *of the XOR subsystem*; seeding phases with it is sound
-//! (phases are preferences — no assignment, no proof interaction) and
+//! (phases are preferences – no assignment, no proof interaction) and
 //! converts the search into a descent whenever the XOR constraints pin
 //! the formula's satisfying structure.
 //!
 //! **Slice gates** (mirroring `bva.rs`/`factor.rs`): pre-search, decision
 //! level 0, base scope only, no attached theory, no proof/LRAT tracer,
-//! deterministic budgets.  **No verdicts are produced** — an inconsistent
+//! deterministic budgets.  **No verdicts are produced** – an inconsistent
 //! XOR subsystem does imply UNSAT, but slice 1 has no proof story for
 //! that derivation and refuses to fabricate one; the trace records it.
 //!
@@ -62,8 +62,8 @@ impl Solver {
     /// Detect strict XOR constraints among live original clauses by
     /// delegating to the crate's [`crate::xor::XorDetector`] (the mature
     /// implementation this slice should not duplicate; its
-    /// `compute_xor_rhs` carries the parity semantics — `rhs = (negation
-    /// parity == 0)` — pinned by the `xor_detection_*` tests).
+    /// `compute_xor_rhs` carries the parity semantics – `rhs = (negation
+    /// parity == 0)` – pinned by the `xor_detection_*` tests).
     pub(super) fn detect_xor_constraints(&self) -> Vec<XorConstraint> {
         if self.trail.decision_level() != 0 || self.trivially_unsat {
             return Vec::new();
@@ -165,7 +165,7 @@ impl Solver {
             }
         }
         // Back-substitution: pivot variables from the solution, free
-        // variables at `false` (a deterministic, arbitrary choice — any
+        // variables at `false` (a deterministic, arbitrary choice – any
         // solution of the system works for phase seeding).
         let mut assign = vec![false; n];
         for &(col, r) in pivots.iter().rev() {
@@ -232,19 +232,19 @@ impl Solver {
     /// GF(2) matrix from the detected constraints, force every unit the
     /// system pins (add-time reductions, then level-0 folding to a
     /// fixpoint with CNF propagation), and probe each remaining matrix
-    /// variable's two polarities at a decision level — CNF propagate plus
+    /// variable's two polarities at a decision level – CNF propagate plus
     /// matrix folding; a failed polarity forces the opposite literal at
     /// level 0 (the `probe_round` pattern; probe-level assignments are
     /// self-contained, so no CDCL reason plumbing is needed).
     ///
     /// Fold discipline (soundness-critical, per `GF2Matrix::propagate`'s
-    /// contract): every literal that appears on the trail during a probe —
-    /// decisions, CNF propagations, XOR-derived units — is folded in trail
+    /// contract): every literal that appears on the trail during a probe –
+    /// decisions, CNF propagations, XOR-derived units – is folded in trail
     /// order, and undone in exact reverse order before backtracking.  At
     /// level 0 the folds are permanent.
     ///
     /// No verdicts: an inconsistent system (add-time or both-polarity
-    /// probe failure) is reported in the return value, not answered —
+    /// probe failure) is reported in the return value, not answered –
     /// pending a proof story.  Returns `(constraints, forced_units,
     /// inconsistent)`.
     pub(super) fn xor_probe(&mut self) -> (usize, usize, bool) {
@@ -310,7 +310,7 @@ impl Solver {
                 forced_units += 1;
                 if self.trivially_unsat {
                     // A forced unit conflicted with the CNF: the formula
-                    // is UNSAT — reported, not answered.
+                    // is UNSAT – reported, not answered.
                     return (n_constraints, forced_units, true);
                 }
             }
@@ -420,7 +420,7 @@ impl Solver {
                     }
                 }
                 [true, true] => {
-                    // Both polarities fail: formula UNSAT — reported.
+                    // Both polarities fail: formula UNSAT – reported.
                     return (n_constraints, forced_units, true);
                 }
                 [false, false] => {}
@@ -451,7 +451,7 @@ impl Solver {
 }
 
 /// Cap on materialized XOR reason clauses per solve (memory bound; beyond
-/// it the in-search pass stops deriving — existing reasons stay sound).
+/// it the in-search pass stops deriving – existing reasons stay sound).
 const MAX_XOR_REASONS: usize = 100_000;
 
 /// In-search XOR propagation state (2026-09-05 integration; `NIXIE_XORSEARCH`).
@@ -459,7 +459,7 @@ const MAX_XOR_REASONS: usize = 100_000;
 pub(crate) struct XorSearch {
     matrix: crate::xor::GF2Matrix,
     /// Trail index of each folded literal, in fold order (strictly
-    /// increasing) — drives exact rollback on backtrack.
+    /// increasing) – drives exact rollback on backtrack.
     fold_idx: Vec<usize>,
     /// Trail length already folded.
     watermark: usize,
@@ -509,14 +509,14 @@ impl Solver {
                 }
                 XorAddResult::Conflict(..) => {
                     // Inconsistent system: the formula is UNSAT, but this
-                    // pass produces no proof — refuse to answer, install
+                    // pass produces no proof – refuse to answer, install
                     // nothing.
                     return constraints.len();
                 }
                 _ => {}
             }
         }
-        // Level-0 fixpoint for the pinned units (no matrix folds — the
+        // Level-0 fixpoint for the pinned units (no matrix folds – the
         // search loop folds the whole level-0 trail from watermark 0).
         let mut forced = 0usize;
         while let Some(lit) = pending.pop() {
@@ -542,7 +542,7 @@ impl Solver {
     /// literals, derive units with materialized entailed reason clauses,
     /// surface falsified rows as conflicts.  Returns a conflict clause id
     /// exactly like `propagate`.  (Borrow structure: the state is touched
-    /// through short-lived `as_mut` scopes only — the trail and clause DB
+    /// through short-lived `as_mut` scopes only – the trail and clause DB
     /// are borrowed in between.)
     pub(super) fn xor_search_step(&mut self) -> Option<crate::clause::ClauseId> {
         use crate::literal::{LBool, Lit};
@@ -669,7 +669,7 @@ impl Solver {
     }
 
     /// Roll the matrix folds back to trail length `t` (call at the END of
-    /// every backtrack — the fold indices are strictly increasing, so
+    /// every backtrack – the fold indices are strictly increasing, so
     /// popping while the last index is ≥ `t` restores the LIFO contract
     /// exactly).
     pub(super) fn xor_search_rollback(&mut self) {

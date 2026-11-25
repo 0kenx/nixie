@@ -22,7 +22,7 @@ fn hi_of(iv: &Interval) -> Option<i64> {
     iv.hi.as_ref().map(|b| b.value.to_integer())
 }
 
-// --- the roots themselves ---------------------------------------------------
+// ======== the roots themselves ========
 
 #[test]
 fn floor_root_is_exact_on_perfect_powers() {
@@ -100,7 +100,7 @@ fn roots_are_exact_far_beyond_i64() {
     assert_eq!(nth_root_floor(&big, 2), BigInt::one() << 50_usize);
 }
 
-// --- the propagation rule ---------------------------------------------------
+// ======== the propagation rule ========
 
 #[test]
 fn even_power_upper_bound_bounds_the_base_both_ways() {
@@ -120,7 +120,7 @@ fn even_power_bound_rounds_toward_the_looser_interval() {
 
 #[test]
 fn even_power_lower_bound_derives_nothing() {
-    // v = x^2, v >= 4 is `x <= -2 ∨ x >= 2` — a disjunction, not an interval.
+    // v = x^2, v >= 4 is `x <= -2 ∨ x >= 2` – a disjunction, not an interval.
     // Deriving an interval here would be unsound; deriving nothing is correct.
     let iv = Interval {
         lo: Some(Bound::tagged(r(4), 0)),

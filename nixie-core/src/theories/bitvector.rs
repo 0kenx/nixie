@@ -7,8 +7,8 @@
 //! into one class.
 //!
 //! This is the self-contained layer that lives inside `nixie-core`. It is not
-//! the bit-blasting solver used by `nixie-solver` — that is
-//! `nixie_theories::bv` — and it decides nothing on its own: a run that finds
+//! the bit-blasting solver used by `nixie-solver` – that is
+//! `nixie_theories::bv` – and it decides nothing on its own: a run that finds
 //! no conflict has not shown the input satisfiable.
 //!
 //! Reference: Z3's `src/smt/theory_bv.cpp`
@@ -356,7 +356,7 @@ impl BitVectorTheory {
     ///   the axiom claims (an `AddIdentity` whose term is not a `bvadd`, or
     ///   whose operands are not the constant the axiom names);
     /// * [`BitVectorAxiom::NegZero`], because `bvneg` has no term kind of its
-    ///   own here — [`TermManager::mk_bv_neg`] folds `bvneg(0)` straight to
+    ///   own here – [`TermManager::mk_bv_neg`] folds `bvneg(0)` straight to
     ///   `0`, so the equation would degenerate to `true`;
     /// * [`BitVectorAxiom::BitBlast`], because this layer has no bit-level
     ///   encoding; bit-blasting lives in `nixie_theories::bv`.
@@ -481,9 +481,9 @@ impl BitVectorTheory {
     ///
     /// Two rules are applied to a fixpoint:
     ///
-    /// * *constant folding* — an operation all of whose arguments are known
+    /// * *constant folding* – an operation all of whose arguments are known
     ///   equal to literals is equal to the folded literal;
-    /// * *congruence* — two applications of the same operator whose arguments
+    /// * *congruence* – two applications of the same operator whose arguments
     ///   are pairwise known equal are equal to each other.
     ///
     /// Each deduced equality is merged into this theory's classes and returned

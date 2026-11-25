@@ -6,7 +6,7 @@
 //! [`Solver::encode`](crate::solver::Solver) is the Tseitin transform: it gives
 //! a `Forall` / `Exists` sub-term one fresh Boolean variable and *no* defining
 //! clause.  Nothing in the SAT core says what that variable means.  Its meaning
-//! used to come from exactly one place —
+//! used to come from exactly one place –
 //! [`Solver::register_asserted_quantifiers`](crate::solver::Solver), which
 //! walks the *unconditionally asserted* spine
 //! ([`term_walk::asserted_children`](super::super::term_walk::asserted_children):
@@ -23,7 +23,7 @@
 //! ```
 //!
 //! The body is a tautology in every structure, so the assertion is
-//! unsatisfiable in every structure — and the search satisfied it by setting
+//! unsatisfiable in every structure – and the search satisfied it by setting
 //! the quantifier's free literal to `false`.  The same held under `=>`, a
 //! positive `or`, an `ite`, a Boolean `=`, and for `(not (exists …))`.
 //!
@@ -43,15 +43,15 @@
 //! already register by a fresh reserved Boolean constant `g`
 //! ([`reserved_name`]`("qg", n)`) and emits the obligations that define `g`:
 //!
-//! * positive: `∀x. (g → φ)` — a plain *unconditional* universal, asserted
+//! * positive: `∀x. (g → φ)` – a plain *unconditional* universal, asserted
 //!   beside the assertion.  Pushing `g →` inside the binder is an equivalence
 //!   because `g` is closed, and it is what makes every instance the existing
 //!   machinery produces come out guarded: an MBQI instance of it is
 //!   `g → φ(t)`, a finite-expansion conjunct is `g → φ(t)`, and a `binder_row`
 //!   read-over-write expansion rewrites `φ` in place.  So `g` can be set true
-//!   only where the instantiation fixpoint — or, inside
+//!   only where the instantiation fixpoint – or, inside
 //!   [`finite_expand`](super::finite_expand)'s budget, the whole-sort
-//!   expansion — justifies it.
+//!   expansion – justifies it.
 //! * negative: `g ∨ ¬φ(sk)` for fresh Skolem constants `sk`, which is the body
 //!   asserted under the same Boolean context that `g` now carries.  `g` can be
 //!   set false only with a witness in hand.
@@ -65,8 +65,8 @@
 //!
 //! Write `F[Q]` for the assertion.  With the positive obligation alone, `g → Q`
 //! holds in every model of the rewrite, so `F[g] ≤ F[Q]` at a positive
-//! occurrence (monotonicity) — no wrong `sat`; and a model of `F[Q]` extends by
-//! setting `g := Q`, which satisfies `∀x. (g → φ)` — no wrong `unsat`.  With
+//! occurrence (monotonicity) – no wrong `sat`; and a model of `F[Q]` extends by
+//! setting `g := Q`, which satisfies `∀x. (g → φ)` – no wrong `unsat`.  With
 //! the negative obligation alone the argument is the mirror image: `Q ≤ g` in
 //! every model of `g ∨ ¬φ(sk)`, `F` is antitone at a negative occurrence, and a
 //! model of `F[Q]` extends by interpreting `sk` as a falsifying witness when
@@ -79,7 +79,7 @@
 //!   `Let`, `Match`) in the same assertion is left alone: it may mention the
 //!   enclosing binder's variables, so a *closed* `g` cannot stand for it and a
 //!   Skolem *constant* cannot witness it.  Such a quantifier keeps the MBQI
-//!   path — the enclosing quantifier's instances are ground, and this pass runs
+//!   path – the enclosing quantifier's instances are ground, and this pass runs
 //!   on them too (see
 //!   [`Solver::prepare_ground_instance`](crate::solver::Solver)), so the inner
 //!   quantifier is guarded once it is closed.
@@ -109,7 +109,7 @@ use super::super::term_walk::asserted_children;
 /// [`finite_expand`](super::finite_expand)'s caps for the same reason: each
 /// candidate costs a walk and up to two derived assertions, and an adversarial
 /// term must not turn one assertion into an unbounded number of them.
-/// Declining past the cap costs completeness only — see the module doc.
+/// Declining past the cap costs completeness only – see the module doc.
 const MAX_GUARDED_QUANTIFIERS: usize = 64;
 
 /// The polarity of a sub-term occurrence inside one assertion.
@@ -164,7 +164,7 @@ pub(crate) struct Guarded {
 
 /// `term` with every quantifier it does **not** state unconditionally replaced
 /// by a fresh Boolean constant, plus the obligations defining those constants
-/// — or `None` when every quantifier in `term` is already on the asserted
+/// – or `None` when every quantifier in `term` is already on the asserted
 /// spine (the overwhelmingly common case, and a cheap one: two walks and no
 /// allocation beyond them).
 ///
@@ -179,7 +179,7 @@ pub(crate) fn guard_conditional_quantifiers(
     next_skolem_id: &mut u64,
 ) -> Option<Guarded> {
     // Quantifier-free term: there is nothing to guard (the walk's only
-    // product is guards *around* quantifiers).  Memoized negative — see
+    // product is guards *around* quantifiers).  Memoized negative – see
     // `TermManager::contains_quantifier`; without the gate every
     // assertion of a quantifier-free workload paid a full DAG walk here.
     if !manager.contains_quantifier(term) {
@@ -256,7 +256,7 @@ pub(crate) fn guard_quantifiers(
             // An `exists` turned into a `forall` keeps no trigger: its
             // patterns were written for the existential's own instantiation
             // and a trigger that does not cover every bound variable is worse
-            // than none.  A `forall` keeps its patterns — `(=> g φ)` contains
+            // than none.  A `forall` keeps its patterns – `(=> g φ)` contains
             // every sub-term `φ` did, so every trigger still matches.
             let keep_patterns = if is_exists {
                 Vec::new()
@@ -348,7 +348,7 @@ fn rebuild_forall(
 /// constant, or `None` when the binder is degenerate.
 ///
 /// The substitution is [`TermManager::substitute`], which is capture-avoiding
-/// and drops a mapping that a nested binder shadows — so a body that re-binds
+/// and drops a mapping that a nested binder shadows – so a body that re-binds
 /// one of `vars`' names keeps its own meaning.  The constants are minted
 /// through [`reserved_name`] from the solver-wide counter, so they can collide
 /// with neither a user symbol nor another obligation's witness.

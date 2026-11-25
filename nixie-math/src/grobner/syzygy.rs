@@ -20,17 +20,17 @@ pub struct SyzygyComputer {
     critical_pairs: BinaryHeap<CriticalPair>,
     /// Syzygy module generators
     syzygies: Vec<Syzygy>,
-    /// Buchberger criteria cache (POSITIVE results only — criterion
+    /// Buchberger criteria cache (POSITIVE results only – criterion
     /// 2's truth grows monotonically with `zero_pairs`, so a cached
     /// `false` can only be stale)
     criteria_cache: FxHashMap<(usize, usize), BuchbergerCriteria>,
     /// Pairs whose S-polynomial PROVABLY reduces to zero: processed to
     /// zero, coprime leading monomials (criterion 1 is an unconditional
     /// theorem), or recursively chain-verified. The sound form of
-    /// Buchberger's second criterion consults this set — a pair (i, j)
+    /// Buchberger's second criterion consults this set – a pair (i, j)
     /// is discardable only when some k has `lm_k | lcm(lm_i, lm_j)` AND
     /// both (i,k) and (j,k) are themselves in the set. The simplified
-    /// form this replaces (a bare `lm_k | lcm`) is UNSOUND — the
+    /// form this replaces (a bare `lm_k | lcm`) is UNSOUND – the
     /// missed-refutation class root-caused in the 𝔽_p engine on
     /// 2026-09-18; tests/grobner_rational_soundness.rs is this
     /// module's gate.
@@ -103,7 +103,7 @@ impl SyzygyComputer {
         }
     }
 
-    /// Record a pair whose S-polynomial provably reduces to zero —
+    /// Record a pair whose S-polynomial provably reduces to zero –
     /// after a processed-to-zero reduction, or a criteria-based
     /// discard. The caller MUST call this for every such event; the
     /// chain criterion's soundness rests on this set containing only
@@ -171,7 +171,7 @@ impl SyzygyComputer {
         basis: &[Polynomial],
     ) -> bool {
         // Cache lookup: POSITIVE results only (see the struct field's
-        // note — a negative-result cache goes stale as zero_pairs
+        // note – a negative-result cache goes stale as zero_pairs
         // grows).
         if let Some(criteria) = self.criteria_cache.get(&(i, j))
             && (criteria.criterion1 || criteria.criterion2)
@@ -233,15 +233,15 @@ impl SyzygyComputer {
 
     /// Check Criterion 2 (chain criterion, SOUND form): (i, j) is
     /// discardable only when some k has `lm_k | lcm(lm_i, lm_j)` AND
-    /// both (i,k) and (j,k) are in `zero_pairs` — provably-zero pairs
+    /// both (i,k) and (j,k) are in `zero_pairs` – provably-zero pairs
     /// (a DAG by construction). Two defects fixed relative to the old
     /// form: (a) the bare chain scan was the UNSOUND simplified
-    /// criterion — its divisibility side-checks (`lcm_ik | lcm` etc.)
+    /// criterion – its divisibility side-checks (`lcm_ik | lcm` etc.)
     /// were tautologies whenever the outer divisibility held, so it
     /// reduced to `∃k: lm_k | lcm`, which drops S-polynomials that do
     /// not reduce to zero (the missed-refutation class, 2026-09-18);
     /// (b) the `lcm == product` early return was criterion 1 restated
-    /// — and until this change it ran on VACUOUS monomial helpers (see
+    /// – and until this change it ran on VACUOUS monomial helpers (see
     /// `monomial_lcm`'s note), making criterion 1 fire on EVERY pair
     /// and the whole engine a decorated no-op that computed zero
     /// S-polynomials.
@@ -355,7 +355,7 @@ impl SyzygyComputer {
     }
 
     /// Monomial LCM (per-variable max of exponents). Rewritten 2026-09-18
-    /// against the REAL `Monomial::vars()` API — the previous version went
+    /// against the REAL `Monomial::vars()` API – the previous version went
     /// through the `MonomialHelper` stub trait whose `powers()` returned a
     /// **static empty map** ("Simplified"), making this and every other
     /// helper vacuous: `are_relatively_prime` was always-true (so criterion
@@ -384,7 +384,7 @@ impl SyzygyComputer {
         }))
     }
 
-    /// Monomial multiplication (exponent sums — `from_powers` sums).
+    /// Monomial multiplication (exponent sums – `from_powers` sums).
     /// Kept real (not stubbed) for any future caller; the criteria no
     /// longer use it since the vacuous `lcm == product` check went.
     #[allow(dead_code)]
@@ -417,7 +417,7 @@ impl SyzygyComputer {
     }
 
     /// Check if two monomials are relatively prime (no shared
-    /// variable — `Monomial` never stores zero exponents).
+    /// variable – `Monomial` never stores zero exponents).
     fn are_relatively_prime(m1: &Monomial, m2: &Monomial) -> bool {
         m1.vars()
             .iter()
@@ -478,7 +478,7 @@ impl Default for SyzygyComputer {
 // stubs ("Simplified: return self" for mul_monomial/mul_scalar, zero
 // for from_monomial), which made `compute_s_polynomial` compute
 // fi - fj with no scaling and `create_syzygy` fabricate coefficients
-// — garbage through every path that used them (2026-09-18).
+// – garbage through every path that used them (2026-09-18).
 #[allow(dead_code)]
 trait PolynomialSyzygy {
     fn sugar_degree(&self) -> usize;
@@ -491,7 +491,7 @@ trait PolynomialSyzygy {
 #[allow(dead_code)]
 impl PolynomialSyzygy for Polynomial {
     fn sugar_degree(&self) -> usize {
-        // The sugar heuristic approximated by total degree (as before —
+        // The sugar heuristic approximated by total degree (as before –
         // an approximation, not a correctness matter).
         self.total_degree() as usize
     }

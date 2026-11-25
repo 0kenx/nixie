@@ -1,4 +1,4 @@
-//! Constructor-table completion — Z3 `smt_model_finder`'s entry-table
+//! Constructor-table completion – Z3 `smt_model_finder`'s entry-table
 //! search, the piece that closes set-definitional axiom families
 //! (`union`/`intersection`/`difference` through `member`).
 //!
@@ -21,10 +21,10 @@
 //!
 //! # The fix (Z3's `auf_solver` entry tables, adapted)
 //!
-//! At completion, for every *constructor* — an uninterpreted function
+//! At completion, for every *constructor* – an uninterpreted function
 //! `f : S^n -> S` into an uninterpreted (finite-model) sort, defined
 //! through a Bool-valued *observer* `g` by an axiom
-//! `g(v..., f(w...)) = psi(v..., w...)` — compute a **semantic table**:
+//! `g(v..., f(w...)) = psi(v..., w...)` – compute a **semantic table**:
 //!
 //! * the *row* of a range element `z` is the observer's truth vector over
 //!   the row points (the ground universes of the observer's other
@@ -32,25 +32,25 @@
 //! * at every *unpinned* tuple `t` of the range universe, the target row
 //!   is `psi`'s truth at `(row point, t)` under the completed model, and
 //!   the computed entry is `f(t) := z` for the first universe element
-//!   whose row matches — so the completed interpretation is *closed under
+//!   whose row matches – so the completed interpretation is *closed under
 //!   its own definitional axioms by construction* (`union(b,b)` reads `b`
 //!   because their rows coincide), and the compound chase has nothing to
 //!   mint: the table already answers every compound point.
 //!
-//! # Design requirements (proven by the 2026-09-14 experiments —
+//! # Design requirements (proven by the 2026-09-14 experiments –
 //!   `docs/studies/2026-09-14-uflra-handoff-executed.md`)
 //!
 //! * **One globally-consistent interpretation per round.**  The tables are
 //!   computed *inside* `ModelCompleter::complete` and stored on the
-//!   [`CompletedModel`], so every consumer — the nested checker, the
-//!   falsifier mining, the enumerative seeder, the defining pins — sees
+//!   [`CompletedModel`], so every consumer – the nested checker, the
+//!   falsifier mining, the enumerative seeder, the defining pins – sees
 //!   the same tables.  The certifications of different quantifiers can
 //!   never rest on different one-shot interpretations (the divergence
 //!   vector that removed the else-revision search).
 //! * **Ground pins never overridden.**  Computed entries are created only
 //!   at tuples with no harvested ground entry, and they live in a separate
 //!   table consulted *after* the ground entries.  A pinned tuple that
-//!   violates its definitional axiom stays violated — the nested check
+//!   violates its definitional axiom stays violated – the nested check
 //!   finds the falsifier and the loop revises the *ground* model, exactly
 //!   as before (the verify-revise step).
 //! * **Semantic (not syntactic) value normalization.**  Two range elements
@@ -58,7 +58,7 @@
 //!   `semantic_domains` map a constructor argument axis of a defining
 //!   axiom to the raw universe with compounds collapsed *through the
 //!   computed tables* (`semantic_value_of`), so the seeder and the mining
-//!   odometer stop enumerating `union(b,b)` next to `b` — while raw
+//!   odometer stop enumerating `union(b,b)` next to `b` – while raw
 //!   non-compound elements are never merged (the `seteq` merge-forcing
 //!   instances must keep seeing every ground pair).
 //! * **Explicit stacks everywhere.**  `semantic_value_of` walks the
@@ -68,14 +68,14 @@
 //!
 //! # Soundness
 //!
-//! A computed entry is an *interpretation choice* for an unpinned tuple —
+//! A computed entry is an *interpretation choice* for an unpinned tuple –
 //! the same class of decision as an `else` value: the completed model is
 //! "ground pins + computed entries + else", and the nested check verifies
 //! every quantifier against exactly that total interpretation.  Choosing
 //! it can only change *which* completions are certifiable, never the
 //! soundness of a certification.  The final `sat` keeps its printed-model
 //! honesty through the `SatisfiedWithPins` convergence: certification
-//! emits the defining instances at universe tuples (sound lemmas —
+//! emits the defining instances at universe tuples (sound lemmas –
 //! instances of asserted universals), the ground model absorbs them, and
 //! `Satisfied` is only returned once no fresh pin remains.
 //!
@@ -97,11 +97,11 @@ use crate::prelude::*;
 
 /// Cap on the range universe size a constructor table is computed over.
 /// The tuple product is bounded separately by [`MAX_TABLE_TUPLES`]
-/// (partial tables are sound — the uncovered tuples fall to the `else`);
+/// (partial tables are sound – the uncovered tuples fall to the `else`);
 /// this bound keeps the row/tuple work and the ite chains proportioned.
 /// Set to match the Skolem-restriction bound: mid-loop universes polluted
 /// by pre-MBQI minting (every compound the earlier engines internalized)
-/// must still get their tables — declining there drops the semantic
+/// must still get their tables – declining there drops the semantic
 /// normalization with it and the chase restarts.
 const MAX_CONSTRUCTOR_UNIVERSE: usize = 32;
 
@@ -140,7 +140,7 @@ pub(crate) struct QuasiMacro {
     /// `f`'s arguments as indices into the axiom's `bound_vars`.
     func_args: SmallVec<[usize; 4]>,
     /// The defining body: its truth at `(row point, tuple)` is the target
-    /// row entry.  Mentions the observer at non-result positions only —
+    /// row entry.  Mentions the observer at non-result positions only –
     /// never the constructor itself.
     psi: TermId,
 }
@@ -154,7 +154,7 @@ enum ObserverArg {
 }
 
 /// One extracted *hint* macro: an axiom `psi(v...) => h(v...)` with `h` a
-/// Bool-valued uninterpreted function — Z3 `smt_model_finder`'s hint
+/// Bool-valued uninterpreted function – Z3 `smt_model_finder`'s hint
 /// shape.  The hint completes `h` at unpinned tuples as `psi`'s truth
 /// there, which satisfies the axiom by construction; the dual direction
 /// (whenever it exists as another axiom) is certified separately by the
@@ -162,7 +162,7 @@ enum ObserverArg {
 ///
 /// This is what closes the set family's *predicate* half:
 /// `(forall ((?x Elem)) (=> (member ?x ?s1) (member ?x ?s2))) =>
-/// (subset ?s1 ?s2)` completes `subset` as row-containment — axioms 1–3
+/// (subset ?s1 ?s2)` completes `subset` as row-containment – axioms 1–3
 /// then hold by construction, the existential-witness churn (each round's
 /// axiom-2 Skolems growing the `Elem` universe without bound) has no
 /// falsifier left to mint, and the axiom-5 check at unmerged equal-row
@@ -173,7 +173,7 @@ struct HintMacro {
     /// The hinted function `h`: Bool-valued, uninterpreted, macro-free.
     func: Spur,
     /// `h`'s arguments as indices into the axiom's `bound_vars` (all
-    /// uninterpreted sorts — finite-model semantics makes the tuple
+    /// uninterpreted sorts – finite-model semantics makes the tuple
     /// enumeration the whole domain).
     arg_vars: SmallVec<[usize; 4]>,
     /// The hint body: `h(args) := psi`'s truth.  May bind its own
@@ -183,7 +183,7 @@ struct HintMacro {
 
 /// Extract every hint macro from the tracked quantifiers, first hint per
 /// function (deterministic in tracking order).  A function that already
-/// has a macro definition or a constructor table is not hinted — the
+/// has a macro definition or a constructor table is not hinted – the
 /// macro/table owns its interpretation.
 fn extract_hint_macros(
     quantifiers: &[QuantifiedFormula],
@@ -411,7 +411,7 @@ fn try_extract(
     // The observer's other arguments: distinct axis variables, disjoint
     // from the constructor's arguments.  The constructor result is
     // recognized positionally (the one apply argument into the range
-    // sort — the counting pass above guaranteed there is exactly one
+    // sort – the counting pass above guaranteed there is exactly one
     // apply with an uninterpreted range, and every other argument must
     // be a plain axis variable).
     let mut observer_args: SmallVec<[ObserverArg; 4]> = SmallVec::new();
@@ -516,7 +516,7 @@ pub(crate) fn compute_constructor_tables(
     // `ModelCompleter::frozen_table_domains`): the constructor ranges,
     // observer axes and hint arguments are a *static* set for the
     // problem, and the round where a sort first has a non-empty ground
-    // universe is exactly when its growth must stop — every later term
+    // universe is exactly when its growth must stop – every later term
     // (witness Skolems, minted compounds) would otherwise perturb the
     // row points and the tuple space the tables are computed over, and
     // the structure the certifications run against never stabilizes.
@@ -561,7 +561,7 @@ pub(crate) fn compute_constructor_tables(
                 continue;
             };
             if universe.is_empty() {
-                continue; // retry next round — nothing to freeze yet
+                continue; // retry next round – nothing to freeze yet
             }
             let mut domain = universe;
             domain.sort_by_key(|t| t.0);
@@ -650,7 +650,7 @@ pub(crate) fn compute_constructor_tables(
     // observer's value vector); a constructor whose table is installed is
     // row-determined when its defining body reads the tuple variables
     // only through row-determined functions; a hinted predicate likewise.
-    // This set gates the semantic-domain collapse below — the soundness
+    // This set gates the semantic-domain collapse below – the soundness
     // argument for skipping a semantically-equal tuple during
     // instantiation.
     let mut row_determined: FxHashSet<Spur> = qms.iter().map(|qm| qm.observer).collect();
@@ -697,13 +697,13 @@ pub(crate) fn compute_constructor_tables(
     // Normalize the ground entry tables through the fresh tables: a
     // compound-keyed entry (`member(u!0, union(a,a)) -> v`, minted during
     // the search era) denotes the same domain point as its semantic value
-    // — the completed structure identifies them — so the entry is
+    // – the completed structure identifies them – so the entry is
     // rewritten onto the representative's key and duplicates at the same
     // normalized point are collapsed (first wins).  Without this, the
     // chains hold two branches for one point with values that can
     // disagree (the stale minting-era pin vs the domain-keyed one), and
-    // the nested check — which may legitimately merge the Skolem with
-    // the compound — routes through the stale branch and falsifies
+    // the nested check – which may legitimately merge the Skolem with
+    // the compound – routes through the stale branch and falsifies
     // axioms the completed model satisfies (the set family's residual
     // q20/q57/q42 `Sat` verdicts: the aux's own falsifying assignment
     // showed it merging `a` with `union(a,a)` and reading the compound-
@@ -725,7 +725,7 @@ pub(crate) fn compute_constructor_tables(
                 let mut all_inside = true;
                 for a in args.iter_mut() {
                     // Ground-value normalization first (the ground model's
-                    // own assignment of the term — this is also what keeps
+                    // own assignment of the term – this is also what keeps
                     // asserted ground equalities true in the completed
                     // structure), then the constructor-table quotient.
                     let mut v = *a;
@@ -737,13 +737,13 @@ pub(crate) fn compute_constructor_tables(
                     }
                     v = model.semantic_value_of(v, manager);
                     // Structure membership: a tabled sort's completed
-                    // interpretation lives on its frozen domain — an entry
+                    // interpretation lives on its frozen domain – an entry
                     // keyed at a point the structure does not contain
                     // constrains nothing inside it, and keeping it lets the
                     // nested check route a chain branch through a free
                     // compound the structure never justified (the set9
                     // residual: `member` entries keyed at `union(a,b)`,
-                    // `skf!0(difference(a,b), difference(b,a))`, ... — all
+                    // `skf!0(difference(a,b), difference(b,a))`, ... – all
                     // outside the two-element structure, all aux exploit
                     // routes).  Drop the entry.
                     if let Some(node) = manager.get(v)
@@ -783,7 +783,7 @@ pub(crate) fn compute_constructor_tables(
     // them, makes evaluations at row-equal elements genuinely differ;
     // collapsing would then skip a tuple whose instance is not redundant
     // (and the finite-exhaustion gate, which trusts the candidate
-    // coverage, could certify over it).  No gate — no semantic domain:
+    // coverage, could certify over it).  No gate – no semantic domain:
     // the consumers keep the raw universe.
     for qm in &qms {
         let Some(q) = quantifiers.iter().find(|q| q.term == qm.quantifier) else {
@@ -826,7 +826,7 @@ pub(crate) fn compute_constructor_tables(
 }
 
 /// One constructor's table.  Declines silently (no table installed) on
-/// every cap or evaluation failure — the completion then behaves exactly
+/// every cap or evaluation failure – the completion then behaves exactly
 /// as without this module.
 fn compute_one(
     model: &mut CompletedModel,
@@ -1016,7 +1016,7 @@ fn compute_one(
     // POST-walk under a fixed per-round budget: minting in-walk extends
     // the odometer to the fresh tuples immediately, which measured 10x
     // the aux conflicts on set19 (the walk covers (fresh, fresh)-shaped
-    // tuples against rows still in flux — garbage entries the nested
+    // tuples against rows still in flux – garbage entries the nested
     // checks then fight through).  Post-walk, one per round: the
     // structure grows slowly along a row algebra the search stably
     // needs, and the next round's walk covers the new tuples against
@@ -1079,19 +1079,19 @@ fn compute_one(
                     }
                 }
             }
-            // First element whose row matches (deterministic, canonical) —
+            // First element whose row matches (deterministic, canonical) –
             // preferring a plain non-application element when one exists:
             // the representative IS the value every consumer normalizes
             // onto (the semantic domains, `semantic_value_of`), and a
             // compound representative would itself seed the next minting
             // level (an instance at the semantic tuple `(union(a,a), b)`
-            // mentions `union(union(a,a), b)` — the chase again, one level
+            // mentions `union(union(a,a), b)` – the chase again, one level
             // deeper).  Constants anchor it.
             //
             // **Matched null** (`NIXIE_CT_NULL=<seed>`, the constructor-
-            // tables unit's AGENTS.md formality): the same machinery —
+            // tables unit's AGENTS.md formality): the same machinery –
             // tuple walk, row computation, miss recording, mint, caps,
-            // entry counts — with the *semantic content* removed: when
+            // entry counts – with the *semantic content* removed: when
             // the treatment's row match finds a candidate, the null
             // picks the result element by a seeded pick of the universe
             // instead.  If the unit's convergence value lives in the row
@@ -1134,12 +1134,12 @@ fn compute_one(
                 });
             }
             // No existing element has the target row: GROW the completed
-            // structure with a fresh element that has it — z3's model
+            // structure with a fresh element that has it – z3's model
             // finder semantics (`proto_model::get_fresh_value` /
             // `mk_extra_fresh_value`: the model is the object being
             // searched, and a user sort's universe grows when the
             // interpretation needs a new distinguishable value).  The
-            // fresh element is row-canonical — named by its target row —
+            // fresh element is row-canonical – named by its target row –
             // so the same row mints the same element across rounds and
             // the structure stays stable.  Leaving the tuple to the
             // `else` instead (the old behaviour) strands the defining
@@ -1175,10 +1175,10 @@ fn compute_one(
     // The mint: at most `MINT_BUDGET_PER_ROUND` fresh rows per
     // constructor per round, the FIRST misses in odometer order
     // (deterministic).  The matched null (NIXIE_MINT_NULL=<seed>) mints
-    // the same number chosen by a seeded pick of the miss set — same
+    // the same number chosen by a seeded pick of the miss set – same
     // machinery, same magnitude, no selection content.  Measured
     // treatment/null (conflicts, deterministic counter): set9 255/279
-    // (~0.91), set19 485/586 (~0.83) — the prefix's content carries no
+    // (~0.91), set19 485/586 (~0.83) – the prefix's content carries no
     // penalty; the count reduction is the mechanism (set19 aux conflicts
     // 10x worse under in-walk sticky minting, and the eager mint sat at
     // the 32-element cap for 194/245 passes).
@@ -1245,7 +1245,7 @@ const FRESH_RESTRICTION_CAP: usize = 32;
 /// family (aux conflicts, the deterministic counter): budget 1 lands at
 /// or below the seeded-null distribution (set9 255 vs ~279 median,
 /// set19 485 vs ~586), while budget 4 and the eager in-walk mint blow
-/// past 5k conflicts on set19 — the structure must grow *slowly*, one
+/// past 5k conflicts on set19 – the structure must grow *slowly*, one
 /// stably-needed row at a time, or the intermediate garbage rows cost
 /// more than the closure they buy.
 const MINT_BUDGET_PER_ROUND: usize = 1;
@@ -1255,7 +1255,7 @@ const MINT_BUDGET_PER_ROUND: usize = 1;
 /// the observer's entry table gains the target row's entries at the new
 /// element, and the frozen/table domains grow by it.  `None` when the
 /// domain is at the restriction cap (the aux Skolem restriction and
-/// every domain enumerator decline above it — a bigger structure would
+/// every domain enumerator decline above it – a bigger structure would
 /// be unreadable, so the tuple falls back to the `else`).
 ///
 /// The name is row-canonical (`tbl!<func-name>!<row bits>`): the element
@@ -1281,7 +1281,7 @@ fn mint_fresh_row_element(
     }
     // Row-canonical name: the bits are taken over the row points sorted
     // by TermId and namespaced by an FNV fingerprint of that sorted
-    // sequence — the frozen Elem domain's ORDER can change when an
+    // sequence – the frozen Elem domain's ORDER can change when an
     // escalation re-freezes it at a grown universe, and a positional bit
     // string would then re-mint the same row under a different name (a
     // duplicate element where the structure's own quotient semantics
@@ -1415,7 +1415,7 @@ fn psi_reads_args_row_determined(
 }
 
 /// One hinted predicate's table (see [`HintMacro`]).  Declines silently
-/// on every cap or evaluation failure — the function then falls back to
+/// on every cap or evaluation failure – the function then falls back to
 /// its ground entries and the `else`, exactly as without this module.
 fn compute_hint_one(
     model: &mut CompletedModel,
@@ -1473,13 +1473,13 @@ fn compute_hint_one(
             .enumerate()
             .map(|(i, &j)| domains[i][j])
             .collect();
-        // Ground pins are never overridden.  (A minted-args repair —
+        // Ground pins are never overridden.  (A minted-args repair –
         // overwriting a pin that contradicts the defining psi at a
-        // minted tuple with psi's truth — was built and measured on the
+        // minted tuple with psi's truth – was built and measured on the
         // extensional family: it closed neither gap and regressed set9
         // to `unknown`; the residual extensional unknowns are an
         // instance-coverage problem, not a pin problem.  Do not retry
-        // blind — see the study.)
+        // blind – see the study.)
         let pinned = model.function_interps.get(&hm.func).is_some_and(|interp| {
             interp
                 .entries
@@ -1543,14 +1543,14 @@ fn compute_hint_one(
 
 /// Evaluate a hint body under the completed model, expanding its own
 /// bounded quantifiers over the ground universes (finite-model semantics
-/// — the same restriction the nested check's Skolems live under, so the
+/// – the same restriction the nested check's Skolems live under, so the
 /// two readings agree).  `None` = could not evaluate; the caller leaves
 /// the tuple to the `else`.
 ///
 /// The recursion is over *quantifier nesting* only (capped by
-/// [`MAX_QUANTIFIER_DEPTH`] — beyond it the hint declines), never over
+/// [`MAX_QUANTIFIER_DEPTH`] – beyond it the hint declines), never over
 /// term structure: the leaves delegate to the ordinary ground evaluator,
-/// itself a frame machine.  The root must be a quantifier — a hint body
+/// itself a frame machine.  The root must be a quantifier – a hint body
 /// that merely *contains* quantifiers under connectives is not expanded
 /// (the leaf evaluator declines it), which costs completeness only.
 fn eval_hint_psi(
@@ -1697,7 +1697,7 @@ fn point_tuple_subst(
 
 /// Evaluate a *ground* Bool term under the completed model (entries,
 /// computed entries, macros, else).  `None` when the term does not fold
-/// to a Boolean — the caller declines.
+/// to a Boolean – the caller declines.
 fn eval_ground_bool(
     term: TermId,
     model: &CompletedModel,

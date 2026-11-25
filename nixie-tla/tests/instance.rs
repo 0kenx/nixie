@@ -306,7 +306,7 @@ fn a_let_instance_with_a_sibling_definition_test59_shape() {
     );
     let out = lower_in(&s, "test59.tla", "Next");
     // The LET's `x == y+1` is test59a's `VARIABLE x` implicit substitution,
-    // so `M!xplus1` is `(y+1) + 1` — never test59a's own free `x`.
+    // so `M!xplus1` is `(y+1) + 1` – never test59a's own free `x`.
     assert!(
         out.contains("Prime(Var(Name(\"y\")))"),
         "the next-state relation: {out}"

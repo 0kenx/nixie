@@ -1,4 +1,4 @@
-//! U-Z12 — `BvSolver::set_budget` at the theory-solver API level.
+//! U-Z12 – `BvSolver::set_budget` at the theory-solver API level.
 //!
 //! `nixie-solver/tests/budget_bitblast.rs` pins the SMT-LIB end of this wiring
 //! (`(set-option :timeout N)` / `:max-conflicts N` reaching the bit-blasted
@@ -6,7 +6,7 @@
 //! script path relies on but cannot observe directly:
 //!
 //! * the conflict allowance is a *total*, and its accumulator survives
-//!   `Theory::reset` — which `nixie-solver`'s `rebase_theory_state` calls once
+//!   `Theory::reset` – which `nixie-solver`'s `rebase_theory_state` calls once
 //!   per check and again on every repair round, and which zeroes the embedded
 //!   SAT solver's own statistics;
 //! * `TheoryCombination::notify_equality` handles an exhausted solve honestly.
@@ -23,8 +23,8 @@ use nixie_theories::{EqualityNotification, Theory, TheoryCheckResult, TheoryComb
 /// API so each `check()` is one probe.
 ///
 /// `vars` 32-bit variables in a ring, each pair constrained so that the modular
-/// product `v_i * v_{i+1}` is *below* the sum `v_i + v_{i+1}` — satisfiable
-/// only through wraparound — plus one constraint forcing the first product
+/// product `v_i * v_{i+1}` is *below* the sum `v_i + v_{i+1}` – satisfiable
+/// only through wraparound – plus one constraint forcing the first product
 /// above `0x7fff_ffff`. The tension between "the product wrapped low" and "the
 /// product is huge" is what makes the bit-blasted search generate conflicts
 /// rather than reading a model straight off the trail; without the last
@@ -33,8 +33,8 @@ use nixie_theories::{EqualityNotification, Theory, TheoryCheckResult, TheoryComb
 fn build_multiplier_chain(solver: &mut BvSolver, vars: u32) {
     // 16 bits, not 32.
     //
-    // Every assertion in this file is expressed in *conflicts* — the unit the
-    // budget itself is expressed in — so the width changes nothing any of them
+    // Every assertion in this file is expressed in *conflicts* – the unit the
+    // budget itself is expressed in – so the width changes nothing any of them
     // observes; it only sets how long each bit-blasted `solve()` takes.
     // Measured in the dev profile (`[profile.dev]` is `opt-level = 1`) on the
     // development machine, load average ~11, for `spend_under(Some(b), 4, 4)`
@@ -81,7 +81,7 @@ fn build_multiplier_chain(solver: &mut BvSolver, vars: u32) {
     // `0x7fff` at 16). It has to scale with the width rather than stay a
     // literal: `assert_const` reads its value modulo `2^WIDTH`, so a
     // hard-coded `0x7fff_ffff` at WIDTH = 16 would pin the threshold to
-    // `0xffff`, the *widest* 16-bit value — `threshold < product` would then be
+    // `0xffff`, the *widest* 16-bit value – `threshold < product` would then be
     // unsatisfiable by construction, the chain would cost zero conflicts, and
     // every budget assertion over it would pass vacuously (see this function's
     // doc comment).
@@ -193,7 +193,7 @@ fn an_unfinished_notification_cannot_republish_previous_model_equalities() {
 #[test]
 fn an_exhausted_allowance_makes_a_probe_report_unknown_not_sat() {
     // A zero allowance means the first solve stops at its first budget poll.
-    // On this chain — which needs thousands of conflicts — the probe must
+    // On this chain – which needs thousands of conflicts – the probe must
     // report `Unknown`, never `Sat` (which the CDCL(T) loop would read as "this
     // theory has no objection") and never `Unsat` (nothing was refuted).
     let mut solver = BvSolver::new();

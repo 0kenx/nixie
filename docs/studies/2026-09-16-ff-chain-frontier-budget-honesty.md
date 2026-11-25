@@ -9,7 +9,7 @@ monomial caching in the Gröbner engine.
 **Verdict:** ship the honesty + caching work (no verdict changes; every
 previously-solved goal held or improved; blowup refusals get
 budget-bounded instead of grinding). Chain ≥64×96 remains capacity-
-bound — now with the blocker precisely measured and named: **the
+bound – now with the blocker precisely measured and named: **the
 certificate tracer's cofactor-row maintenance costs ~1 s per S-pair on
 96-input cascades**, which no budget policy can fix.
 
@@ -20,15 +20,15 @@ without exhausting its 2^24 tick budget** (one stats line, nothing
 else). Profiles across four iterations:
 
 1. First profile: 23 % `MPoly::add_term`, 16 % `SmallVec::from`,
-   14 % `FieldCtx::add`, 13 % `reserve_rehash` — term-churn.
-2. After lm caching: the `lm()` scans vanished from the profile —
+   14 % `FieldCtx::add`, 13 % `reserve_rehash` – term-churn.
+2. After lm caching: the `lm()` scans vanished from the profile –
    `lm()` was a **full terms-map scan** (`max_by` over keys) consulted
    twice per candidate in the pair-selection scan and once per
    candidate in every reduction scan: O(selections × pairs × terms).
 3. With a `[gb-dbg]` probe: **~1 s per S-pair** on the 96-generator
    cascade, with elements still small (max 21 terms, basis 148 at pair
    100) and the budget barely touched (2^23 left). The cost is NOT the
-   polynomial arithmetic — it is `TracedPoly::sub`/`mul_monomial`/
+   polynomial arithmetic – it is `TracedPoly::sub`/`mul_monomial`/
    `scale` maintaining the **cofactor row over all inputs** per
    operation (96+ polynomial clones/subtractions per reduction step,
    plus the `reduce_traced` entry clone of the whole traced poly).
@@ -36,19 +36,19 @@ else). Profiles across four iterations:
 ## What shipped
 
 * **Selection-scan charging** (T5): one unit per pair-key computed in
-  the selection scan — the scan is O(#pairs) per selection, quadratic
+  the selection scan – the scan is O(#pairs) per selection, quadratic
   over the cascade, and was entirely uncharged.
 * **Cofactor-row charging** (T5): each reduction step now charges
-  `n_inputs × sub_terms` alongside the polynomial cost — the tracer's
+  `n_inputs × sub_terms` alongside the polynomial cost – the tracer's
   row maintenance was doing ~n_inputs× the charged work (the
   wall-vs-budget gap's root cause).
 * **Bloat circuit breaker**: `basis.len() > 8×inputs + 64` or any
-  element over 512 terms aborts the cascade as `Err(Budget)` — a
+  element over 512 terms aborts the cascade as `Err(Budget)` – a
   deterministic capacity decision that hands the remaining time to the
   split fallback instead of burning it on a hopeless monolithic run.
 * **Leading-monomial caches**: `lm_cache` computed once per basis
   snapshot, threaded through `pair_key_lms`, `criterion_applies_lms`
-  and `reduce_traced` — the selection and reduction scans no longer
+  and `reduce_traced` – the selection and reduction scans no longer
   rescan term maps.
 
 Corpus (release, before → after): sparse 128×192 `sat` 8.0 s →
@@ -69,14 +69,14 @@ candidate directions, in rough order of expected value:
   ~10–50×.
 2. **Untraced fast path**: run the monolithic attempt without the
    tracer; if it completes and a certificate is wanted, replay the
-   (now-known-trajectory) cascade traced — the healthy cascade is
+   (now-known-trajectory) cascade traced – the healthy cascade is
    fast the second time. Complexity: trajectory must be deterministic
    (it is) and the replay verified.
 3. **F4-style batched reduction** (the pre-registered Phase-7 lever):
-  replaces the S-pair loop wholesale — orthogonal to the tracer cost,
+  replaces the S-pair loop wholesale – orthogonal to the tracer cost,
    which it would inherit unless (1) or (2) lands first.
 
-Round-robin branch-variable selection was NOT reached — with the
+Round-robin branch-variable selection was NOT reached – with the
 monolithic attempt refusing honestly, the split fallback does run on
 64×96 within the budget, and the remaining time goes to the split's
 own traced cascades (same cofactor cost). Fixing the tracer first

@@ -333,14 +333,14 @@ impl Solver {
                     // Numeric equality is NOT pure equality logic: `(= x y)` over
                     // Int/Real needs the arithmetic theory (the trichotomy split
                     // and the tableau) to produce a model that separates the
-                    // sides — the chordal-SAT path has none of that, and on
+                    // sides – the chordal-SAT path has none of that, and on
                     // `(not (= x y))` it answered with a colliding model the
                     // collision gate honestly refused (root-caused 2026-08-29;
                     // the pre-gate behaviour was a wrong-model `sat`).
                     // Opt out of the fast path only for the PLAIN-ARITHMETIC shape
                     // (no uninterpreted applications, no arrays): there the goal
                     // needs the trichotomy + tableau to produce a separating
-                    // model.  UF- and array-bearing goals keep the chordal path —
+                    // model.  UF- and array-bearing goals keep the chordal path –
                     // routing them to the general loop was measured at several
                     // differential timeouts (Hash, RDS), and their compound
                     // numeric equalities are the arrangement's province anyway.

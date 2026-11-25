@@ -126,7 +126,7 @@ mod tests {
     }
 
     /// `M15`: the tester over `(ite c l1 nil)` is `(and c ((_ is cons) l1))`
-    /// — the `nil` branch folds to `false` — and no tester over an `ite` is
+    /// – the `nil` branch folds to `false` – and no tester over an `ite` is
     /// built.
     #[test]
     fn a_tester_over_an_ite_reads_its_branches() {

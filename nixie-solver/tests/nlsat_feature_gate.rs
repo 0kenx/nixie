@@ -1,4 +1,4 @@
-//! What the `nlsat` feature does, and — more importantly — what it does *not*
+//! What the `nlsat` feature does, and – more importantly – what it does *not*
 //! do to the rest of the solver.
 //!
 //! `nlsat` is on by default, so the interesting build is the other one:
@@ -17,19 +17,19 @@
 //!    produce the same answers, which is what makes them a no-regression proof
 //!    rather than two separate expectations.
 //! 2. **What is lost is lost honestly.** A goal that needed the
-//!    cell-decomposition core answers `unknown` — the same answer this codebase
+//!    cell-decomposition core answers `unknown` – the same answer this codebase
 //!    already gives for a String or FP atom no theory can take (`check_core`'s
 //!    honesty gates). It must never fall through to the SAT layer, which would
 //!    treat the nonlinear atom as a free Boolean and report a spurious verdict,
 //!    and it must never panic.
 //! 3. **What survives, survives soundly.** Three things outside `nixie-nlsat`
-//!    still decide nonlinear goals and stay compiled in either way — they are
+//!    still decide nonlinear goals and stay compiled in either way – they are
 //!    `std`-gated, and `std` is exactly what the OFF build keeps:
 //!
 //!    * the static UNSAT pattern detector (`check_nonlinear_constraints`);
 //!    * the NIA-over-LP relaxation engine
 //!      (`nixie_theories::arithmetic::nla`), the only one of the three that can
-//!      derive `unsat` from a *proof* rather than a syntactic pattern — an LP
+//!      derive `unsat` from a *proof* rather than a syntactic pattern – an LP
 //!      infeasibility closure over consequences of the input;
 //!    * the two model searches (`nl_repair_search`, `nl_ground_reduce`).
 //!
@@ -51,8 +51,8 @@
 //!   contains a newline. The expectations below spell that out.
 //! * A **model** for a multi-solution QF_NIA goal is *not* stable across the
 //!   two builds, even where the verdict is. The NIA-over-LP relaxation engine
-//!   runs above the two model searches, so which procedure answers first — and
-//!   therefore which witness is reported — differs once the cell decomposition
+//!   runs above the two model searches, so which procedure answers first – and
+//!   therefore which witness is reported – differs once the cell decomposition
 //!   is absent: `x*y = 6 ∧ x+y = 5` gives (2, 3) with `nlsat` and (3, 2)
 //!   without. Both are re-verified against the assertions and both are correct.
 //!   That is why every QF_NIA expectation below is a *verdict*, and why the
@@ -75,10 +75,10 @@ fn run(script: &str) -> Vec<String> {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // (a) The core stays correct without the nonlinear solver.
 //     No `cfg`: these run in both builds and must agree.
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 #[test]
 fn bool_sat_and_unsat_are_unaffected() {
@@ -124,7 +124,7 @@ fn qf_lia_stays_correct() {
             "(set-logic QF_LIA)(declare-const x Int)(declare-const y Int)\
              (assert (= (+ x y) 10))(assert (= (- x y) 4))(check-sat)(get-value (x y))"
         ),
-        // One binding per line — the `get-value` renderer's own format, pinned
+        // One binding per line – the `get-value` renderer's own format, pinned
         // here so a change to it shows up as a visible diff rather than a
         // silent one.
         vec!["sat", "((x 7)\n (y 3))"],
@@ -163,7 +163,7 @@ fn linear_real_arithmetic_stays_correct() {
 
 /// OFF-build counterpart: the cell-decomposition core is gone, but the
 /// NIA-over-LP relaxation engine (std-gated, ported from upstream v0.3.3)
-/// still decides these — every `sat` re-verified, every `unsat` proof-backed.
+/// still decides these – every `sat` re-verified, every `unsat` proof-backed.
 #[cfg(not(feature = "nlsat"))]
 #[test]
 fn qf_nia_is_decided_by_the_relaxation_engine_without_the_feature() {
@@ -171,7 +171,7 @@ fn qf_nia_is_decided_by_the_relaxation_engine_without_the_feature() {
         run("(set-logic QF_NIA)(declare-const x Int)(assert (= (* x x) 4))(check-sat)"),
         vec!["sat"]
     );
-    // (Fork note: the multivariate witness declines on this tree — the same
+    // (Fork note: the multivariate witness declines on this tree – the same
     // engine dependency divergence the upstream neg*neg test records. Unknown,
     // sound; the univariate root above is the pin that the engine's sat path
     // works in this build.)
@@ -252,24 +252,24 @@ fn qf_nia_is_decided_identically_in_both_builds() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // (b) The honest failure, and (c) its counterpart in the default build.
 //
 // QF_NRA is where the two builds part company: the model searches above are
 // gated on QF_NIA, so with the feature off there is nothing left to decide a
 // nonlinear *real* goal with.
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
-/// `x*x = 4` over the reals — satisfiable at ±2, with a rational witness the
+/// `x*x = 4` over the reals – satisfiable at ±2, with a rational witness the
 /// cell-decomposition core finds.
 const NRA_SQUARE_FOUR: &str =
     "(set-logic QF_NRA)(declare-const x Real)(assert (= (* x x) 4.0))(check-sat)";
 
-/// `x*y = 6 AND x+y = 5` over the reals — satisfiable at (2, 3).
+/// `x*y = 6 AND x+y = 5` over the reals – satisfiable at (2, 3).
 const NRA_PRODUCT_SUM: &str = "(set-logic QF_NRA)(declare-const x Real)(declare-const y Real)\
      (assert (= (* x y) 6.0))(assert (= (+ x y) 5.0))(check-sat)";
 
-/// `x*x < 0` over the reals — unsatisfiable, and provably so by the sign
+/// `x*x < 0` over the reals – unsatisfiable, and provably so by the sign
 /// reasoning the cell-decomposition core carries.
 const NRA_SQUARE_NEGATIVE: &str =
     "(set-logic QF_NRA)(declare-const x Real)(assert (< (* x x) 0.0))(check-sat)";
@@ -280,7 +280,7 @@ fn nra_goals_answer_unknown_without_the_feature() {
     // The honest failure. NOT `sat`, NOT `unsat`, NOT a panic: `unknown`, the
     // same answer this solver already gives for a String or FP atom it has no
     // complete theory for. Note that `NRA_SQUARE_NEGATIVE` is genuinely unsat
-    // and this build still declines to say so — the cost is completeness, and
+    // and this build still declines to say so – the cost is completeness, and
     // conceding it is the point.
     for script in [NRA_SQUARE_FOUR, NRA_PRODUCT_SUM, NRA_SQUARE_NEGATIVE] {
         assert_eq!(
@@ -336,14 +336,14 @@ fn push_pop_over_a_nonlinear_atom_never_guesses() {
     //
     // The sequence is `x*x = 4`, push, `x < 0`, push, `x > 0`, pop, pop. The
     // last-but-one state is contradictory on its *linear* atoms alone, and both
-    // builds now report `Unsat` for it — which is why this test carries no
+    // builds now report `Unsat` for it – which is why this test carries no
     // `cfg` any more.
     //
     // The relaxation engine (upstream v0.3.3, ported) is compiled into both
     // builds and refutes this level; what the test still exists to catch is
-    // the honesty gate being skipped — a Sat here is wrong in every build.
+    // the honesty gate being skipped – a Sat here is wrong in every build.
     //
-    // What this test exists to catch is the third outcome — the honesty gate
+    // What this test exists to catch is the third outcome – the honesty gate
     // being skipped and the SAT layer treating `x*x = 4` as a free Boolean,
     // which would report `Sat` for `x < 0 ∧ x > 0`. That bug is excluded at
     // every level below, not just the contradictory one, and the `!Sat`
@@ -358,7 +358,7 @@ fn push_pop_over_a_nonlinear_atom_never_guesses() {
     let eq = ctx.terms.mk_eq(square, four);
     ctx.assert(eq);
 
-    // Level 0 — `x*x = 4`. Decided by a re-verified witness in both builds:
+    // Level 0 – `x*x = 4`. Decided by a re-verified witness in both builds:
     // the relaxation engine is `std`-gated, not `nlsat`-gated.
     assert!(matches!(ctx.check_sat(), SolverResult::Sat));
 
@@ -366,13 +366,13 @@ fn push_pop_over_a_nonlinear_atom_never_guesses() {
     let zero = ctx.terms.mk_int(0);
     let x_lt = ctx.terms.mk_lt(x, zero);
     ctx.assert(x_lt);
-    // Level 1 — `x*x = 4 ∧ x < 0`. Witness x = -2, both builds.
+    // Level 1 – `x*x = 4 ∧ x < 0`. Witness x = -2, both builds.
     assert!(matches!(ctx.check_sat(), SolverResult::Sat));
 
     ctx.push();
     let x_gt = ctx.terms.mk_gt(x, zero);
     ctx.assert(x_gt);
-    // Level 2 — now contradictory. Never guessed: `!Sat` in both builds.
+    // Level 2 – now contradictory. Never guessed: `!Sat` in both builds.
     // (Fork note: upstream's relaxation engine makes both builds refute it
     // outright; that engine is not ported yet, so the OFF build declines
     // honestly to Unknown here and the on build refutes.)
@@ -422,7 +422,7 @@ fn a_decided_goal_still_carries_its_model() {
     // The other half of what the feature buys: not just the verdict, but a
     // model the caller can read back.  The echo is the SMT-LIB Real
     // spelling `-2.0` (the printers' `RealConst` arm used to emit the
-    // `Ratio` Display's `-2` — an integer spelling for a Real-sorted
+    // `Ratio` Display's `-2` – an integer spelling for a Real-sorted
     // value; fixed with the rational-echo round-trip regression in
     // `arith_wide_literal_regressions.rs`).
     assert_eq!(

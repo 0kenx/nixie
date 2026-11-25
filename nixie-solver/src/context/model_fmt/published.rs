@@ -1,17 +1,17 @@
 //! What a `sat` publishes, settled once per check: the model every renderer
 //! reads, with fresh values for the classes no theory valued (`#P2b-71`,
-//! `context::model_fmt::mint`), and — for every `sat` whose asserted goal
-//! holds a quantifier — the verdict of the published-model certificate
+//! `context::model_fmt::mint`), and – for every `sat` whose asserted goal
+//! holds a quantifier – the verdict of the published-model certificate
 //! (`#P2b-51`, decisions (54), (67), (68)); for a quantifier-free `sat` over
 //! a datatype, an enumeration, an uninterpreted sort or an array over one,
 //! the honesty net (decision (85), re-fix pass 18): a candidate model the
-//! exact value reader shows false makes the check `unknown` — the verdict is
+//! exact value reader shows false makes the check `unknown` – the verdict is
 //! only as good as the model behind it.
 //!
 //! # Fresh values (`#P2b-71`)
 //!
-//! Every congruence class no theory valued — a constant, an application, a
-//! read — gets a value of its own, keyed by the point it reads, so distinct
+//! Every congruence class no theory valued – a constant, an application, a
+//! read – gets a value of its own, keyed by the point it reads, so distinct
 //! classes print distinct values and one point prints one value (`mint`).
 //! The minted values live in a copy of the solver's model that `(get-model)`,
 //! `(get-value)` and the function interpretations all read.  At a
@@ -21,9 +21,9 @@
 //!
 //! # The published-model certificate (decisions (54)(i), (67), (68))
 //!
-//! At a `sat` whose ASSERTED goal holds a quantifier — any theory, including
+//! At a `sat` whose ASSERTED goal holds a quantifier – any theory, including
 //! a quantifier the search removed by Skolemisation, destructive equality
-//! resolution or vacuous-binder elimination — and whose model no certificate
+//! resolution or vacuous-binder elimination – and whose model no certificate
 //! of the check already covered, every declared constant is rendered exactly
 //! as `(get-model)` prints it and every uninterpreted function's printed
 //! table is read back; the goal, with every application replaced by its
@@ -35,7 +35,7 @@
 //! right where its arrays allow, and otherwise not published:
 //! `(get-model)` answers `(error "model not certified: …")`, and
 //! `(get-value)` answers the same for a term that reads an uncertified symbol
-//! — an array of an array goal (a term reading none still answers), any
+//! – an array of an array goal (a term reading none still answers), any
 //! declared constant or function of another goal.  The verdict is left as it
 //! is (decision (40)).
 
@@ -98,9 +98,9 @@ impl Context {
     /// is recorded): keep a correct candidate (decision (48)), mint fresh
     /// values (`#P2b-71`), then
     ///
-    /// * at a `sat` whose **asserted** goal holds a quantifier — any theory,
+    /// * at a `sat` whose **asserted** goal holds a quantifier – any theory,
     ///   including one the search removed by Skolemisation, destructive
-    ///   equality resolution or vacuous-binder elimination (decision (67)) —
+    ///   equality resolution or vacuous-binder elimination (decision (67)) –
     ///   certify the model as printed, functions included (decision (68)),
     ///   unless a certificate already covered exactly this model;
     /// * at a quantifier-free `sat` the fresh values changed, check the
@@ -109,7 +109,7 @@ impl Context {
     ///
     /// Returns the verdict the check answers: `result`, except a
     /// quantifier-free `sat` whose candidate model the honesty net reads
-    /// false (decision (85)), which answers `unknown` — and then
+    /// false (decision (85)), which answers `unknown` – and then
     /// `last_result` is set to `unknown` here, since the net renders the
     /// model through a `sat` `last_result`.
     pub(in crate::context) fn settle_published_model(
@@ -196,7 +196,7 @@ impl Context {
 
     /// The honesty net (decision (85), re-fix pass 18) over a
     /// quantifier-free `sat` whose problem mentions a value no theory prints
-    /// exactly — a declared symbol whose sort CONTAINS a datatype, an
+    /// exactly – a declared symbol whose sort CONTAINS a datatype, an
     /// enumeration or an uninterpreted sort (a constant of one, an array whose
     /// index or element sort is one at any depth, a function into or over
     /// one), or an assertion with a term of such a sort (decisions (72)(a),
@@ -208,7 +208,7 @@ impl Context {
     ///   assertion N reads false under the candidate model") and
     ///   `(get-model)` answers the certified-or-absent error: a `sat` is never
     ///   answered over a model the solver itself shows false, and no fresh
-    ///   solver is asked to overrule that reading — recheck 17 measured one
+    ///   solver is asked to overrule that reading – recheck 17 measured one
     ///   (`gen_dt.py` seed 30100192 `d00318`, its second check) answering
     ///   `sat` on the closed, false assertion (`#P2b-90`), so the model was
     ///   printed;
@@ -222,8 +222,8 @@ impl Context {
     /// * an assertion that applies a function whose printed table does not
     ///   read back is OPEN, never clean (decision (92)(d), re-fix pass 19):
     ///   it goes to a fresh solver with that function uninterpreted, and the
-    ///   model is withheld unless the assertion's negation is refuted there —
-    ///   the assertion true under every interpretation of the function —
+    ///   model is withheld unless the assertion's negation is refuted there –
+    ///   the assertion true under every interpretation of the function –
     ///   while every other assertion is still read as above, so one
     ///   unreadable table no longer switches the net off (a constructor
     ///   named `|(a|` printed unquoted as `(a` let a falsifying model through
@@ -284,11 +284,11 @@ impl Context {
 
     /// The first assertion the printed model makes false, read as
     /// [`Self::withhold_a_falsifying_datatype_model`] documents: by the exact
-    /// value reader (`printed_eval::ground_values`, interning nothing) —
+    /// value reader (`printed_eval::ground_values`, interning nothing) –
     /// before decision (79)(a) the net only saw what the term builder folded
     /// while the model was substituted in, and `gen_dt.py` seed 30093154
     /// `d00239` published its first, falsifying model while its second and
-    /// third were withheld — and, where that reader is open, by the
+    /// third were withheld – and, where that reader is open, by the
     /// structural evaluator confirmed by a fresh solver under the hypothesis
     /// that distinct `@uc_` witnesses are distinct elements (what the printed
     /// model says).  An assertion whose closing leaves a symbol other than a
@@ -357,9 +357,9 @@ impl Context {
         unread.unwrap_or(NetReading::Clean)
     }
 
-    /// Whether `closed` — an assertion with the printed model substituted in
+    /// Whether `closed` – an assertion with the printed model substituted in
     /// and some function left uninterpreted because its printed table does
-    /// not read back — holds under EVERY interpretation of what it leaves
+    /// not read back – holds under EVERY interpretation of what it leaves
     /// open: a fresh solver refutes its negation (decision (92)(d)).  Any
     /// other answer, `unknown` included, is `false`.
     fn holds_under_every_reading(
@@ -400,7 +400,7 @@ impl Context {
     }
 
     /// Whether an assertion in scope has a sub-term whose sort contains a
-    /// datatype, an enumeration or an uninterpreted sort — the net's trigger
+    /// datatype, an enumeration or an uninterpreted sort – the net's trigger
     /// for a goal that declares no symbol of one (a ground formula over
     /// constructor literals, recheck 17's `c318_b`).
     fn goal_mentions_value_sort(&self) -> bool {
@@ -542,7 +542,7 @@ impl Context {
     /// An uninterpreted-sort witness `@uc_S_n` is no SMT-LIB literal: it is
     /// read back as a constant of `S` of its own, and the certificate is taken
     /// under the hypothesis that distinct witnesses of one sort are distinct
-    /// elements — which is what the printed model says.  Where the printed
+    /// elements – which is what the printed model says.  Where the printed
     /// model fails with the fresh values of `#P2b-71` and holds without them,
     /// the solver's own model is printed (decision (64)); where it fails
     /// either way, it is completed around what it got right when its arrays
@@ -584,7 +584,7 @@ impl Context {
         self.withhold_published_model(reason);
     }
 
-    /// The printed model — constants and function tables — certified against
+    /// The printed model – constants and function tables – certified against
     /// the asserted goal.
     pub(super) fn certify_printed_goal(&mut self) -> Result<(), String> {
         let Some((printed, mut parse)) = self.printed_constants() else {
@@ -612,7 +612,7 @@ impl Context {
                 // The certificate's queries could not decide the goal: a
                 // second, query-free certificate evaluates the printed model
                 // exactly (`printed_eval`), for the whole goal and then
-                // assertion by assertion — each one shown true by evaluation
+                // assertion by assertion – each one shown true by evaluation
                 // or by the queries on its own.  The model is fixed, so the
                 // assertions are independent statements about it.
                 if self.certified_by_evaluation(&goal, &printed) {
@@ -650,7 +650,7 @@ impl Context {
     }
 
     /// Withhold the model: `(get-model)` answers the error, and so does a
-    /// `(get-value)` that reads an uncertified symbol — every array of an
+    /// `(get-value)` that reads an uncertified symbol – every array of an
     /// array goal (a term reading none still answers), every declared
     /// constant and function of any other goal.
     fn withhold_published_model(&mut self, reason: String) {

@@ -24,7 +24,7 @@ pub struct SimplexConfig {
     /// infeasibility sum with dual-like steps; when it cannot improve (or
     /// hits its budget/overflow) it falls back to the standard driver from
     /// the current basis, and ALL conflicts still come from the existing
-    /// exact explanation path — no new certificate surface.  Default off
+    /// exact explanation path – no new certificate surface.  Default off
     /// (see docs/studies/2026-08-soi-simplex.md).
     pub enable_soi: bool,
 }

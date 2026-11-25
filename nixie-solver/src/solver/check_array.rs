@@ -1594,7 +1594,7 @@ impl Solver {
     /// pairwise-distinctness requirement is load-bearing: a write *multiset*
     /// only characterises the resulting array when no write shadows another,
     /// and with co-equal symbolic indices (`i = j`) two permutations of the
-    /// same writes keep *different* survivors at the shared index — e.g.
+    /// same writes keep *different* survivors at the shared index – e.g.
     /// `store(store(a,i,x),j,y)` vs `store(store(a,j,y),i,x)` with `i = j, x ≠ y`
     /// are provably DIFFERENT while their entry sets match exactly (found via
     /// upstream v0.3.3's `store_commutativity_without_distinctness_is_sat`

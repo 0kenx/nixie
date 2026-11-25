@@ -88,7 +88,7 @@ const CHOOSE_ANY_BOOL: &str = "@tla_choose_any_bool";
 pub enum SetEncoding {
     /// Apalache's arena: a statically computed candidate list per set, with a
     /// Boolean per (candidate, set). Exact and quantifier-free, but it needs
-    /// the candidates to be knowable *before* the solver runs — so it cannot
+    /// the candidates to be knowable *before* the solver runs – so it cannot
     /// represent a set-valued **state variable**, whose members are whatever
     /// the transition relation puts there.
     #[default]
@@ -145,7 +145,7 @@ pub struct Encoder {
     /// The companion *domain* variable of a function-sorted name.
     ///
     /// A TLA+ function is a domain and a graph, and an SMT array is only the
-    /// graph — so a function-typed `VARIABLE` needs two SMT variables, not
+    /// graph – so a function-typed `VARIABLE` needs two SMT variables, not
     /// one. Keyed exactly like [`Encoder::vars`], so a state variable gets a
     /// domain per step and a `CONSTANT` gets one for the whole unrolling:
     /// a constant function's domain cannot change either.
@@ -166,7 +166,7 @@ pub struct Encoder {
     /// Bound variables in scope, mapped to the value they stand for.
     ///
     /// A binder over a set is encoded once per candidate member, with the
-    /// variable bound to that member — so the body is *instantiated*, not
+    /// variable bound to that member – so the body is *instantiated*, not
     /// quantified. Lowering renames every binder uniquely, so a flat map
     /// needs no scope stack; what it does need is to be popped, because the
     /// same binder is entered once per member.
@@ -180,7 +180,7 @@ pub struct Encoder {
     /// Constraints the caller must assert alongside whatever it encoded.
     ///
     /// A recursive function is *defined* by equations rather than built as a
-    /// value — `f[k] = body(k)` at every point of its domain — so encoding one
+    /// value – `f[k] = body(k)` at every point of its domain – so encoding one
     /// produces a term (the array) and a set of facts about it. The facts have
     /// to reach the solver, and the encoder has no way to assert them itself.
     side: Vec<TermId>,
@@ -189,7 +189,7 @@ pub struct Encoder {
     recfuns: HashMap<(*const Kera, u32), (TermId, TermId)>,
     /// The shared constants behind `CHOOSE x : x \\notin S` occurrences,
     /// keyed by the set's identity so the same idiom over the same set is
-    /// one value everywhere — which is what `CHOOSE`'s determinism
+    /// one value everywhere – which is what `CHOOSE`'s determinism
     /// requires. A ground set keys by its canonical value (two spellings,
     /// one constant); a symbolic one by its term.
     unbounded_chooses: HashMap<UnboundedChooseKey, TermId>,
@@ -197,10 +197,10 @@ pub struct Encoder {
     /// constraint, keyed by the domain term.
     ///
     /// `f \in [S -> T]` pins `DOMAIN f = S` as an equation, which the solver
-    /// reasons about but `candidates_of` cannot read back — a domain *variable*
+    /// reasons about but `candidates_of` cannot read back – a domain *variable*
     /// has no member list. Remembering the members the equation was built from
-    /// is exact — the equation says precisely that the domain is the set of
-    /// those members — and it is what lets a later `\A a \in DOMAIN f : …`
+    /// is exact – the equation says precisely that the domain is the set of
+    /// those members – and it is what lets a later `\A a \in DOMAIN f : …`
     /// over the same function enumerate instead of decline. This is the
     /// `TestHash2.tla` shape (`ConstInit` pins `hash` with `[S -> T]`, and
     /// `IsInjective` quantifies over `DOMAIN hash`).
@@ -214,7 +214,7 @@ pub struct Encoder {
     /// the variable declines exactly as it did before frames existed.
     framing: std::collections::HashSet<String>,
     /// Reverse of [`Encoder::vars`]: the variable a set-sorted term is, and
-    /// the step it was read at — what the frame lookup needs.
+    /// the step it was read at – what the frame lookup needs.
     var_of: HashMap<TermId, (String, u32)>,
     /// The **domain** side of a function-sorted state variable: its
     /// `name$dom` set term back to `(name, step)` (issue #20, step 5). A
@@ -263,7 +263,7 @@ impl Encoder {
     ///
     /// Must be asserted alongside them, and **every time**: these are facts
     /// about terms, not a queue. Draining them was the first attempt, and it
-    /// is wrong for a reason worth recording — the bounded check builds one
+    /// is wrong for a reason worth recording – the bounded check builds one
     /// solver per depth, so the equations produced while encoding `Init`
     /// reached the depth-0 query and then no other, leaving the recursive
     /// function an unconstrained array from depth 1 onwards. `Rec3.tla` then
@@ -310,7 +310,7 @@ impl Encoder {
         self.node_sorts.insert(Rc::as_ptr(node), sort);
     }
 
-    /// Declare the sort of a rigid name — a `CONSTANT`, or a parameter.
+    /// Declare the sort of a rigid name – a `CONSTANT`, or a parameter.
     ///
     /// Its value is the same in every state, so it encodes to one SMT variable
     /// however many steps are unrolled.
@@ -436,7 +436,7 @@ impl Encoder {
 
     /// Encode a term and require it to have an SMT sort of its own.
     ///
-    /// A set has no sort — it is a candidate list — so anything that needs a
+    /// A set has no sort – it is a candidate list – so anything that needs a
     /// `TermId` must go through here and gets a named refusal otherwise.
     fn go(&mut self, term: &KeraRef, tm: &mut TermManager) -> Result<TermId> {
         let v = self.value(term, tm)?;
@@ -446,8 +446,8 @@ impl Encoder {
     /// A value as a single SMT term.
     ///
     /// A tuple and a record reify into a **single-constructor datatype**, one
-    /// field per component. The structural form stays primary — it is what
-    /// makes a literal index and an exact `DOMAIN` possible — and this is what
+    /// field per component. The structural form stays primary – it is what
+    /// makes a literal index and an exact `DOMAIN` possible – and this is what
     /// it becomes when something needs a term: a member of a set of tuples, a
     /// record-valued state variable's new value, an operand of `=`.
     ///
@@ -484,7 +484,7 @@ impl Encoder {
     /// Build the datatype term for a structural value.
     ///
     /// The constructor's name is a function of the field names and their
-    /// sorts, computed the same way [`crate::sorts::sort_of`] computes it —
+    /// sorts, computed the same way [`crate::sorts::sort_of`] computes it –
     /// which is what makes the value the encoder builds and the sort the type
     /// checker assigned the *same* datatype rather than two that merely look
     /// alike.
@@ -509,12 +509,12 @@ impl Encoder {
     ///
     /// `t[2]` selects a tuple's second component and `r.f` its `f` field; both
     /// arrive here as an index expression. A non-literal index is `None`,
-    /// which is a refusal rather than an approximation — a datatype has no
+    /// which is a refusal rather than an approximation – a datatype has no
     /// dynamic field access, and picking one would be a guess.
     fn field_name(&self, index: &KeraRef) -> Option<String> {
         match index.as_ref() {
             Kera::Str(name) => Some(crate::sorts::record_field(name)),
-            // Anything else is tried as a tuple index, which is an integer —
+            // Anything else is tried as a tuple index, which is an integer –
             // and one that need not be written as a literal, since a `.cfg`
             // substitution leaves arithmetic behind. A term that is not a
             // ground integer falls through to `None`, which is the refusal.
@@ -562,7 +562,7 @@ impl Encoder {
     /// A bounded quantifier is the one construct that mixes cleanly: its
     /// *result* is a `Bool`, so the bound set can be enumerated by the arena
     /// while the body goes on using native set terms. Without this, native
-    /// mode declines `\E x \in {1, 2, 3} : P` — a perfectly ordinary shape —
+    /// mode declines `\E x \in {1, 2, 3} : P` – a perfectly ordinary shape –
     /// purely because the theory has no comprehension.
     fn set_as_arena(&mut self, term: &KeraRef, tm: &mut TermManager) -> Result<SetCell> {
         let saved = std::mem::replace(&mut self.set_encoding, SetEncoding::Arena);
@@ -573,7 +573,7 @@ impl Encoder {
 
     /// A set-valued term, in whichever representation it came out in.
     ///
-    /// The two encodings are not a mode the whole problem is in — they are a
+    /// The two encodings are not a mode the whole problem is in – they are a
     /// property of each *term*. `1..3` only has an arena form (the theory has
     /// no range constructor) while a set-valued state variable only has a
     /// native one (its members are not knowable before the solver runs), and
@@ -624,7 +624,7 @@ impl Encoder {
             // A set-sorted term where a candidate list is wanted. That is not
             // automatically a refusal: a term *this encoder built* is a union
             // of singletons, so its candidates can be read back off it. Only a
-            // genuinely opaque one — a set variable — has none.
+            // genuinely opaque one – a set variable – has none.
             Value::Scalar(t) => {
                 let t = *t;
                 if let Some(members) = self.known_domains.get(&t) {
@@ -634,7 +634,7 @@ impl Encoder {
                 }
                 // A framed set-valued variable (issue #20): its candidate
                 // universe, encoded at this step, guarded by membership in
-                // the **real** variable — the frame never decides presence,
+                // the **real** variable – the frame never decides presence,
                 // the set theory does.
                 if let Some((name, step)) = self.var_of.get(&t).cloned()
                     && self.frames.universe.contains_key(&name)
@@ -644,7 +644,7 @@ impl Encoder {
                 }
                 // A function-sorted state variable's domain term: its
                 // **key** universe (issue #20, step 5), guarded by
-                // membership in the real domain variable — the same
+                // membership in the real domain variable – the same
                 // solver-mediated presence the set frames use.
                 if let Some((name, step)) = self.dom_of.get(&t).cloned()
                     && self.frames.fun_universe.contains_key(&name)
@@ -669,7 +669,7 @@ impl Encoder {
     /// universe's elements, encoded at that step, each guarded by
     /// membership in the real variable term.
     ///
-    /// `None` poisons the frame (see [`Encoder::framing`]) — an element that
+    /// `None` poisons the frame (see [`Encoder::framing`]) – an element that
     /// will not encode, or a re-entrant request for the same variable, means
     /// the universe cannot be materialised here, and the variable declines
     /// exactly as it did before frames existed. Never a partial list: a
@@ -689,7 +689,7 @@ impl Encoder {
         let saved = std::mem::replace(&mut self.step, step);
         let mut members = Vec::with_capacity(elems.len());
         let mut ok = true;
-        // The variable's element sort — the merged row's datatype, which has
+        // The variable's element sort – the merged row's datatype, which has
         // every tag the universe's elements carry. A one-tag `Variant`
         // element is built **at this sort**: left at its own, the universe
         // would hold members of several one-tag datatypes that the set's
@@ -754,13 +754,13 @@ impl Encoder {
     }
 
     /// The candidate universe of a framed variable at one step, as **one
-    /// native set term** — every element unconditionally present (issue #20,
+    /// native set term** – every element unconditionally present (issue #20,
     /// step 6). This is the `U_k` of the containment obligation, not the
     /// guarded-members form a quantifier instantiates over: `v@k \subseteq
     /// U_k` is the promise the frame analysis makes, and the paranoid probe
     /// asks the solver to falsify exactly it.
     ///
-    /// `None` when an element will not encode at this step — the obligation
+    /// `None` when an element will not encode at this step – the obligation
     /// cannot be stated, and the caller fails closed.
     pub fn universe_set_at(
         &mut self,
@@ -808,7 +808,7 @@ impl Encoder {
             return None;
         }
         // The containing term is the set variable for a set frame and the
-        // **domain** variable for a function frame — the array is not a
+        // **domain** variable for a function frame – the array is not a
         // set and has no element sort.
         let holder = if fun {
             self.domain_at(name, step)?
@@ -824,7 +824,7 @@ impl Encoder {
     /// by membership in the **real** domain term (issue #20, step 5).
     ///
     /// `None` poisons the frame, exactly as [`Encoder::frame_members`] does:
-    /// never a partial list — a missing key could hide a member, which is
+    /// never a partial list – a missing key could hide a member, which is
     /// the unsound direction.
     fn fun_frame_members(
         &mut self,
@@ -874,8 +874,8 @@ impl Encoder {
     /// works at all: a bounded quantifier is *instantiated* per candidate, so
     /// `\A i \in DOMAIN f : P(i)` needs a candidate list for a domain that
     /// is, by now, a set-sorted term. Every set this encoder builds is a union
-    /// of (conditional) singletons — the normal form CVC5 uses for a set
-    /// constant — so the list is recoverable exactly.
+    /// of (conditional) singletons – the normal form CVC5 uses for a set
+    /// constant – so the list is recoverable exactly.
     ///
     /// `None` for anything else, which is an honest refusal rather than an
     /// approximation: a set *variable* has no candidate list, and inventing
@@ -936,7 +936,7 @@ impl Encoder {
     /// Strengthen each candidate by membership (or non-membership) in `other`.
     ///
     /// `None` if a candidate has no SMT term to test with, which cannot happen
-    /// for a list [`Encoder::candidates_of`] built — every one of those comes
+    /// for a list [`Encoder::candidates_of`] built – every one of those comes
     /// from a singleton. Refused rather than left unguarded all the same: an
     /// unguarded candidate is claimed *present* when it may not be, and a
     /// spurious member of the set an invariant quantifies over can satisfy an
@@ -1041,7 +1041,7 @@ impl Encoder {
     /// `\o`.
     ///
     /// Read off the kernel term where it is a tuple literal, so it works
-    /// whichever shape the literal encoded to — and refused otherwise, since a
+    /// whichever shape the literal encoded to – and refused otherwise, since a
     /// symbolic sequence has no statically known number of elements to append.
     fn seq_items(&mut self, term: &KeraRef, tm: &mut TermManager) -> Result<Vec<Rc<Value>>> {
         if let Kera::Tuple(xs) = term.as_ref() {
@@ -1153,7 +1153,7 @@ impl Encoder {
         tm.mk_dt_selector(crate::sorts::SEQ_FUN, seq, arr)
     }
 
-    /// `Append(s, e)` — `e` written one past the end, and the length raised.
+    /// `Append(s, e)` – `e` written one past the end, and the length raised.
     fn seq_append(
         &mut self,
         seq: TermId,
@@ -1199,7 +1199,7 @@ impl Encoder {
     ///
     /// `element` is passed rather than read off the first candidate because an
     /// empty domain has no candidate to read it from, and guessing there would
-    /// build the empty set at the wrong sort — a different value.
+    /// build the empty set at the wrong sort – a different value.
     fn native_set_of(
         &mut self,
         members: &[Member],
@@ -1214,7 +1214,7 @@ impl Encoder {
                 Value::Scalar(k) => *k,
                 // A structural member (a tuple, a record) is not stuck: it
                 // reifies to the datatype the sorts module already gives
-                // it — the same reification the function-constructor arm
+                // it – the same reification the function-constructor arm
                 // applies to its keys, and what lets `SetAsFun`'s `CHOOSE`
                 // run over a set of pairs. Only genuinely unscalarisable
                 // members (a set or function *inside* the domain) still
@@ -1229,7 +1229,7 @@ impl Encoder {
             let single = tm.mk_set_singleton(k);
             // A candidate that may not be present contributes conditionally.
             // `ite` at a set sort is decided by the set theory, so this needs
-            // no case split of its own — but a *literally true* guard is
+            // no case split of its own – but a *literally true* guard is
             // folded away: the theories reason about `a ∪ b` far better than
             // about `ite(true, a, {}) ∪ b`, and `CHOOSE x \in S : TRUE`'s
             // filter is the motivating all-true case.
@@ -1266,8 +1266,8 @@ impl Encoder {
     /// Goes back through the ordinary `\in` dispatch rather than picking a
     /// membership encoding here, by binding the value to a synthetic name.
     /// That is not a trick for its own sake: `\in` has four different
-    /// encodings depending on the set — a standard infinite set, a native set
-    /// term, an arena candidate list — and reproducing the choice at a second
+    /// encodings depending on the set – a standard infinite set, a native set
+    /// term, an arena candidate list – and reproducing the choice at a second
     /// site is how the two drift apart.
     fn membership(&mut self, v: Rc<Value>, set: &KeraRef, tm: &mut TermManager) -> Result<TermId> {
         let name = Name(format!("@img{}", self.fresh));
@@ -1304,7 +1304,7 @@ impl Encoder {
             // string theory is already in Nelson-Oppen.
             Kera::Str(text) => scalar(tm.mk_string_lit(text)),
             // A standard infinite set reaching here is being used as a
-            // *value* rather than in a membership test — `s = Nat`, say. It
+            // *value* rather than in a membership test – `s = Nat`, say. It
             // has no finite representation, and making it an opaque set
             // constant would leave it unconstrained, so it is declined.
             Kera::Var(_) | Kera::Opaque(_, _) if standard_set(term).is_some() => {
@@ -1346,7 +1346,7 @@ impl Encoder {
                 self.var_of.insert(t, (n.0.clone(), step));
                 // A function-sorted name gets its domain as a second variable.
                 // Without it the name would be a bare graph, and `f = g`, and
-                // `DOMAIN f`, would both be answered by the array alone — the
+                // `DOMAIN f`, would both be answered by the array alone – the
                 // first unsoundly (see `arena::eq_values`), the second not at
                 // all.
                 if let Some(nixie_core::SortKind::Array { domain, .. }) =
@@ -1364,7 +1364,7 @@ impl Encoder {
                 scalar(t)
             }
             // `x'` is `x` read one step later. Priming distributes over
-            // everything in TLA+ — `(x + 1)'` is `x' + 1` — so raising the step
+            // everything in TLA+ – `(x + 1)'` is `x' + 1` – so raising the step
             // for the whole subterm is the definition, not an approximation.
             Kera::Prime(a) => {
                 let Some(next) = self.step.checked_add(1) else {
@@ -1403,9 +1403,9 @@ impl Encoder {
             }
             // Equality is structural: extensional for sets, `=` otherwise.
             //
-            // Two sets may arrive in different representations — `DOMAIN r` is
+            // Two sets may arrive in different representations – `DOMAIN r` is
             // an arena candidate list while `{"a", "b"}` in native mode is a
-            // set term — so they are promoted to one first, the same way a
+            // set term – so they are promoted to one first, the same way a
             // binary set operation does. Without that the comparison is a
             // shape clash, which is an honest refusal of a perfectly ordinary
             // equality.
@@ -1424,7 +1424,7 @@ impl Encoder {
                 }
                 // A **sequence** compared with a tuple. `<<>>` is both, and
                 // which one it encoded to depends on the sort inference gave
-                // that literal — so `h = <<>>` can have a sequence on one side
+                // that literal – so `h = <<>>` can have a sequence on one side
                 // and a structural tuple on the other. Comparing those as
                 // different shapes would report two TLA+-equal values unequal,
                 // which is a counterexample the specification does not have.
@@ -1448,7 +1448,7 @@ impl Encoder {
             // `f \in [S -> T]`: exactly "the domain is `S`, and every value on
             // it is in `T`". This is how `TypeOK` states a function variable's
             // type in most specifications, so it is worth encoding rather than
-            // declining — and it is only *statable* because the function value
+            // declining – and it is only *statable* because the function value
             // carries its domain.
             //
             // The set of functions itself is still refused as a value: `[S -> T]`
@@ -1497,7 +1497,7 @@ impl Encoder {
                     .map(|t| Rc::new(Value::Scalar(t)))
                     .ok_or_else(|| EncodeError::Unsupported(format!("`{name}` as a set")))
             }
-            // `x \in a..b` is `a <= x /\ x <= b` — Apalache's own rewrite
+            // `x \in a..b` is `a <= x /\ x <= b` – Apalache's own rewrite
             // (`ExprOptimizer`), and the difference between a range with a
             // symbolic bound being checkable and not: the arena needs ground
             // ends to enumerate, the comparison needs nothing. This is the
@@ -1515,7 +1515,7 @@ impl Encoder {
                 scalar(tm.mk_and([ge, le]))
             }
             // `r \in [f_1 : S_1, …, f_n : S_n]` is the conjunction of the
-            // field memberships — never an enumeration of the cartesian
+            // field memberships – never an enumeration of the cartesian
             // product, which is what the arena path would need. Each field's
             // membership goes back through the ordinary dispatch, so a range
             // or a standard set as `S_i` composes (`SetMembershipSimplifier`'s
@@ -1548,8 +1548,8 @@ impl Encoder {
                 scalar(tm.mk_and(conj))
             }
             // `s \in Seq(S)`: pointwise, `\A i \in 1..Len(s) : s[i] \in S`,
-            // enumerated when the elements are statically known — a literal
-            // tuple — and declined otherwise (a symbolic sequence's length
+            // enumerated when the elements are statically known – a literal
+            // tuple – and declined otherwise (a symbolic sequence's length
             // has no enumeration until the frames work lands). Never a
             // blanket TRUE for a "type-defining" `S`: `<<1, -2>> \notin
             // Seq(Nat)` is a fact about values, and the type checker only
@@ -1594,7 +1594,7 @@ impl Encoder {
                 }
             }
             // `x \in SUBSET T` is subset-or-equal, decided by the set theory
-            // — no 2^n expansion, no candidate list. This is Apalache's
+            // – no 2^n expansion, no candidate list. This is Apalache's
             // `PowSetCtorRule` in substance: keep the powerset symbolic and
             // decide membership structurally.
             Kera::In(a, s) if matches!(s.as_ref(), Kera::Powerset(_)) => {
@@ -1636,11 +1636,11 @@ impl Encoder {
             // enumerate: `N \in Nat \ {0}` is `N >= 0 /\ N /= 0`, not a
             // candidate list. Without this, an `ASSUME` pinning a constant
             // with exactly this shape cannot be encoded, is dropped, and the
-            // search runs with an arbitrary `N` — the `EWD840.tla` shape.
+            // search runs with an arbitrary `N` – the `EWD840.tla` shape.
             //
             // The finite side goes back through the ordinary `\in` dispatch
             // (by re-encoding a synthesized `In` node), so every other
-            // membership encoding — native, arena, structural — applies to it
+            // membership encoding – native, arena, structural – applies to it
             // unchanged. A recursion here is always on the *non-standard*
             // side, so it cannot loop.
             Kera::In(a, s) if bin_standard(s).is_some() => {
@@ -1744,7 +1744,7 @@ impl Encoder {
                 _ => Err(EncodeError::ShapeClash),
             },
 
-            // ---- sets ----
+            // ======== sets ========
             // Native: a set literal is a union of singletons, which is also
             // the normal form CVC5 uses for a set constant.
             Kera::SetEnum(xs) if self.set_encoding == SetEncoding::Native => {
@@ -1784,7 +1784,7 @@ impl Encoder {
             }
             // `a..b` is enumerable only when both ends are *ground*. A
             // symbolic bound has no finite candidate list, and inventing one
-            // would silently check a different specification — but ground is
+            // would silently check a different specification – but ground is
             // not the same as literal, and reading it as literal is what kept
             // `0 .. N-1` out after a `.cfg` had already pinned `N`.
             Kera::Range(a, b) => {
@@ -1812,9 +1812,9 @@ impl Encoder {
                 self.mk_set(members)
             }
             // A comprehension in native mode is declined **only when its base
-            // set has no candidate list**. When the base is enumerable — a
+            // set has no candidate list**. When the base is enumerable – a
             // literal, a range, a set this encoder built, or a framed state
-            // set — the filter/map is built as an arena cell and converted
+            // set – the filter/map is built as an arena cell and converted
             // back with `native_set_of`, exactly as a bounded quantifier
             // already crosses that line through `set_as_arena`. Declining
             // the enumerable case was what blocked `MustardWatch.tla`'s
@@ -1881,7 +1881,7 @@ impl Encoder {
             // `UNION S` flattens one level: every candidate of every candidate,
             // present when both the inner set and the member are.
             // `SUBSET S` as a **value**: the full 2^n expansion over the
-            // base's candidate list, bounded by `max_candidates` — the same
+            // base's candidate list, bounded by `max_candidates` – the same
             // budget that guards every other blow-up, and for the same
             // reason: 2^n turns a large set into an out-of-memory kill
             // where the budget turns it into a named refusal. Members are
@@ -1913,7 +1913,7 @@ impl Encoder {
                             value: Rc::clone(&sub.value),
                             present: sub.present,
                         });
-                        // With it — its own presence guards the choice.
+                        // With it – its own presence guards the choice.
                         let Value::Set(inner) = &*sub.value else {
                             return Err(EncodeError::ShapeClash);
                         };
@@ -1950,12 +1950,12 @@ impl Encoder {
                 self.mk_set(members)
             }
 
-            // ---- tuples and records ----
+            // ======== tuples and records ========
             // Structural, not an SMT value: TLA+ tuples and records are
             // heterogeneous, so flattening them into an array would force
             // every component to one sort.
-            // `<<…>>` is a tuple *and* a sequence — TLA+ does not distinguish
-            // them — so which one it encodes to is decided by the sort the
+            // `<<…>>` is a tuple *and* a sequence – TLA+ does not distinguish
+            // them – so which one it encodes to is decided by the sort the
             // caller's type inference gave this node, not by the term. `<<>>`
             // is the case that forces it: an empty tuple has no component to
             // take a sort from, and `history = <<>>` where `history` is a
@@ -1995,12 +1995,12 @@ impl Encoder {
                 }
                 Ok(Rc::new(Value::Record(fields)))
             }
-            // ---- variants (issue #17) ----
+            // ======== variants (issue #17) ========
             // `Variant("Tag", v)`: the datatype constructor application.
             // The sort is the row's datatype, supplied by inference (the
             // node cannot sort itself: a one-tag node does not know the
             // union it flows into), and the payload is reified to the
-            // constructor's payload sort — a structural payload (a record)
+            // constructor's payload sort – a structural payload (a record)
             // becomes the datatype term it is.
             Kera::Variant { tag, value } => {
                 let v = self.value(value, tm)?;
@@ -2027,7 +2027,7 @@ impl Encoder {
                 scalar(tm.mk_dt_constructor(&format!("@v_{tag}"), [payload], sort))
             }
             // `VariantTag(v)`: a chain of testers, one per constructor of the
-            // row's datatype. The final arm is the last tag — the chain
+            // row's datatype. The final arm is the last tag – the chain
             // covers every constructor, so the solver never reaches it.
             Kera::VariantTag(v) => {
                 let target = self.value(v, tm)?;
@@ -2058,7 +2058,7 @@ impl Encoder {
             }
             // `VariantGet{tag, v, or_else}`: the payload selector. On the
             // wrong tag, the selector is an SMT datatype accessor off its
-            // own constructor — underspecified by the theory, which is
+            // own constructor – underspecified by the theory, which is
             // exactly the "fresh unconstrained value, never a fixed
             // default" the issue asks for. `or_else` turns it into the
             // given value under a tester.
@@ -2096,7 +2096,7 @@ impl Encoder {
             }
             // `VariantFilter("Tag", S)`: the candidates of `S`, kept under
             // the tag's tester and mapped to their payloads. A filter and a
-            // map in one pass — exact, because the tester decides and the
+            // map in one pass – exact, because the tester decides and the
             // payload selector reads the same constructor.
             Kera::VariantFilter { tag, set } => {
                 let cell = self.set(set, tm)?;
@@ -2124,7 +2124,7 @@ impl Encoder {
                 self.mk_set(members)
             }
             // `[a : S, b : T]` is the set of records with one field drawn from
-            // each set — a cartesian product over the field sets.
+            // each set – a cartesian product over the field sets.
             Kera::RecordSet(fs) => {
                 /// A partial record under construction, with the guard that
                 /// says every field chosen so far is really in its set.
@@ -2187,7 +2187,7 @@ impl Encoder {
                 self.mk_set(members)
             }
 
-            // ---- binders over a set ----
+            // ======== binders over a set ========
             // Instantiated, not quantified: one copy of the body per candidate.
             Kera::Forall { var, set, body } => {
                 let base = self.set_as_arena(set, tm)?;
@@ -2231,7 +2231,7 @@ impl Encoder {
                     // TLA+ requires for the positive divisors it defines.
                     ArithOp::Div => tm.mk_div(x, y),
                     ArithOp::Mod => tm.mk_mod(x, y),
-                    // `^` with a **ground** exponent is a product — exact,
+                    // `^` with a **ground** exponent is a product – exact,
                     // linear once unfolded, and the only form with a value
                     // the replay can confirm. A negative exponent is
                     // undefined in TLA+ and refused; a symbolic one is
@@ -2276,9 +2276,9 @@ impl Encoder {
             // the domain is `S`, and the graph is `e` evaluated at each of its
             // members.
             //
-            // The domain is enumerated by the arena — `S` is written in the
+            // The domain is enumerated by the arena – `S` is written in the
             // specification, so its candidates are exactly what the arena
-            // computes — and then turned into one set-sorted term, so the
+            // computes – and then turned into one set-sorted term, so the
             // resulting value carries a domain the solver can reason about
             // rather than one the encoder merely knew at build time.
             Kera::FunDef { var, set, body } => {
@@ -2332,7 +2332,7 @@ impl Encoder {
                     // A candidate that may not be present must not be written
                     // unconditionally. The conditional is put on the *value*
                     // rather than on the store, so every `ite` here is at the
-                    // range sort — the generic mux pass owns that, while an
+                    // range sort – the generic mux pass owns that, while an
                     // `ite` between two arrays is left for the array theory to
                     // recurse through and is better not built at all.
                     let old = tm.mk_select(array, *key);
@@ -2353,7 +2353,7 @@ impl Encoder {
             // of the domain saying what the function is there. The body is
             // encoded once per point with the function itself in scope, so
             // `f[k-1]` inside it is a `select` on the very array being
-            // defined — the knot ties itself.
+            // defined – the knot ties itself.
             //
             // The equations cannot be part of the value, because a value is a
             // term and these are facts; they go out through
@@ -2375,7 +2375,7 @@ impl Encoder {
                     return Ok(Rc::new(Value::Fun { domain, array }));
                 }
                 // The sort has to be known before the body is encoded, and the
-                // body is the only thing that would reveal it — so it comes
+                // body is the only thing that would reveal it – so it comes
                 // from the caller's type inference, exactly as an empty set's
                 // does.
                 let Some(sort) = self.node_sorts.get(&Rc::as_ptr(term)).copied() else {
@@ -2425,7 +2425,7 @@ impl Encoder {
             Kera::FunApp(f, i) => {
                 let target = self.value(f, tm)?;
                 // A **sequence** is indexed through its window: `s[i]` is
-                // `fun[off + i]`, and the index need not be a literal — which
+                // `fun[off + i]`, and the index need not be a literal – which
                 // is the point, since `events[Len(events)]` is how a
                 // specification reads the last thing that happened.
                 if let Value::Scalar(seq) = &*target
@@ -2475,14 +2475,14 @@ impl Encoder {
                     // The domain is carried, so nothing is being approximated
                     // away here. `f[x]` for an `x` outside the domain is
                     // *undefined* in TLA+ and the array answers with whatever
-                    // the base holds — the standard underspecified reading,
+                    // the base holds – the standard underspecified reading,
                     // and the same one Apalache takes.
                     Value::Fun { array, .. } => {
                         let idx = self.go(i, tm)?;
                         scalar(tm.mk_select(*array, idx))
                     }
                     // A tuple or record that reached here as a *term* rather
-                    // than structurally — a member of a set of tuples, or a
+                    // than structurally – a member of a set of tuples, or a
                     // record-valued state variable. It is a datatype, so the
                     // index selects a field.
                     Value::Scalar(t)
@@ -2546,7 +2546,7 @@ impl Encoder {
                     // on an out-of-domain key, so no checkable specification
                     // relies on the result at one. The stored point at such
                     // a key is invisible to `DOMAIN g` and to domain-relative
-                    // equality — checked here exactly as the ecosystem does.
+                    // equality – checked here exactly as the ecosystem does.
                     Value::Fun { domain, array } => {
                         let idx = self.go(index, tm)?;
                         let val = self.go(value, tm)?;
@@ -2674,7 +2674,7 @@ impl Encoder {
             // A fold, which is `FoldSetRule` / `FoldSeqRule` in Apalache.
             //
             // The accumulator starts at the base and is stepped once per
-            // element, with the operator's body encoded afresh each time —
+            // element, with the operator's body encoded afresh each time –
             // instantiation, exactly as a binder over a set already works
             // here. That is what keeps the result quantifier-free.
             //
@@ -2701,14 +2701,14 @@ impl Encoder {
                         // A set has no fold order: TLA+ leaves it unspecified,
                         // so the value of the fold is only well defined when
                         // the operator's n-fold composition is order-
-                        // independent — associativity and commutativity in the
+                        // independent – associativity and commutativity in the
                         // usual case. Folding in candidate order regardless
                         // (which is what this used to do) makes the answer a
                         // function of the order the candidates were written
                         // in, which is not a property of the specification:
                         // the *evaluator* folds in sorted order, so the two
                         // disagree on `ApaFoldSet(F, 0, {3, 2})` for
-                        // `F(a, b) == a * b + a` — the encoder answered `8`
+                        // `F(a, b) == a * b + a` – the encoder answered `8`
                         // and the replay expected `9`.
                         //
                         // The operator is therefore classified before the
@@ -2759,8 +2759,8 @@ impl Encoder {
                         }
                     }
                     // A sequence has neither problem: every element is there,
-                    // once, in order. It does have to *be* a sequence — a
-                    // literal tuple, which is what a TLA+ sequence is — and a
+                    // once, in order. It does have to *be* a sequence – a
+                    // literal tuple, which is what a TLA+ sequence is – and a
                     // sequence-sorted state variable has no encoding yet, so
                     // it is declined rather than approximated.
                     FoldOver::SeqLeft => {
@@ -2768,7 +2768,7 @@ impl Encoder {
                         // value. `<<…>>` is a tuple and a sequence at once, so
                         // whether it encodes to a structural tuple or to a
                         // sequence datatype depends on the sort inference gave
-                        // it — and a fold over a literal does not care which.
+                        // it – and a fold over a literal does not care which.
                         // Taking the components here is exact either way.
                         let items: Vec<Rc<Value>> = match collection.as_ref() {
                             Kera::Tuple(xs) => {
@@ -2788,12 +2788,12 @@ impl Encoder {
                             },
                         };
                         // The base `<<>>` is a tuple *and* a sequence, and
-                        // inference keeps whichever shape is more precise —
+                        // inference keeps whichever shape is more precise –
                         // which for a fold over a literal comparison target
                         // can be the *tuple* shape, while the steps produce
                         // sequences (`Append`). Starting the accumulator in
                         // the sequence shape (same value: the empty sequence)
-                        // keeps every step at one sort — the issue's
+                        // keeps every step at one sort – the issue's
                         // "the base takes the accumulator's sort".
                         if let Value::Tuple(parts) = &*a
                             && parts.is_empty()
@@ -2812,10 +2812,10 @@ impl Encoder {
                 Ok(a)
             }
 
-            // `CHOOSE x \\in S : P` — an arbitrary-but-fixed element of the
+            // `CHOOSE x \\in S : P` – an arbitrary-but-fixed element of the
             // filter `{x \\in S : P}`, as `set.choose` over its native set.
             // The set theory owns the semantics: extensionally equal filters
-            // give the same value (congruence — which is TLA+'s determinism
+            // give the same value (congruence – which is TLA+'s determinism
             // requirement exactly, and *more* precise than Apalache's
             // per-occurrence CherryPick), and an empty filter leaves the
             // value unconstrained but consistent, which matches the one
@@ -2849,7 +2849,7 @@ impl Encoder {
                 let filtered = self.native_set_of(&cell.members, elem_sort, tm)?;
                 scalar(tm.mk_set_choose(filtered))
             }
-            // `CHOOSE x : x \\notin S` — the fresh-value idiom. One shared
+            // `CHOOSE x : x \\notin S` – the fresh-value idiom. One shared
             // constant per filter set: TLA+ says `CHOOSE` picks the same
             // value wherever it is written, so two occurrences over the same
             // `S` are one constant, and the non-membership it asked for is a
@@ -2872,7 +2872,7 @@ impl Encoder {
                         ));
                     };
                     // The key is the set's **canonical value** when it is
-                    // ground — two spellings of the same set (`{1, 2}` and
+                    // ground – two spellings of the same set (`{1, 2}` and
                     // `{2, 1}`) are one idiom and must share one constant,
                     // which is what CHOOSE's determinism says. A set that is
                     // not ground keeps its term identity.
@@ -2908,7 +2908,7 @@ impl Encoder {
             }
             // The `Sequences` operators, on the datatype `sorts::seq_sort`
             // builds: a length and an array from `1..`. Every one of them is
-            // exact — nothing here approximates — and the ones that are not
+            // exact – nothing here approximates – and the ones that are not
             // here are declined by name.
             Kera::Opaque(name, args)
                 if matches!(
@@ -2923,7 +2923,7 @@ impl Encoder {
                 ) =>
             {
                 // A sequence has two shapes here, and the operators take
-                // either — the same discipline `set_repr` follows for sets.
+                // either – the same discipline `set_repr` follows for sets.
                 // `<<"a", "b">>` is a tuple *and* a sequence, and which one it
                 // encoded to depends on the sort inference gave the literal;
                 // an operator that only understood the datatype would decline
@@ -2984,12 +2984,12 @@ impl Encoder {
                         }),
                     };
                 }
-                // `FunAsSeq(f, len)` — the cast itself: a window of length
+                // `FunAsSeq(f, len)` – the cast itself: a window of length
                 // `len` at offset 0 over the function's own array, so
                 // `s[i]` reads `f[i]` exactly and every read past `len` is
                 // dead by the window's length. The element sort is the one
                 // inference gave this term (`Seq(a)`); the array's own sort
-                // must agree — the cast is exact or it is refused.
+                // must agree – the cast is exact or it is refused.
                 if name.as_str() == "FunAsSeq" {
                     let Value::Fun { array, .. } = &*value else {
                         return Err(EncodeError::Unsupported(
@@ -3081,7 +3081,7 @@ impl Encoder {
                     // element `i` of the result is element `m + i - 1` of `s`,
                     // so the offset gains `m - 1` and the length becomes
                     // `n - m + 1`. Nothing is copied, for the same reason
-                    // `Tail` copies nothing — and `Tail` is exactly
+                    // `Tail` copies nothing – and `Tail` is exactly
                     // `SubSeq(s, 2, Len(s))`.
                     //
                     // The bounds may be symbolic: they are arithmetic on the
@@ -3115,7 +3115,7 @@ impl Encoder {
                         let mut out = target;
                         for item in rest {
                             // A record or a tuple element arrives *structural*
-                            // — field by field — and a sequence holds one term
+                            // – field by field – and a sequence holds one term
                             // per element, so it is reified into its datatype
                             // here. This is the ordinary crossing between the
                             // two forms, not a special case: a queue of
@@ -3129,7 +3129,7 @@ impl Encoder {
                     // `Head(s)` is `s[1]`. TLA+ leaves it *undefined* on the
                     // empty sequence, and so does this: the array's value
                     // there is whatever the base holds, which is an
-                    // unconstrained term — some value, never a chosen one.
+                    // unconstrained term – some value, never a chosen one.
                     _ => {
                         let one = tm.mk_int(num_bigint::BigInt::from(1));
                         let at = self.seq_at(target, one, sort, tm)?;
@@ -3247,8 +3247,8 @@ impl Encoder {
                     ("Cardinality", 1) | ("IsFiniteSet", 1)
                 ) =>
             {
-                // `Cardinality(a..b)` is arithmetic — `IF a <= b THEN
-                // b - a + 1 ELSE 0` — rather than an enumeration, so a
+                // `Cardinality(a..b)` is arithmetic – `IF a <= b THEN
+                // b - a + 1 ELSE 0` – rather than an enumeration, so a
                 // symbolic bound costs nothing (Apalache's `ExprOptimizer`
                 // does the same). Note `a..b` may be *empty*: TLA+ ranges
                 // are empty when `a > b`, not ill-formed.
@@ -3293,7 +3293,7 @@ impl Default for Encoder {
 /// The name of a standard *infinite* set, if the term is one.
 ///
 /// These cannot be represented by a finite-set theory, and must not be turned
-/// into opaque set constants either — an unconstrained `Nat` admits models in
+/// into opaque set constants either – an unconstrained `Nat` admits models in
 /// which `0` is not a natural number.
 fn standard_set(term: &KeraRef) -> Option<&'static str> {
     let name = match term.as_ref() {
@@ -3352,7 +3352,7 @@ fn scalar(t: TermId) -> Result<Rc<Value>> {
     Ok(Rc::new(Value::Scalar(t)))
 }
 
-// ---- the `ApaFoldSet` order-independence audit ----
+// ======== the `ApaFoldSet` order-independence audit ========
 //
 // TLA+ specifies no order for folding a set, so a fold whose result depends
 // on the order is a fold with no value. `ApaFoldSet` is Apalache's operator
@@ -3363,14 +3363,14 @@ fn scalar(t: TermId) -> Result<Rc<Value>> {
 // The classes below are **syntactic and conservative**: every one carries a
 // one-line argument for why the n-fold composition of that shape commutes,
 // and everything not in a class declines. The classes were chosen against
-// the corpus — `+` (`Sum`), `\cup` (`FoldSetSet`, `RemakeSet`), counting
+// the corpus – `+` (`Sum`), `\cup` (`FoldSetSet`, `RemakeSet`), counting
 // (`p + IF P(q) THEN 1 ELSE 0`, which is an `Add` chain whose non-`acc`
 // leaf is an `IF` on `q` only), `Max`/`Min`, and the function-update idiom
 // `[f EXCEPT ![x] = f[x] + 1]` (`Antipatterns`, `FoldSetFun`).
 
 /// Whether the n-fold composition of `body(acc, elem)` commutes, so that
-/// folding a set in any order — candidate order here, sorted order in the
-/// evaluator — gives the same value.
+/// folding a set in any order – candidate order here, sorted order in the
+/// evaluator – gives the same value.
 ///
 /// Called on a lowered operator body, which is user input, so every helper
 /// walks with an explicit stack and a budget.
@@ -3421,7 +3421,7 @@ fn set_fold_order_independent(body: &KeraRef, acc: &Name, elem: &Name) -> bool {
     // Bag addition, as the `Bags` desugaring writes it:
     // `[x \\in DOMAIN a \\cup DOMAIN b |-> CopiesIn(a,x) + CopiesIn(b,x)]`.
     // Pointwise addition of naturals is commutative and associative, so a
-    // fold whose every step adds one contribution is order-independent —
+    // fold whose every step adds one contribution is order-independent –
     // this is `BagUnion`, and `BagOfAll`'s step reduces to it.
     if is_bag_addition(body, acc, elem) {
         return true;
@@ -3429,7 +3429,7 @@ fn set_fold_order_independent(body: &KeraRef, acc: &Name, elem: &Name) -> bool {
     // An AC chain: `a + b + …`, `a * b * …`, `a \cup b`, `a \cap b`,
     // `a /\ b`, `a \/ b`. Flattened to its leaves, the composition commutes
     // when each step contributes its non-accumulator leaves once and the
-    // accumulator at most once — for `+` and `*` an accumulator leaf twice
+    // accumulator at most once – for `+` and `*` an accumulator leaf twice
     // squares it (`a * a * b` over `{2, 3}` really does depend on the order),
     // while the idempotent set/Boolean operators tolerate any count.
     ac_chain_shape(body, acc).is_some()
@@ -3507,7 +3507,7 @@ fn ac_chain_shape(body: &KeraRef, acc: &Name) -> Option<AcKind> {
         }
         // A leaf. The bare accumulator counts once; anything else must not
         // mention it. A leaf that mentions the accumulator without being it
-        // — `(a + 1) + x`, `a * a + x` — makes the composition order-
+        // – `(a + 1) + x`, `a * a + x` – makes the composition order-
         // dependent, and is not guessed at.
         if matches!(t.as_ref(), Kera::Var(n) if n == acc) {
             acc_leaves += 1;
@@ -3521,8 +3521,8 @@ fn ac_chain_shape(body: &KeraRef, acc: &Name) -> Option<AcKind> {
     Some(kind)
 }
 
-/// Whether `e` is `IF x > y THEN x ELSE y` in some arrangement — the `Max`
-/// shape — or the `Min` one, over one `acc`-only and one `elem`-only side.
+/// Whether `e` is `IF x > y THEN x ELSE y` in some arrangement – the `Max`
+/// shape – or the `Min` one, over one `acc`-only and one `elem`-only side.
 fn is_min_max(e: &KeraRef, acc: &Name, elem: &Name) -> bool {
     let Kera::Ite(cond, then, other) = e.as_ref() else {
         return false;
@@ -3532,7 +3532,7 @@ fn is_min_max(e: &KeraRef, acc: &Name, elem: &Name) -> bool {
     };
     // Each side of the comparison and each branch is either `acc`-only or
     // `elem`-only, and the two branches are the two sides in either order
-    // (`Max`: the greater is returned; `Min`: the lesser — both are AC).
+    // (`Max`: the greater is returned; `Min`: the lesser – both are AC).
     let side = |t: &KeraRef| {
         if !mentions(t, elem) {
             Some(0u8)
@@ -3624,8 +3624,8 @@ fn is_bag_addition(e: &KeraRef, acc: &Name, elem: &Name) -> bool {
 ///
 /// Under an `EXCEPT` at index `elem`, such a read always sees the original
 /// value (no other step writes that index), which is what makes the function
-/// update idiom order-independent. Any other mention — a read at a different
-/// index, the function as a whole — is a real dependency on the accumulated
+/// update idiom order-independent. Any other mention – a read at a different
+/// index, the function as a whole – is a real dependency on the accumulated
 /// state and refuses the classification.
 fn acc_read_only_at(e: &KeraRef, acc: &Name, elem: &Name) -> bool {
     let mut seen: HashSet<*const Kera> = HashSet::new();
@@ -3646,7 +3646,7 @@ fn acc_read_only_at(e: &KeraRef, acc: &Name, elem: &Name) -> bool {
             Kera::FunApp(f, i)
                 if matches!(f.as_ref(), Kera::Var(n) if n == acc)
                     && matches!(i.as_ref(), Kera::Var(n) if n == elem) => {}
-            // The accumulator as a whole — a dependency on the entire
+            // The accumulator as a whole – a dependency on the entire
             // accumulated state, not one original point.
             Kera::Var(n) if n == acc => return false,
             _ => stack.extend(t.as_ref().children().into_iter().cloned()),
@@ -3672,8 +3672,8 @@ fn mentions(term: &KeraRef, name: &Name) -> bool {
 }
 
 /// Whether a set expression has at most one member *as written*: a literal
-/// `{}` or `{e}`. Every other shape — a longer literal, a range, anything
-/// symbolic — has either more members or members not known at encode time,
+/// `{}` or `{e}`. Every other shape – a longer literal, a range, anything
+/// symbolic – has either more members or members not known at encode time,
 /// both of which need the operator audit above.
 fn at_most_one_element(t: &KeraRef) -> bool {
     matches!(t.as_ref(), Kera::SetEnum(xs) if xs.len() <= 1)
@@ -3697,13 +3697,13 @@ fn literal_int(term: &KeraRef) -> Option<num_bigint::BigInt> {
 ///
 /// A literal is not enough, and assuming it was is what kept a large part of
 /// the corpus out. `CONSTANT N = 4` is a *substitution*, so `0 .. N-1` becomes
-/// `0 .. (4-1)` — as ground as `0 .. 3` and rejected all the same. The value
+/// `0 .. (4-1)` – as ground as `0 .. 3` and rejected all the same. The value
 /// has to be computed, not pattern-matched.
 ///
 /// It is computed by `nixie-tla`'s evaluator, which is the right authority
 /// rather than a convenience: it is the implementation of TLA+ arithmetic that
 /// `bench/tla_eval` checks against TLC, and a second constant folder here
-/// would be a second semantics to keep in agreement. It fails closed — a free
+/// would be a second semantics to keep in agreement. It fails closed – a free
 /// name, an overflow or the depth limit all give `None`, which is the refusal
 /// that was already there.
 fn ground_int(term: &KeraRef) -> Option<num_bigint::BigInt> {
@@ -3758,7 +3758,7 @@ fn describe(k: &Kera) -> String {
         Kera::Choose { .. } | Kera::ChooseUnbounded { .. } => "`CHOOSE`",
         Kera::In(_, _) => "`\\in`",
         // The set theory *is* wired into the solver; what this names is the
-        // construct the encoding could not serve — usually a base set with
+        // construct the encoding could not serve – usually a base set with
         // no candidate list to enumerate from. Saying "not wired up" here
         // sent readers looking for a wiring bug that was not there.
         Kera::SetEnum(_)

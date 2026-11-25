@@ -20,14 +20,14 @@ The encoding is the eager axiomatization of what CVC5's `cardinality_extension.c
 maintains lazily and Z3's 2025 `theory_finite_set_size.cpp` enumerates with a
 sub-solver: a counting equation per cone set (`|s| = Σ_e ite(e counts, 1, 0) +
 slack_s`), inclusion–exclusion identities over *twin* terms (`a ∪ b`'s missing
-`a ∩ b` is created), monotonicity of the **slacks** (`slack(a ∩ b) ≤ slack(a)` —
+`a ∩ b` is created), monotonicity of the **slacks** (`slack(a ∩ b) ≤ slack(a)` –
 not of the cardinalities, which are already monotone pointwise), subset rules,
 non-negativity, and the chain-union universe bound. The mathematical core is the
 classical fact that a monotone modular valuation on a distributive lattice is a
 measure over the Venn regions; the axioms are exactly its finite characterization.
 Every clause is a valid consequence of the theory of finite sets, so the encoding
 can never manufacture a wrong `sat`, and the conjunction of any subset of passes'
-axioms stays valid — a property that became load-bearing (below).
+axioms stays valid – a property that became load-bearing (below).
 
 ### Two soundness bugs found and closed while landing it
 
@@ -44,8 +44,8 @@ axioms stays valid — a property that became load-bearing (below).
 
 ## What did not land, and why: the incremental-SAT watch layer
 
-A family of problems — including several whose generated axiom sets are provably
-sufficient (verified by hand and against Z3 4.16.0) — answer `unknown` instead of
+A family of problems – including several whose generated axiom sets are provably
+sufficient (verified by hand and against Z3 4.16.0) – answer `unknown` instead of
 their verdict, or **panic in debug builds** on a watch-list invariant. All of them
 work through the DIMACS path on the identical CNF. This is *not* in the set
 layer; it is pre-existing and reproducible before any of the sets commits.
@@ -53,7 +53,7 @@ layer; it is pre-existing and reproducible before any of the sets commits.
 ### Reproducers
 
 ```smt2
-;; d1.smt2 — debug build panics, release build answers `sat` (Z3 4.16.0: sat)
+;; d1.smt2 – debug build panics, release build answers `sat` (Z3 4.16.0: sat)
 (set-logic ALL)
 (declare-const S (Set Int))
 (declare-const T (Set Int))
@@ -71,14 +71,14 @@ layer; it is pre-existing and reproducible before any of the sets commits.
 - `NIXIE_DUMP_CNF=/tmp/d1.cnf` then `nixie /tmp/d1.cnf` (same clauses, DIMACS
   path): **`sat`, no panic**. The corruption is specific to the incremental
   CDCL(T) session.
-- Release build (invariants compiled out): `sat`, matching Z3 — so answers stay
+- Release build (invariants compiled out): `sat`, matching Z3 – so answers stay
   correct where a verdict is reached; the damage is the lost-propagation state
   underneath.
 - Set-free shape with the same outcome: any two-opaque-set problem from the
   pre-existing witness machinery (e.g. `(assert (set.member 1 S))
   (assert (set.subset S T))` → `unknown`) fails on `trail_falsifies_live_clause`
   at `search_ext.rs`'s final-check guard. That guard's own comment notes only
-  *original* clauses are scanned in scoped sessions — an original clause
+  *original* clauses are scanned in scoped sessions – an original clause
   falsified by a complete assignment means propagation lost an original clause
   mid-search.
 
@@ -90,7 +90,7 @@ layer; it is pre-existing and reproducible before any of the sets commits.
 | `b05d949e` (sat round-13 flip-bisection) | 37/37 pass         |
 | `fc9c979e` (sets surface, this arc) | 37/37 pass             |
 | `b110c2b8` (arith wide-value)       | 37/37 pass             |
-| **`e987b4b6`** ("docs… CSR's internal order divergence pinned" — **also changes `list_kernel.rs`, `session_kernel.rs`, `sweep.rs`, `watched.rs`**) | **15/37 fail** |
+| **`e987b4b6`** ("docs… CSR's internal order divergence pinned" – **also changes `list_kernel.rs`, `session_kernel.rs`, `sweep.rs`, `watched.rs`**) | **15/37 fail** |
 
 `e987b4b6` reached `main` through merge `d1dc7f0d`. It breaks the 15 set tests
 on its own, before any of this arc's uncommitted cardinality work. The failures
@@ -99,8 +99,8 @@ those 15 pass again and none are added (diffed failure sets, both directions).
 
 The same subsystem is where the round-13 / CSR-watch agent is working
 (`[csr-shadow] scan precondition violated … mirror suspended` fires on these
-inputs in `-v debug` runs). The evidence above — DIMACS-clean vs
-incremental-corrupt on identical clauses, originals losing watches mid-search —
+inputs in `-v debug` runs). The evidence above – DIMACS-clean vs
+incremental-corrupt on identical clauses, originals losing watches mid-search –
 is offered as a shortcut for that arc.
 
 ### Consequence for the sets tests

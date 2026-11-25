@@ -1,6 +1,6 @@
 # Four-arm simple CNF benchmark: main vs upstream 0.3.3 vs CaDiCaL vs Kissat (2026-09-01)
 
-A standing-table-style snapshot (score = solved at cap), not a heuristic A/B —
+A standing-table-style snapshot (score = solved at cap), not a heuristic A/B –
 no improvement claim is made, so no matched null applies (`docs/BENCHMARKING.md` §2
 governs *claims*; §12 requires reference arms on SAT-side tables, which this carries).
 
@@ -8,7 +8,7 @@ governs *claims*; §12 requires reference arms on SAT-side tables, which this ca
 
 The 261-file standing corpus (`satcomp2025/main_easy_mid` + the 108-file
 `satcomp2024/bench`, untracked-by-design per the v0.3.3 port) is **no longer on
-disk** — only 4 `satcomp2024/bench` files survive, plus 5 CNF fixtures in-repo.
+disk** – only 4 `satcomp2024/bench` files survive, plus 5 CNF fixtures in-repo.
 Per instruction, this run uses **every CNF file currently in the repository**
 (9 files) rather than re-downloading corpora:
 
@@ -38,7 +38,7 @@ external `timeout -k 2` on all arms alike, single deterministic run per cell
 (all four solvers are deterministic at default seed). Verdict parsed from the
 `s …` line; cadical/kissat SAT models checked against the original CNF.
 
-## Result — solved at 60 s (serial)
+## Result – solved at 60 s (serial)
 
 | instance | nixie-main | nixie-upstream-0.3.3 | cadical 3.0.1 | kissat 4.0.4 |
 |---|---|---|---|---|
@@ -56,7 +56,7 @@ external `timeout -k 2` on all arms alike, single deterministic run per cell
 - **Verdict mismatches: 0** across every decided (instance, arm) pair.
 - All cadical/kissat SAT models re-verified against the CNF (0 failures).
   The nixie arms print no model (`cnf_solve` prints the `s` line only), so their
-  SAT verdicts rest on the 4-way agreement — with both references model-checked.
+  SAT verdicts rest on the 4-way agreement – with both references model-checked.
 - Conflict counters were not captured in this run (cadical/kissat emit them in
   solver-specific stat blocks; kept out of scope for a score-only snapshot).
 
@@ -66,20 +66,20 @@ external `timeout -k 2` on all arms alike, single deterministic run per cell
    instance upstream is 4–17× slower (0.7→2.8 s, 1.0→17.2 s). This is the
    2026-08/09 SAT-core arc (BIG-authoritative BCP, write-elision, shrink
    fallback fix, RANDPOL landing …) doing exactly what the individual studies
-   measured — here visible end-to-end on one table.
+   measured – here visible end-to-end on one table.
 2. **main is competitive with the references on this set but not faster**:
    cadical sweeps 9/9 with the best time on 6 files; main's slowest solves
    (`noL_11_14` 33.9 s vs cadical 4.4 s, `j3037_10_mdd_bm1` 34.2 s vs 21.9 s)
-   are the standing-gap study's known hard-class members — no surprise and no
+   are the standing-gap study's known hard-class members – no surprise and no
    new information beyond consistency.
 3. `constraints_17_0.4_1`, which `docs/BENCHMARKING.md` §12 cites as the
    kissat-counter-completeness example (230.9 M search ticks), solves in
-   1–7 s for all arms — the counter lesson stands, the instance is not a
+   1–7 s for all arms – the counter lesson stands, the instance is not a
    discriminator at a 60 s cap.
 
 ## Caveats (explicit)
 
-- **9 files, single seed, wall-clock cap** — a score snapshot in the standing-
+- **9 files, single seed, wall-clock cap** – a score snapshot in the standing-
   table tradition, not a §2/§5 measurement. No effect size should be read off
   it; the upstream-vs-main margin (6 files + 4–17× on the rest) is far outside
   any noise band, but fine ordering *within* the leaders is not resolvable.

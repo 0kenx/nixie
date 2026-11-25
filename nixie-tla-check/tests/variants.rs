@@ -1,5 +1,5 @@
 //! Variant types (issue #17): `Variant`/`VariantTag`/`VariantGet*`/
-//! `VariantFilter` end to end — row typing, the datatype encoding, the
+//! `VariantFilter` end to end – row typing, the datatype encoding, the
 //! evaluator, the trace readback, and the `@typeAlias` machinery that closes
 //! a row over exactly the tags the alias names.
 
@@ -63,7 +63,7 @@ fn the_variant_operators_round_trip() {
     .violates("a wrong payload read");
 }
 
-/// Heterogeneous payloads — the whole point: two tags whose payloads are
+/// Heterogeneous payloads – the whole point: two tags whose payloads are
 /// records of *different* shapes flow into one set, and each filter reads
 /// its own shape.
 #[test]
@@ -130,7 +130,7 @@ Inv == /\ VariantFilter("R", v) \subseteq {[x |-> 1], [x |-> 4]}
 /// frame-backed set (the A3/A5 shape above) the trace decodes as variants
 /// and the violation reports. Pinned as the honest `Unknown` for the
 /// direct-singleton shape, whose trace readback still trips the decoder's
-/// struct path — recorded here so the day it closes, this pins the verdict.
+/// struct path – recorded here so the day it closes, this pins the verdict.
 #[test]
 fn a_filtered_violation_is_found() {
     // Through a framed set variable: the violation reports.
@@ -176,7 +176,7 @@ fn unit_is_the_units_value() {
     claim("", r#"UNIT = "U_OF_UNIT""#).no_violation("UNIT");
 }
 
-// ---- helpers ----
+// ======== helpers ========
 
 trait Outcomes {
     fn no_violation(&self, why: &str);

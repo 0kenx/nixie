@@ -3,9 +3,9 @@
 //!
 //! The verdicts were already correct (see `finite_sets_decision` /
 //! `finite_sets_cardinality`); what these pin is the *model*: a set-sorted
-//! variable must print the set the satisfying assignment actually chose —
+//! variable must print the set the satisfying assignment actually chose –
 //! ground members from the committed membership atoms, fresh elements
-//! where a cardinality target demands them — and set queries
+//! where a cardinality target demands them – and set queries
 //! (`set.member`, `set.card`, `set.union`, `set.choose`) must fold to
 //! constants instead of echoing themselves.
 //!
@@ -53,7 +53,7 @@ fn members_are_read_from_the_atoms() {
         out.contains("sat"),
         "verdict must stay sat under the gate: {out}"
     );
-    // S prints as the two-element set {1, 2} — a union of the two
+    // S prints as the two-element set {1, 2} – a union of the two
     // singletons, in either order.
     assert!(
         out.contains("(set.singleton 1)") && out.contains("(set.singleton 2)"),
@@ -200,8 +200,8 @@ fn subsets_propagate_members_and_fresh() {
 /// choose query folds to a constant.
 ///
 /// (A `(>= (set.card S) 1)` query would echo: `Model::eval` folds `=` but
-/// not order comparisons over *any* theory — `(>= x 3)` echoes for a pure
-/// integer `x` too — so that is a pre-existing general gap, not a set one.)
+/// not order comparisons over *any* theory – `(>= x 3)` echoes for a pure
+/// integer `x` too – so that is a pre-existing general gap, not a set one.)
 #[test]
 fn choose_picks_a_member() {
     let out = run_joined(

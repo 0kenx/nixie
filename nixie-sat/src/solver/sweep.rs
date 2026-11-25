@@ -4,8 +4,8 @@
 //!
 //! # What the pass does
 //!
-//! For each candidate variable, a bounded **environment** — the original
-//! clauses of its depth-≤2 cone, capped — is copied into a fresh kitten
+//! For each candidate variable, a bounded **environment** – the original
+//! clauses of its depth-≤2 cone, capped – is copied into a fresh kitten
 //! (embedded CDCL, `crate::kitten`) formula. One kitten SAT solve over
 //! the environment yields a witness; the witness's true literals seed
 //! **backbone candidates** (literals true in this model that might be
@@ -13,7 +13,7 @@
 //! Each candidate is then *proved or refuted* with assumption solves:
 //!
 //! * backbone `l`: assume `¬l`; UNSAT ⇒ the formula entails `l` (a
-//!   level-0 unit — extracted from the kitten clausal core and assigned).
+//!   level-0 unit – extracted from the kitten clausal core and assigned).
 //! * equivalence `a ≡ b`: two implication tests, assume `¬a, b` (b → a)
 //!   and assume `a, ¬b` (a → b); both UNSAT ⇒ `a ≡ b`, proved by the
 //!   kitten core of each test.
@@ -28,13 +28,13 @@
 //! representatives through the clause database rides the existing
 //! soundness-hardened substitution round
 //! ([`Solver::substitute_equivalent_literals_round`], `solver/equiv.rs`)
-//! — this port deliberately does **not** reimplement application.
+//! – this port deliberately does **not** reimplement application.
 //!
 //! # Soundness
 //!
 //! * Environment copies drop literals that are false on the level-0
 //!   trail and skip satisfied clauses, so every kitten clause is entailed
-//!   by (original clause ∧ level-0 facts) — any kitten UNSAT result is a
+//!   by (original clause ∧ level-0 facts) – any kitten UNSAT result is a
 //!   genuine consequence of the main formula.
 //! * Only **original** (irredundant) clauses enter the environment
 //!   (kissat sweeps in dense mode over irredundant clauses only).
@@ -42,7 +42,7 @@
 //!   proof tracer attached, no active assumptions, and only when
 //!   destructive preprocessing is safe (no unfrozen real theory); see
 //!   [`Solver::sweep_allowed`]. Every derived unit is assigned through
-//!   the normal level-0 assign+propagate path — a conflict there is a
+//!   the normal level-0 assign+propagate path – a conflict there is a
 //!   genuine UNSAT over live clauses.
 //! * Larger core lemmas are **not** added to the main database in this
 //!   port: kissat adds them to checker/proof only
@@ -54,24 +54,24 @@
 //!
 //! # Knobs
 //!
-//! * `NIXIE_SWEEP=0` — disable the sweep (pre-search + each inprocessing
+//! * `NIXIE_SWEEP=0` – disable the sweep (pre-search + each inprocessing
 //!   round). Default **on** since the 2026-09-08 characterization
 //!   (enablement rule: structural soundness + 10-seed paired
 //!   differential +35 solved at cap, 0 verdict disagreements; see
 //!   `docs/studies/2026-09-08-kitten-sweep-port-calibration.md`).
 //!   Unset/`1`: on.
-//! * `NIXIE_SWEEP_NULL=1` — matched null: identical machinery, budgets
+//! * `NIXIE_SWEEP_NULL=1` – matched null: identical machinery, budgets
 //!   and candidate *set*, but the candidate *ranking* is scrambled by a
 //!   deterministic hash of the variable index. The semantic content
 //!   under test is candidate selection + proved equivalences; the null
 //!   keeps the cost. (Verify the null actually fires: compare
 //!   `kitten_solved` between arms before trusting any ratio.)
-//! * `NIXIE_SWEEP_EFFORT=<permille>` — round tick budget override.
+//! * `NIXIE_SWEEP_EFFORT=<permille>` – round tick budget override.
 //!   Default 400‰ (the 2026-09-08 calibration: kissat's nominal 100‰
 //!   left our sweep budget-starved in our window currency; see
 //!   `kitten_sweep_effort_permille`). The yield-delay feedback below
 //!   amortizes the cost where the sweep finds nothing.
-//! * `NIXIE_SWEEP_TRACE=1` — one telemetry line per round.
+//! * `NIXIE_SWEEP_TRACE=1` – one telemetry line per round.
 //!
 //! # Port deviations from kissat (recorded)
 //!
@@ -98,7 +98,7 @@
 //!   a single environment solve can never blow the round budget.
 //! * The solver's cooperative interrupt flag reaches both the sweep
 //!   loops (kissat `TERMINATED(sweep_terminated_*)`) and the kitten
-//!   itself (`TERMINATED(kitten_terminated_1)` in `decide`) — a
+//!   itself (`TERMINATED(kitten_terminated_1)` in `decide`) – a
 //!   cancelled solve aborts mid-round, not after it.
 
 use super::*;
@@ -162,7 +162,7 @@ struct Sweeper {
     /// Clauses encoded into kitten for the current environment.
     encoded: u32,
     /// Frontier-randomization generator (kissat `sweeprand`; per-round
-    /// LCG seeded 0 — kissat draws from the persistent solver generator).
+    /// LCG seeded 0 – kissat draws from the persistent solver generator).
     frontier_rng: u64,
     kitten: Kitten,
     limit: SweepLimits,
@@ -248,7 +248,7 @@ impl Solver {
         // unproductive round grows the interval by one and skips that
         // many subsequent firings; a productive one halves it. Without
         // this, files where the sweep finds nothing pay the full
-        // per-round budget every round — measured +30 % wall on qwh at
+        // per-round budget every round – measured +30 % wall on qwh at
         // the raised effort.
         if self.sweep_delay_count > 0 {
             self.sweep_delay_count -= 1;
@@ -356,7 +356,7 @@ impl Solver {
         if next != INVALID {
             // Already scheduled: unlink, then move to the tail. The
             // unlink must patch **`prev[next]`** (kissat
-            // `schedule_inner`: `sweeper->prev[next] = prev`) — writing
+            // `schedule_inner`: `sweeper->prev[next] = prev`) – writing
             // `next[next]` instead leaves stale back-pointers and turns
             // the ring into a cycle, which made `unschedule_sweeping`
             // walk forever, pushing into `sweep_schedule` without bound
@@ -406,7 +406,7 @@ impl Solver {
 
     /// Occurrence check for schedulability (kissat `scheduable_variable`):
     /// both polarities must occur, each within the environment clause
-    /// limit. Counts live original clauses over the BIG (binaries — an
+    /// limit. Counts live original clauses over the BIG (binaries – an
     /// edge under key `k` is the clause `(¬k ∨ target)`, i.e. contains
     /// `¬k`, so occurrences of literal `l` live under `¬l`) plus the
     /// sparse watch lists. Returns the total occurrence count (the
@@ -504,7 +504,7 @@ impl Solver {
 
     /// Encode the scratch clause into kitten (`sweep_clause`). A copy
     /// with ≤ 1 remaining literal is legal here: kitten receives a unit
-    /// (still entailed under the level-0 trail — the dropped literals
+    /// (still entailed under the level-0 trail – the dropped literals
     /// are level-0 false) or an empty clause (the environment is
     /// contradictory, surfaced through `sweep_add_core`). kissat asserts
     /// `size > 1` because its dense-mode invariants guarantee it; our
@@ -512,7 +512,7 @@ impl Solver {
     /// so a weakened copy may transiently shrink further.
     fn sweep_encode_clause(&mut self, sweeper: &mut Sweeper, depth: u32) {
         // Take the scratch clause so `sweep_add_literal` can mutate the
-        // sweeper while iterating; restore the (reused) buffer EMPTY —
+        // sweeper while iterating; restore the (reused) buffer EMPTY –
         // the C clears the stack after every encoded clause, and
         // `sweep_binary`/`sweep_reference` push fresh literals onto an
         // empty scratch (restoring it full made every environment clause
@@ -602,7 +602,7 @@ impl Solver {
         for &lit in lits {
             let value = self.sweep_value(lit);
             if value > 0 {
-                // Satisfied lemma — nothing to extract.
+                // Satisfied lemma – nothing to extract.
                 skip = true;
                 break;
             }
@@ -685,7 +685,7 @@ impl Solver {
                 0 => {
                     // Fully falsified on the level-0 trail: the
                     // environment (an entailed restriction) is
-                    // contradictory — the main formula is UNSAT.
+                    // contradictory – the main formula is UNSAT.
                     self.trivially_unsat = true;
                     return false;
                 }
@@ -978,7 +978,7 @@ impl Solver {
         // Layout guard: the popped pair must be real literals, never the
         // `INVALID` class separator (a malformed partition would feed a
         // sentinel code into kitten and resize its import table by
-        // gigabytes — defensive, the layout is maintained above).
+        // gigabytes – defensive, the layout is maintained above).
         if lit == INVALID || other == INVALID {
             debug_assert!(false, "partition pair contained the INVALID separator");
             return false;
@@ -1121,7 +1121,7 @@ impl Solver {
             // (the C copies `end_class + 1 ..` down over `begin_class`,
             // which consumes the separator at `end_class`). Draining only
             // the literals left a doubled separator, and the next pair-pop
-            // then fed the `INVALID` sentinel into `kitten.assume` —
+            // then fed the `INVALID` sentinel into `kitten.assume` –
             // importing a "variable" at index u32::MAX/2 resized the
             // import table by gigabytes (the 6s167 RSS sawtooth).
             partition.drain(begin_class..=end_class);
@@ -1222,7 +1222,7 @@ impl Solver {
             // kissat `sweeprand` (default off): randomly swap the frontier
             // head with a later frontier variable before expanding it.
             // kissat draws from the main solver's generator; the sweeper
-            // keeps a per-round LCG seeded 0 (deterministic, default-off —
+            // keeps a per-round LCG seeded 0 (deterministic, default-off –
             // identical to the reference's default behavior).
             if crate::kitten_sweep_rand_enabled() {
                 let choices = (next - expand) as u32;
@@ -1262,7 +1262,7 @@ impl Solver {
                 //
                 // NOTE (2026-09-09 screen): kissat's dense-mode occurrence
                 // lists (every literal of every large clause) were ported
-                // here and REVERTED — at our calibrated 400-per-mille
+                // here and REVERTED – at our calibrated 400-per-mille
                 // round budget the ~5x clause-dense environments cut the
                 // variables swept per round from 144 to 55 on si2-class
                 // files and cost -7 solved cells corpus-wide (screen data
@@ -1370,7 +1370,7 @@ impl Solver {
         // `clear_sweeper` → `set_kitten_ticks_limit`): `clear` resets
         // kitten's internal limit to "unlimited" (kitten.c
         // `initialize_kitten`), and without this re-arm every solve from
-        // the *second* swept variable on ran unbounded — a single hard
+        // the *second* swept variable on ran unbounded – a single hard
         // environment solve could blow the round budget arbitrarily,
         // since the round checks only fire between solves.
         let remaining = sweeper
@@ -1591,7 +1591,7 @@ impl Sweeper {
 
         let scheduled = fresh.len() as u32 + rescheduled;
         // Incomplete accounting: if no scheduled var remains flagged,
-        // the previous round completed — bump `sweep_completed` and
+        // the previous round completed – bump `sweep_completed` and
         // re-mark this round's scheduled set.
         let incomplete = solver.sweep_incomplete_variables();
         if incomplete == 0 {
@@ -1671,7 +1671,7 @@ mod tests {
         let mut sweeper = Sweeper::new(&s, SWEEP_MIN_EFFORT);
         assert_eq!(sweeper.kitten.ticks_limit(), sweeper.limit.ticks);
         s.sweep_one_variable(&mut sweeper, 0);
-        // Budget re-armed to the full remaining round budget — never
+        // Budget re-armed to the full remaining round budget – never
         // left at the "unlimited" reset value.
         assert_ne!(sweeper.kitten.ticks_limit(), u64::MAX);
         assert!(
@@ -1707,7 +1707,7 @@ mod tests {
             "interrupted before the round starts"
         );
         // Not interrupted: the round runs (and counts) again after the
-        // delay-latch reset — sweep_rounds advances.
+        // delay-latch reset – sweep_rounds advances.
         flag.store(false, Ordering::Relaxed);
         s.sweep_delay_count = 0;
         s.sweep_presearch_done = true;

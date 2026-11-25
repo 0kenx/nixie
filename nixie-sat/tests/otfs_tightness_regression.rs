@@ -1,15 +1,15 @@
 //! Soundness regression: the OTFS arm's trigger tightness (2026-09-12).
 //!
 //! The first `NIXIE_OTFS` implementation fired on a cheap size comparison
-//! (`counter + learnt < |A|`) that undercounts the accumulated resolvent —
+//! (`counter + learnt < |A|`) that undercounts the accumulated resolvent –
 //! resolved-away conflict-level pivots leave both accumulators while staying
-//! `seen` — so the arm rewrote antecedents the partial resolvent had NOT been
+//! `seen` – so the arm rewrote antecedents the partial resolvent had NOT been
 //! absorbed into, and the "strengthened" clause was not entailed.  The corpus
 //! screen caught it as direct verdict contradictions on model-verified SAT
 //! files: `constraints_17` (false `unsat` at 956 conflicts; baseline
 //! model-checked `sat` at 44 381), `frb65-12-2`, `mp1-klieber2017s`
 //! (false `unsat` ~1.3 k conflicts), `g2-slp`, all three summle files,
-//! `si2-b03m`, `j3037_10_mdd_b` — 57 rejected cells, 13 files.
+//! `si2-b03m`, `j3037_10_mdd_b` – 57 rejected cells, 13 files.
 //!
 //! The fix gates the fire on the exact cadical condition: every marked
 //! literal except ¬p must already be a literal of the antecedent (forcing

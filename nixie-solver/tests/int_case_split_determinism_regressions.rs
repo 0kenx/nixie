@@ -11,7 +11,7 @@
 //! * the same release binary, identical invocations, flipped 7×`sat` /
 //!   1×`unsat` on `xs_8_13.smt2`;
 //! * forcing the two arms (temporary env override of the budget) gave
-//!   5×`sat` at budget 0 vs 5×`unsat` at budget ∞ — the clock was the
+//!   5×`sat` at budget 0 vs 5×`unsat` at budget ∞ – the clock was the
 //!   sole decider between the wrong and the right answer;
 //! * z3 says `unsat`; a skipped closing round is an uncertifiable `sat`,
 //!   which per AGENTS.md may never be traded for speed.
@@ -19,8 +19,8 @@
 //! The gate is removed (the refinement's own deterministic caps bound its
 //! cost; an unaffordable search is `timeout_ms`'s business, reported as an
 //! honest `unknown`).  These tests pin the verdict on the exact reproducer
-//! and — because a wall-clock read anywhere in the verdict path would
-//! resurface the flip — run the same check twice in-process and require
+//! and – because a wall-clock read anywhere in the verdict path would
+//! resurface the flip – run the same check twice in-process and require
 //! identical answers.
 
 use nixie_solver::{Context, SolverResult};
@@ -55,7 +55,7 @@ fn wisas_xs_8_13_is_unsat() {
 /// cvc5 `ensureLiteral` parity): a UF argument bounded by direct
 /// single-variable atoms (`(>= a 0)`, `(<= a 3)`) gets its
 /// `(or (= a 0) .. (= a 3))` enumeration lemma asserted BEFORE the search
-/// (level-0 interval fixpoint — no simplex, no candidate model), so CDCL
+/// (level-0 interval fixpoint – no simplex, no candidate model), so CDCL
 /// pins the argument value from conflict #1.  Without the eager pass this
 /// shape is the non-convex hole: the model assigns `a` into `[0,3]`, EUF
 /// never merges `f(a)` with any pinned `f(k)`, and the answer is a wrong
@@ -92,7 +92,7 @@ fn eager_enumeration_closes_bounded_uf_domain() {
 
 /// Determinism smoke: two full solves of the same script in one process
 /// must agree.  A wall-clock or RNG read on the verdict path shows up here
-/// as an intermittent failure under CI load — exactly the signature that
+/// as an intermittent failure under CI load – exactly the signature that
 /// hid this bug through three differential runs.
 #[test]
 fn wisas_xs_8_13_verdict_is_stable_across_repeats() {

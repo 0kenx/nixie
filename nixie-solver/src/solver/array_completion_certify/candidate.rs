@@ -7,20 +7,20 @@
 //! verdict rests on).  But a candidate that is already a model must not be
 //! swapped for a different one: `bench/extended_theories/AUFLIRA/06` printed
 //! `(store (store (store ((as const (Array Int Real)) 0.0) 0 0.0) 1 0.0) 42
-//! 0.0)` — correct — and re-fix pass 12 replaced it by the certified constant
+//! 0.0)` – correct – and re-fix pass 12 replaced it by the certified constant
 //! `((as const (Array Int Real)) 0.0)`, a response change that corrected
 //! nothing.
 //!
 //! # Whose interpretation is judged
 //!
 //! The one `(get-model)` *prints*.  The solver-level candidate is a partial
-//! model — reads, a class's constant, a `store`'s own writes — and pass 7's
+//! model – reads, a class's constant, a `store`'s own writes – and pass 7's
 //! reverted `Sat`-exit gate failed exactly by judging it instead of the
 //! rendered arrays.  So the judgement is made by `Context` (which owns the
 //! renderer): it renders each completed array from the recorded candidate the
 //! same way `(get-model)` would, parses the printed value back into a term,
 //! and hands the interpretations to
-//! [`Solver::candidate_interpretation_certifies`] — the very certificate the
+//! [`Solver::candidate_interpretation_certifies`] – the very certificate the
 //! completion itself passed (a validity query per universal, one over the
 //! assertions), discharged over the candidate's interpretation.  Only a
 //! passing certificate puts the candidate back; a failing, declined or
@@ -64,8 +64,8 @@ impl Solver {
         arrays
     }
 
-    /// Whether `rendered` — the candidate's arrays as `(get-model)` prints
-    /// them — together with the candidate's scalar values satisfies every
+    /// Whether `rendered` – the candidate's arrays as `(get-model)` prints
+    /// them – together with the candidate's scalar values satisfies every
     /// assertion, by the completion's own certificate.  `false` whenever the
     /// certificate cannot say so (it fails, declines, or runs out of budget).
     pub(crate) fn candidate_interpretation_certifies(

@@ -181,7 +181,7 @@ pub fn infer_term_sort(term: &Term, manager: &TermManager) -> Result<SortId> {
                 Err(NixieError::Internal("Bag operand not found".to_string()))
             }
         }
-        // `bag.map f b` is a bag of `f`'s codomain — the sort the term
+        // `bag.map f b` is a bag of `f`'s codomain – the sort the term
         // carries, because a bare function symbol is not a term to infer
         // from.
         TermKind::BagMap { ret, .. } => manager
@@ -196,7 +196,7 @@ pub fn infer_term_sort(term: &Term, manager: &TermManager) -> Result<SortId> {
                 Err(NixieError::Internal("Bag operand not found".to_string()))
             }
         }
-        // `bag.fold f t b` returns the accumulator's sort — `t`'s own.
+        // `bag.fold f t b` returns the accumulator's sort – `t`'s own.
         TermKind::BagFold { init, .. } => {
             if let Some(t) = manager.get(*init) {
                 Ok(t.sort)
@@ -257,7 +257,7 @@ pub fn infer_term_sort(term: &Term, manager: &TermManager) -> Result<SortId> {
         // The relation operators' result sorts are functions of the operand
         // tuple sorts (composed, paired, reversed, diagonalized); the
         // builder computes them at construction, and a term built any other
-        // way has no well-defined result sort to infer — the recorded sort
+        // way has no well-defined result sort to infer – the recorded sort
         // is the builder's answer.
         TermKind::SetRelJoin(..)
         | TermKind::SetRelProduct(..)

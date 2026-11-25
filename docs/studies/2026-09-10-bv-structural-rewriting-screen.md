@@ -1,4 +1,4 @@
-# Structural concat/extract rewriting for QF_BV — screened out (unsound by interaction, zero measured payoff)
+# Structural concat/extract rewriting for QF_BV – screened out (unsound by interaction, zero measured payoff)
 
 **Date:** 2026-09-10. **Task:** Tier A item 2 of
 `docs/handovers/2026-09-10-qf-bv-gap-tier-a.md` (structural rewriting for
@@ -25,7 +25,7 @@ Z3 `src/ast/rewriter/bv_rewriter.cpp` rules, in `BvPreprocessor`, behind
 - adjacent-extract concat fusion (`mk_concat`);
 - `bvnot` through concat (`mk_bv_not`);
 - constant-mask AND/OR run decomposition (`mk_bv_or`'s "OR is a mask",
-  mirrored for AND — Z3 routes AND through NOT/OR first);
+  mirrored for AND – Z3 routes AND through NOT/OR first);
 - the disjoint-concat OR merge (`mk_bv_or`'s `is_zero_bit` walk) with flat
   per-side bit tables;
 - a recursive normalizer for freshly built nodes (the memoized DAG walk only
@@ -35,7 +35,7 @@ Z3 `src/ast/rewriter/bv_rewriter.cpp` rules, in `BvPreprocessor`, behind
 
 1. **The bitrev mechanism works but does not terminate in budget.** With the
    rules live, `bitrev0064` reassembles `rev(rev(x)) = x` syntactically and
-   refutes in 0.06 s — but `bitrev0128` still needs 2–3 s, `bitrev0256`
+   refutes in 0.06 s – but `bitrev0128` still needs 2–3 s, `bitrev0256`
    14–16 s, `bitrev0512/1024` time out: the binary-concat seam splits and
    the 1-bit mask runs of the alternating masks leave ~1024-piece spines
    whose repeated re-splitting is super-linear. Full closure needs **n-ary
@@ -48,7 +48,7 @@ Z3 `src/ast/rewriter/bv_rewriter.cpp` rules, in `BvPreprocessor`, behind
    simplification after blasting), not from these rules alone.
 2. **Two soundness-grade bugs found in my own implementation before any
    landed:** the disjoint-concat bit table filled `[0, high)` for constant
-   pieces (a high piece's zeros overwrote the low pieces' unknown bits —
+   pieces (a high piece's zeros overwrote the low pieces' unknown bits –
    every merge bailed at the first seam) and then pushed `high - wl` as the
    high operand's top (off by the low width). Both fixed in the experiment;
    both are exactly the class of bug the brute-force equivalence test
@@ -60,14 +60,14 @@ Z3 `src/ast/rewriter/bv_rewriter.cpp` rules, in `BvPreprocessor`, behind
    prefix, z3: `sat`) still answered `unsat` with the family on and `sat`
    with it off, via only six `bvlshr`-by-1/2/3 rewrites firing at width
    126. The rewriter is term-level sound, so the defect is an
-   **interaction** — most plausibly the bit-blaster's encoding of the
+   **interaction** – most plausibly the bit-blaster's encoding of the
    rewritten concat/extract shapes (a 125-bit extract of a 126-bit operand
    under `bvand` chains), or a rule interaction the width-≤63 random tests
    miss. Not root-caused within budget; recorded here as the blocking
    follow-up if this family is revived.
 4. **Matched-null A/B (the decisive measurement):** same binary,
    `NIXIE_BV_STRUCT_RW=1` vs `=0`, 509-file re-screen, 4 pinned cores,
-   25 s cap — **268 vs 268 solved, zero per-file verdict differences**.
+   25 s cap – **268 vs 268 solved, zero per-file verdict differences**.
    The family changed nothing measurable on the corpus while it was
    default-on, so even without the soundness issue there was nothing to
    keep.
@@ -75,7 +75,7 @@ Z3 `src/ast/rewriter/bv_rewriter.cpp` rules, in `BvPreprocessor`, behind
 ## What NOT to retry unchanged
 
 - Binary concat spines with per-node seam splits for wide alternating
-  masks — the piece-count blowup is structural, not an implementation
+  masks – the piece-count blowup is structural, not an implementation
   accident.
 - Landing any rewrite family without the brute-force equivalence net in
   the same change; two of three bugs here were caught only by it.
@@ -90,7 +90,7 @@ Z3 `src/ast/rewriter/bv_rewriter.cpp` rules, in `BvPreprocessor`, behind
    reduced 49-assert prefix and the six fired rewrites are the entry
    point; the blaster's concat/extract encoders are the prime suspect).
 2. Move to n-ary concat piece lists (Vec<(TermId, width)>) with interval
-   arithmetic for extract/split/fuse — the binary-spine overhead is what
+   arithmetic for extract/split/fuse – the binary-spine overhead is what
    kills bitrev0512+.
 3. Re-run the matched-null A/B; only land on a strictly positive cell
    delta with zero regressions and the equivalence tests green.

@@ -23,7 +23,7 @@ pinned `taskset`, sampling period 0.5–2 M) of `fsm_s64_w80_r0` (the study's
 worst instance), plus new deterministic maintenance counters
 (`TraceKind`: pops/invalidations/re-reads/true+false events/witness+cycle
 drops/closure rebuilds/per-rule emissions), printed by `STATS=1` or
-`--stats` (the CLI flag existed but was never wired — it silently did
+`--stats` (the CLI flag existed but was never wired – it silently did
 nothing). Every change verified **trajectory-inert**: GNF corpus A/B
 bit-identical `s`-line + conflicts/decisions/propagations + counters
 (80/80 at n∈{25..150}, 18/18 at n∈{200,300,500}), same FSM verdicts.
@@ -36,19 +36,19 @@ bit-identical `s`-line + conflicts/decisions/propagations + counters
    were pinned and remain right).
 2. **62% of the pinned profile sat on one instruction**: the discriminant
    probe of the `backward_searches` **slot sweep** that every false edge
-   event ran — O(vertices) per event over 5184 mostly-`None` slots per
+   event ran – O(vertices) per event over 5184 mostly-`None` slots per
    product graph (`if let Some(backward) = memo && witness-match`). The
    same shape existed for `forced_searches` in `merge_new_edge`.
 3. **18%**: per-consequence cut-certificate checks (O(edges) scans with
    hash-set membership per edge). **16%**: `add_vertex`'s pristine test
-   scanning both per-vertex tables per added vertex — **O(V²)** per
+   scanning both per-vertex tables per added vertex – **O(V²)** per
    product graph at registration. Smaller: per-emission O(V) cut-set
    collection, per-epoch CSR rebuilds, closure rebuilds after witness
    drops.
 4. **Pops are not the ceiling here.** `pops=6764` but `reread=116` (and
    `reread=2` at GNF scale): most backtracks never trigger a re-read
    before the next one, so the trail-undo/Ramalingam–Reps deletion
-   machinery the handover sketched would buy little on these corpora —
+   machinery the handover sketched would buy little on these corpora –
    the *event-driven* maintenance was the cost, not the pop path.
 5. **Prefix-layer sharing is worthless for random-word corpora** (the
    expected shared prefix of two random binary words is ~1 layer of 81);
@@ -69,7 +69,7 @@ bit-identical `s`-line + conflicts/decisions/propagations + counters
   half the cache footprint.
 - **All-edges CSRs built once ever** (their contents are
   value-independent; the per-epoch rebuild was pure waste).
-- Cut-reason collection (`cut_negations`) keeps its edge-index order —
+- Cut-reason collection (`cut_negations`) keeps its edge-index order –
   the emitted sequence feeds learned clauses, so reordering would
   perturb the search trajectory. A false-edge-list variant with
   per-emission sort was measured **slower** and reverted; a by-tail
@@ -98,13 +98,13 @@ against the pre-change binary: conflicts/decisions ratios **1.000**
 ## What remains (ranked by the new profile)
 
 1. **The certificate crossing scan** (~a third of the worst instance):
-   per-emission O(edges) — the bitmap made each test cheap, but the
+   per-emission O(edges) – the bitmap made each test cheap, but the
    iteration count is inherent unless the check is indexed by side
-   (measured slower — see above) or memoized across the pop-driven
+   (measured slower – see above) or memoized across the pop-driven
    re-emissions (a content-keyed verified-cache on the certified path;
    soundness surface, not attempted).
 2. **Closure rebuilds after witness drops** (~14%): 1834 drops ×
-   O(V+E) rebuilds on the worst instance — a better repair rate
+   O(V+E) rebuilds on the worst instance – a better repair rate
    (full Italiano/RR decremental reachability) is the genuine next
    algorithmic slice.
 3. **The model-gate replay** (`check_model` ~6%): re-validated

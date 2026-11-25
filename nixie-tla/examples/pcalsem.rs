@@ -1,4 +1,4 @@
-//! `pcalsem` — semantic parity of a PlusCal translation, checked against
+//! `pcalsem` – semantic parity of a PlusCal translation, checked against
 //! TLC-generated successor pairs.
 //!
 //! This is the gate that catches a wrong *translation* rather than a broken
@@ -7,19 +7,19 @@
 //! state and successor pair it generates. Both translations' `Init` and
 //! `Next` are then evaluated over every state and pair: agreement in all
 //! four directions is semantic parity on the reachable behaviour of the
-//! model — label placement, `UNCHANGED` bookkeeping, self-subscripts and
+//! model – label placement, `UNCHANGED` bookkeeping, self-subscripts and
 //! `pc` updates all have to be right for it to hold.
 //!
 //! An evaluation that **both** translations decline with the same reason
 //! (an evaluator limit the golden shares, like a `CHOOSE` the evaluator
-//! refuses) is a decline, reported and counted — not a pass, and not a
-//! failure. A disagreement — one side true and the other not, or different
-//! errors — is the failure this gate exists to catch.
+//! refuses) is a decline, reported and counted – not a pass, and not a
+//! failure. A disagreement – one side true and the other not, or different
+//! errors – is the failure this gate exists to catch.
 //!
 //! TLC values are parsed from their printed form (`<<…>>`, `{…}`,
 //! `[f |-> v]`, `(k :> v @@ k' :> v')`, strings, integers, booleans, and
 //! bare model values, read as distinct atoms). Anything outside that
-//! vocabulary declines with the line — never a guess.
+//! vocabulary declines with the line – never a guess.
 
 use std::collections::HashMap;
 
@@ -246,9 +246,9 @@ fn config_value(v: &ConfigValue) -> Option<Value> {
 /// What a printed entry is.
 #[derive(Debug, Clone, Copy)]
 enum DumpKind {
-    /// `<<vars>>` — a TLC initial state.
+    /// `<<vars>>` – a TLC initial state.
     Initial,
-    /// `<<vars, vars'>>` — a successor pair.
+    /// `<<vars, vars'>>` – a successor pair.
     Pair,
 }
 
@@ -330,7 +330,7 @@ fn var_order(module: &nixie_tla_syntax::Module) -> Vec<String> {
     Vec::new()
 }
 
-// ---- the printed-value parser ----------------------------------------------
+// ======== the printed-value parser ========
 
 struct ValueParser {
     chars: Vec<char>,

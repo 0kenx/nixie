@@ -181,7 +181,7 @@ fn ring_solve_eqs_model_reconstruction() {
 }
 
 /// bit2bool: `(= (_ bv1 1) (bvnot (ite c #b1 #b0)))` is `c`, and 1-bit
-/// comparisons are Boolean formulas — decided without any 1-bit words.
+/// comparisons are Boolean formulas – decided without any 1-bit words.
 #[test]
 fn bit2bool_folds_one_bit_world() {
     let script = r#"

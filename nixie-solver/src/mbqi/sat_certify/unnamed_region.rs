@@ -10,14 +10,14 @@
 //!
 //! is unsatisfiable (`a1` reads `#b0` at `#b0000001`), and it was answered
 //! `sat` (`c4b04b7` and crates.io 0.3.3 answer `unknown`).  The universal is
-//! essentially uninterpreted — its bound variable occurs only as an array
-//! index — so [`super::collect_fragment_instances`] instantiated it over the
+//! essentially uninterpreted – its bound variable occurs only as an array
+//! index – so [`super::collect_fragment_instances`] instantiated it over the
 //! relevant set of Ge & de Moura: the index terms the model already reads,
 //! here `#b0000000` alone.  One instance, satisfied; the set is saturated; the
 //! certifier concluded `sat`.  Adding a single unrelated ground read at
 //! `#b0000001` anywhere in the script turned the answer into the correct
 //! `unsat`, which is what located the defect.  The same shape over an `Int`,
-//! a `Real` and a declared index sort was a wrong `sat` too — the `Int` and
+//! a `Real` and a declared index sort was a wrong `sat` too – the `Int` and
 //! declared-sort spellings on `c4b04b7` and crates.io 0.3.3 as well.
 //!
 //! # Why the relevant set is not complete for arrays
@@ -42,12 +42,12 @@
 //! For every sort a bound variable indexes an array at, the relevant set is
 //! completed with:
 //!
-//! * **every named index value** — each literal of the sort in an index
+//! * **every named index value** – each literal of the sort in an index
 //!   position anywhere in the goal (a `select` / `store` index) or compared
 //!   with a bound variable of the sort in a quantifier body (a guard constant),
-//!   and the model's value of each non-literal term in either position — so
+//!   and the model's value of each non-literal term in either position – so
 //!   every value the ground part can pin is instantiated, hence a fixed point;
-//! * **representatives of the unnamed region** — over a sort a quantifier does
+//! * **representatives of the unnamed region** – over a sort a quantifier does
 //!   not order, one value no term names (the smallest, over bit-vectors, `Int`
 //!   and `Real`); over an *ordered* one, one per gap of every order a guard can
 //!   use: `r ± 1` beside every named `r` over `Int` and bit-vectors (mod `2^w`,
@@ -58,9 +58,9 @@
 //!   outside a binder: a model of such a sort needs no element beyond them, so
 //!   there is no unnamed region to represent, only the named elements to cover;
 //! * over `Bool`, both values, and over an enumeration datatype (every
-//!   constructor nullary), every constructor — exhaustive;
+//!   constructor nullary), every constructor – exhaustive;
 //! * over a declared sort, also every constant of the sort the candidate model
-//!   assigns — the Skolem witness of an asserted `exists` appears only in the
+//!   assigns – the Skolem witness of an asserted `exists` appears only in the
 //!   encoded assertion, never in the goal's spelling (`#P2b-64` (2));
 //! * over a datatype with a field, or any other index sort (floating point,
 //!   arrays, strings), **nothing is complete**, so the caller declines to
@@ -130,7 +130,7 @@ pub(super) fn add_unnamed_index_points(
     // The relevant set's own non-literal terms name values too (a declared
     // index constant the model reads, an extensionality witness).  Its
     // literals do not: the ones the goal spells are named by the walk
-    // above, and every other one is an instance point this module chose —
+    // above, and every other one is an instance point this module chose –
     // naming those would move the representatives every round, and the set
     // would never saturate.  A point in the relevant set is a fixed point of
     // the projection either way (the projection sends a value to the largest
@@ -210,7 +210,7 @@ pub(super) fn add_unnamed_index_points(
                 // binder-sort witness only in the candidate pool.  Missing
                 // them made `∃x. x ≠ u` beside `∀x. a[x] = 1` over
                 // `a = store(K0, u, 1)` saturate at `{u}` alone (`#P2b-64`
-                // (2)).  Constants only — a model key that is an application
+                // (2)).  Constants only – a model key that is an application
                 // or a read is an instance term, and choosing points by
                 // those would move them every round.
                 points.extend(model_constants_of_sort(model, sort, &bound_names, manager));
@@ -227,7 +227,7 @@ pub(super) fn add_unnamed_index_points(
                 // certified over `{nil}` and answered `sat`).
                 //
                 // Re-fix pass 15 (`#P2b-75`): a datatype with a field gets
-                // one value no named term denotes (`datatype_points`) — the
+                // one value no named term denotes (`datatype_points`) – the
                 // projection sends every unnamed value there, and an
                 // equality guard reads alike at all of them.  Only when a
                 // named term has no ground value, or no such value can be
@@ -278,7 +278,7 @@ pub(super) fn add_unnamed_index_points(
 /// satisfies, so `¬(x = a)` over a declared sort needs every element the goal
 /// names, not `a` alone.  The ordered scalar sorts are bracketed in the first
 /// pass instead, by terms (`t ± 1`, midpoints), which stay one point however
-/// the model moves — a value-keyed point there moved with every candidate and
+/// the model moves – a value-keyed point there moved with every candidate and
 /// kept a repeated check adding instances.
 fn index_sorts(
     quantifiers: &[QuantifiedFormula],
@@ -589,8 +589,8 @@ fn ground_terms_of_sort(goal: &[TermId], sort: SortId, manager: &TermManager) ->
 }
 
 /// Every constant (`Var`) of `sort` occurring in a term the candidate model
-/// assigns — the atoms the search decided mention every ground constant the
-/// encoded problem has, a Skolem witness's `(distinct sk u)` included — other
+/// assigns – the atoms the search decided mention every ground constant the
+/// encoded problem has, a Skolem witness's `(distinct sk u)` included – other
 /// than a bound variable's name, in term-id order.
 fn model_constants_of_sort(
     model: &CompletedModel,

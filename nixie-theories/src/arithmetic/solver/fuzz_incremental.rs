@@ -10,7 +10,7 @@
 //! `check()` verdicts against a fresh solver fed the same *live* assertions.
 //!
 //! A verdict divergence is a genuine incremental-state bug (a scoped bound or
-//! row that leaked across a pop, or one that vanished while still in scope) —
+//! row that leaked across a pop, or one that vanished while still in scope) –
 //! exactly the class the resync backstop hides, and each direction is
 //! unsound in its own way: a leaked bound can fabricate `Unsat`, a vanished
 //! one can fabricate `Sat`.
@@ -153,7 +153,7 @@ fn run_seed(seed: u64, steps: usize) -> Option<String> {
 /// Brute-force ground truth for a bounded-domain system: enumerate every
 /// integer assignment in `[-RANGE, RANGE]` for every mentioned term and check
 /// every live constraint.  `None` when some var would exceed the range in a
-/// satisfying assignment we cannot see (we only assert what we found — the
+/// satisfying assignment we cannot see (we only assert what we found – the
 /// verdict is exact for sat; unsat is exact only within the box, so the
 /// caller treats found-sat as ground truth and in-box-unsat as ground truth
 /// only when at least one witness touches the box boundary... which we
@@ -222,8 +222,8 @@ fn brute_force_sat_witness(ops: &[Op], range: i64) -> Option<Vec<(TermId, i64)>>
 fn arith_verdicts_match_bruteforce_oracle() {
     // Same stream generator, but certify verdicts against exhaustive search
     // over a small box (only streams whose every constraint fits the box are
-    // certified; the box witnesses catch false `unsat` — the GMI sign-bug
-    // class — and the value check catches false `sat`).
+    // certified; the box witnesses catch false `unsat` – the GMI sign-bug
+    // class – and the value check catches false `sat`).
     for seed in 100..130u64 {
         let mut rng = Rng::new(seed);
         let mut s = ArithSolver::lia();
@@ -271,7 +271,7 @@ fn arith_verdicts_match_bruteforce_oracle() {
             );
             // On Sat, the solver's own reported values must satisfy every
             // live constraint (the model-based combination layer and model
-            // printing both read `value()` — a drifted incremental
+            // printing both read `value()` – a drifted incremental
             // assignment poisons them even when the verdict is right).
             for op in &live {
                 let Op::Assert(kind, terms, rhs) = op else {

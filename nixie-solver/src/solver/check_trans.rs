@@ -17,8 +17,8 @@
 //!    assignment ends it with the honest `Unknown`.
 //!
 //! The whole-goal gate at the top declines anything outside the decidable
-//! fragment — quantifiers, uninterpreted functions, arrays, strings, FP,
-//! datatypes, integer variables, `distinct` — rather than solving a weaker
+//! fragment – quantifiers, uninterpreted functions, arrays, strings, FP,
+//! datatypes, integer variables, `distinct` – rather than solving a weaker
 //! problem than the one the user posed.
 //!
 //! Verdict soundness summary (details in `nixie-theories/src/trans/`):
@@ -99,7 +99,7 @@ fn term_has_apply(term: TermId, manager: &TermManager) -> bool {
 
 impl Solver {
     /// Dispatch a transcendental goal to the δ-ICP engine.  `None` = not
-    /// ours (no trans terms) or declined fragment — the caller falls
+    /// ours (no trans terms) or declined fragment – the caller falls
     /// through (the arithmetic honesty gate then answers `Unknown`).
     pub(super) fn dispatch_trans_solver(
         &mut self,
@@ -117,14 +117,14 @@ impl Solver {
             return None;
         }
 
-        // ---- Ground UF Ackermannization. ----
+        // ======== Ground UF Ackermannization. ========
         // `f x = f y` under `x = y` is EUF semantics ICP does not carry;
         // treating applications as free arithmetic variables would
         // δ-satisfy goals EUF refutes.  Ackermannization closes the gap
         // for GROUND applications (the whole fragment is ground): each
         // occurrence becomes a fresh Real variable, and the functional-
         // consistency implications `(a1=b1 ∧ …) ⇒ v=v'` join the Boolean
-        // skeleton — the dPLL loop enumerates their disjunctive content
+        // skeleton – the dPLL loop enumerates their disjunctive content
         // exactly.  Non-ground (quantifier-tainted) applications survive
         // and are declined downstream, as before.
         let mut ack_apps: FxHashMap<TermId, TermId> = FxHashMap::default();
@@ -139,7 +139,7 @@ impl Solver {
             }
         }
 
-        // ---- Boolean abstraction over the arithmetic atoms. ----
+        // ======== Boolean abstraction over the arithmetic atoms. ========
         let mut build = TransBuild::new();
         let mut root_units: Vec<i32> = Vec::new();
         for &a in &goal_assertions {
@@ -207,7 +207,7 @@ impl Solver {
             max_propagations: self.config.trans_max_propagations,
         };
 
-        // ---- dPLL ∘ ICP. ----
+        // ======== dPLL ∘ ICP. ========
         for round in 0..MAX_DPLL_ROUNDS {
             let (result, _) = sat.solve_with_assumptions(&[]);
             #[cfg(feature = "std")]
@@ -339,7 +339,7 @@ impl Solver {
                     // under this assignment).  Culprit constraint indices
                     // are atom indices (constraints were added in atom
                     // order).  Without provenance, block the whole
-                    // assignment — always valid.
+                    // assignment – always valid.
                     let indices: Vec<usize> = if culprits.is_empty() {
                         (0..n_atoms).collect()
                     } else {
@@ -393,7 +393,7 @@ impl Solver {
             model.set(term, value_term);
         }
         // Ackermannized applications publish their fresh variable's
-        // value — `(get-value (f x))` after a δ-witness answers with what
+        // value – `(get-value (f x))` after a δ-witness answers with what
         // the witness actually used, not an uninterpreted blank.
         let value_of: FxHashMap<TermId, TermId> = prob
             .var_terms()
@@ -415,7 +415,7 @@ impl Solver {
             model.set(atom, value);
         }
         // The skeleton's free Boolean variables publish the values the
-        // witness actually used — an `ite` condition completed to a
+        // witness actually used – an `ite` condition completed to a
         // default would contradict the branch the Real values verify
         // against (the t6 class: x = ite(b,4,9) with x≈4 must print b =
         // true).
@@ -453,9 +453,7 @@ impl Solver {
     }
 }
 
-// ===========================================================================
-// Tseitin layer over arithmetic atoms
-// ===========================================================================
+// ======== Tseitin layer over arithmetic atoms ========
 
 /// Result of encoding a subformula.
 enum TseitinOut {
@@ -485,7 +483,7 @@ struct TransBuild {
     aux: usize,
 }
 
-/// Aux (Tseitin) variables are numbered from this base DURING encoding —
+/// Aux (Tseitin) variables are numbered from this base DURING encoding –
 /// atom indices are discovered mid-walk, so any in-band numbering would
 /// collide with them (the first version literally fused the or-gate's
 /// variable with atom 0 and its root unit forced that atom true at level
@@ -776,7 +774,7 @@ impl TransBuild {
                         // Mixed constant/literal branches not folded above:
                         // encode via the generic aux (constants handled by
                         // unit clauses on the aux would need more vars than
-                        // worth it — decline this exotic shape).
+                        // worth it – decline this exotic shape).
                         return TseitinOut::Declined;
                     }
                     let aux = self.fresh_aux(n_atoms);
@@ -850,9 +848,7 @@ fn take_pending(pending: &mut Vec<LitOrConst>, n: usize) -> Vec<LitOrConst> {
     pending.split_off(at)
 }
 
-// ===========================================================================
-// Per-assignment constraint compilation
-// ===========================================================================
+// ======== Per-assignment constraint compilation ========
 
 /// Evaluates Boolean structure under a fixed SAT assignment (for `ite`
 /// conditions) and interns the constraint terms.
@@ -866,7 +862,7 @@ struct AssignmentCtx<'a> {
 impl<'a> AssignmentCtx<'a> {
     /// Evaluate a Bool-sorted term under the assignment (atoms and free
     /// Bool vars read from `values`; compound structure recursively with a
-    /// memo).  `None` = not evaluable — the caller declines the
+    /// memo).  `None` = not evaluable – the caller declines the
     /// assignment, which keeps every verdict honest.
     fn eval_bool(&mut self, t: TermId, manager: &TermManager) -> Option<bool> {
         if let Some(&v) = self.memo.get(&t) {
@@ -926,8 +922,8 @@ impl<'a> AssignmentCtx<'a> {
     }
 
     /// Intern `(lhs ⋈ rhs)` as a constraint; returns `(root node, rhs
-    /// constant, comparison)` — mirroring when the LEFT side is the
-    /// constant — with numeric `ite`s resolved via the assignment.
+    /// constant, comparison)` – mirroring when the LEFT side is the
+    /// constant – with numeric `ite`s resolved via the assignment.
     fn constraint_for(
         &mut self,
         lhs: TermId,
@@ -1068,7 +1064,7 @@ fn term_has_numeric_ite(term: TermId, manager: &TermManager) -> bool {
 }
 
 /// Normalize an atom's kind under the polarity into the ICP comparison.
-/// Strict comparisons weaken to their non-strict forms — sound in both
+/// Strict comparisons weaken to their non-strict forms – sound in both
 /// directions under δ-semantics (see docs/TRANS.md): for refutation,
 /// `¬(a < b)` is exactly `a ≥ b`, and `a < b` weakened to `a ≤ b` only
 /// ever makes the pruned problem MORE satisfiable, so an emptiness proof

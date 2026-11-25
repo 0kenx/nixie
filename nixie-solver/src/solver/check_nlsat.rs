@@ -160,8 +160,8 @@ impl Solver {
             NlDispatchResult::Sat(nl_model) => {
                 // The exact-value channel (upstream v0.3.3): when the
                 // dispatcher's witness is algebraic there is no rational
-                // `Model` to install at all — √2 has no term in the rational
-                // term language — so the channel carries the whole assignment
+                // `Model` to install at all – √2 has no term in the rational
+                // term language – so the channel carries the whole assignment
                 // and the ordinary model stays unset. The two are exclusive
                 // by `NlDispatchResult`'s contract; a debug build must not
                 // let a future dispatcher break it.
@@ -204,7 +204,7 @@ impl Solver {
         // `arith ∧ nonlinear` spec fields routes to NLSAT, integrality
         // picking the mode (per-sort integrality in the translator keeps
         // Real vars real under NIRA).  `ALL`/unknown names have no spec
-        // and fall through to open-logic shape detection below —
+        // and fall through to open-logic shape detection below –
         // trajectory parity with the historical behavior.
         if let Ok(Some(spec)) = crate::solver::logic_contract::lookup(logic)
             && spec.arith
@@ -269,7 +269,7 @@ impl Solver {
         // case-split choices and the grounded definition Booleans.  Pinning
         // them into the interpretation makes the publication gate below
         // actually EVALUATE the definition conjuncts `(= b φ)` instead of
-        // abstaining on unpinned Booleans — a mis-derived truth pin is
+        // abstaining on unpinned Booleans – a mis-derived truth pin is
         // caught here and the whole witness declined.
         for (term, value) in nl_model.truths {
             if !manager
@@ -291,7 +291,7 @@ impl Solver {
         // current assertion in exact `BigRational`, over the *original*
         // assertion terms, before anything is installed. A witness some
         // assertion definitely evaluates FALSE under is a proof it is not a
-        // model — publishing it would print values contradicting the very
+        // model – publishing it would print values contradicting the very
         // assertions they answer, so nothing is installed. An evaluator that
         // merely abstains (an array read this exact-arithmetic walk cannot
         // resolve) does not veto: the fork's nonlinear model searches verify

@@ -822,7 +822,7 @@ mod tests {
 }
 
 /// A flat, scanned DIMACS body: `(num_vars, lits)` where `lits` is the
-/// clause stream in file order, clauses separated (terminated) by `0` —
+/// clause stream in file order, clauses separated (terminated) by `0` –
 /// the same representation the file itself uses, with none of the
 /// per-clause `Vec` materialization.
 ///
@@ -832,7 +832,7 @@ mod tests {
 /// error naming the token, unterminated trailing clause an error).  It
 /// exists because the line-based UTF-8 parse plus the `Vec<Vec<i32>>`
 /// intermediate cost ~70 % of whole-run wall on the 544 MB parse anatomy
-/// (`hwmcc-6s299`, zero search on both sides) — see
+/// (`hwmcc-6s299`, zero search on both sides) – see
 /// `docs/studies/2026-09-15-env-probe-regression.md`.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct FlatCnf {
@@ -849,7 +849,7 @@ impl FlatCnf {
     /// `NIXIE_NO_SIMD` is unset; otherwise the scalar byte loops.  The two
     /// Byte-level scan of an in-memory buffer the caller owns (the mmap
     /// fast path): no intermediate copy of the file, no whole-file heap
-    /// buffer — the mapping's pages fault once, read-only, straight from
+    /// buffer – the mapping's pages fault once, read-only, straight from
     /// the page cache (kissat's shape; `read_to_end` instead copied the
     /// file into ~130k fresh anonymous pages on the 531 MB anatomy, part
     /// of the 484k-fault sys-time wall).
@@ -860,12 +860,12 @@ impl FlatCnf {
     /// Byte-level scan of a whole DIMACS CNF body, with a byte-size hint
     /// for the input buffer (the caller's file length when known).
     ///
-    /// `read_to_end` otherwise grows the buffer by amortized doubling —
+    /// `read_to_end` otherwise grows the buffer by amortized doubling –
     /// on half-gigabyte inputs that is a second full read's worth of
     /// copying through the page cache; an exact reservation reads once.
     /// The AVX2 boundary kernels and the fused blockwise token walk run
     /// when the CPU has AVX2 and `NIXIE_NO_SIMD` is unset; both produce
-    /// byte-identical `lits` streams and identical error messages —
+    /// byte-identical `lits` streams and identical error messages –
     /// pinned by the differential tests in `scan_tests`.
     ///
     /// # Errors
@@ -893,7 +893,7 @@ impl FlatCnf {
     /// The scan driver over an in-memory buffer.
     ///
     /// `simd == true` is a caller contract: AVX2 was runtime-detected
-    /// ([`simd_scan_enabled`] or the equivalent test-side check) — the
+    /// ([`simd_scan_enabled`] or the equivalent test-side check) – the
     /// AVX2 kernels below are `#[target_feature]` and must not be called
     /// otherwise.  Both kernel choices walk the identical token stream;
     /// the output and every error message are path-independent.
@@ -914,7 +914,7 @@ impl FlatCnf {
             // tokens at one load + two masks each, stopping at line
             // bytes, block-edge tokens, or the tail for this scalar
             // body (which handles the stop reason; the loop then
-            // re-enters fused mode — the scalar body is the reference
+            // re-enters fused mode – the scalar body is the reference
             // semantics and owns every non-fast path).
             if simd && i + 32 <= n {
                 i = scan_tokens_fused_fast(
@@ -991,7 +991,7 @@ impl FlatCnf {
             // Digits are ASCII by the kernel contract, so the token is
             // valid UTF-8; assemble the i32 directly (no from_utf8/
             // str::parse round trip).  `None` is exactly the `str::parse`
-            // failure case (magnitude beyond i32 range) — pinned against
+            // failure case (magnitude beyond i32 range) – pinned against
             // `str::parse` by `scan_tests::parse_lit_matches_str_parse`.
             let lit = match parse_lit(raw, start, ds, i) {
                 Some(lit) => lit,
@@ -1057,7 +1057,7 @@ fn simd_scan_enabled() -> bool {
 
 /// Advance `i` past the maximal ASCII-whitespace run starting at `i`
 /// (byte-at-a-time reference kernel; exactly `u8::is_ascii_whitespace`:
-/// space, `\t`, `\n`, `\x0C`, `\r` — *not* `\x0B`).
+/// space, `\t`, `\n`, `\x0C`, `\r` – *not* `\x0B`).
 #[inline]
 fn skip_ws_scalar(raw: &[u8], mut i: usize) -> usize {
     while i < raw.len() && raw[i].is_ascii_whitespace() {
@@ -1124,7 +1124,7 @@ unsafe fn skip_ws_avx2(raw: &[u8], mut i: usize) -> usize {
         while i + 32 <= raw.len() {
             let v = _mm256_loadu_si256(raw.as_ptr().add(i) as *const __m256i);
             // bit set = whitespace byte (the five `is_ascii_whitespace`
-            // members — the mask set must match `skip_ws_scalar` exactly).
+            // members – the mask set must match `skip_ws_scalar` exactly).
             let ws = _mm256_or_si256(
                 _mm256_or_si256(
                     _mm256_cmpeq_epi8(v, _mm256_set1_epi8(b' ' as i8)),
@@ -1180,7 +1180,7 @@ fn scan_tokens_fused_fast(
 }
 
 /// AVX2 digit-run scan: same blockwise shape as [`skip_ws_fast`]; a byte
-/// is a digit iff `v - b'0'` is unsigned `<= 9` (the sub/min/cmpeq trick —
+/// is a digit iff `v - b'0'` is unsigned `<= 9` (the sub/min/cmpeq trick –
 /// wrapping bytes below `b'0'` become large unsigned values and fail).
 ///
 /// # Safety (caller contract)
@@ -1207,10 +1207,10 @@ fn scan_digits_fast(raw: &[u8], i: usize) -> usize {
 ///
 /// Stops (returning that absolute byte position for the scalar driver,
 /// which handles the reason and re-enters fused mode on the next loop
-/// iteration — progress is guaranteed in every case):
+/// iteration – progress is guaranteed in every case):
 /// * a token whose first byte is `c`/`p` (the line path),
 /// * a token touching the block end (its digit run may continue into
-///   the next block — the scalar walk finishes it),
+///   the next block – the scalar walk finishes it),
 /// * the problem line not yet seen (the scalar driver owns that error),
 /// * fewer than 32 bytes remaining (the scalar tail).
 ///
@@ -1261,7 +1261,7 @@ unsafe fn scan_tokens_fused(
             // Both masks live in ONE walked frame: after each token the
             // pair shifts past it in lockstep (a block-relative digit
             // mask under a frame-relative position was the first draft's
-            // divergence — every token after the first in a block read
+            // divergence – every token after the first in a block read
             // the wrong digit bits; caught by the differential harness
             // at randomized iteration 2).
             let mut non_ws = !ws_m;
@@ -1364,7 +1364,7 @@ unsafe fn scan_digits_avx2(raw: &[u8], mut i: usize) -> usize {
 
 /// Accumulator freeze point: once the running magnitude exceeds this,
 /// one more digit proves the full magnitude exceeds `2_147_483_649`, i.e.
-/// beyond every `i32` literal bound — `str::parse::<i32>` would reject the
+/// beyond every `i32` literal bound – `str::parse::<i32>` would reject the
 /// token.  Clamping to the sentinel (kept on every later digit) therefore
 /// preserves the accept/reject decision exactly while making unbounded
 /// digit runs (arbitrary leading zeros) safe in `u64`.  While unclamped,
@@ -1391,7 +1391,7 @@ fn parse_lit(raw: &[u8], start: usize, ds: usize, end: usize) -> Option<i32> {
     let mut acc: u64 = 0;
     // Fast path for runs of at most 8 digits with 8 readable bytes at
     // `ds`: one load, then a register-only accumulate (shift-and-mask
-    // per digit — no per-byte bounds-checked loads).  At most 8 digits
+    // per digit – no per-byte bounds-checked loads).  At most 8 digits
     // cannot overflow `u64`, so the freeze logic below is unnecessary
     // here and a single final range check decides (the common CNF shape
     // on 8-digit variable ranges pays ~4 ops/digit instead of ~7).
@@ -1457,7 +1457,7 @@ mod scan_tests {
     }
 
     /// Differential oracle: scalar reference vs SIMD kernels must agree
-    /// on the full result — including the exact error message.  On
+    /// on the full result – including the exact error message.  On
     /// hardware without AVX2 the SIMD leg degenerates to the scalar path
     /// (the safety contract forbids executing the kernels undetected).
     fn assert_paths_agree(raw: &[u8]) {
@@ -1606,7 +1606,7 @@ mod scan_tests {
 
     #[test]
     fn scan_paths_agree_randomized() {
-        // Deterministic xorshift64* — no external RNG so the corpus is
+        // Deterministic xorshift64* – no external RNG so the corpus is
         // reproducible from the seed alone.
         let mut state: u64 = 0x9E3779B97F4A7C15;
         let mut next = move || {

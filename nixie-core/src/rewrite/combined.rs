@@ -294,7 +294,7 @@ impl CombinedRewriter {
             // Array
             TermKind::Select(_, _) | TermKind::Store(_, _, _) => RewriterKind::Array,
             // No set or bag rewriter yet: `None` means "left alone", which is always
-            // sound — a missing simplification costs time, never soundness.
+            // sound – a missing simplification costs time, never soundness.
             TermKind::Sequence(_, _)
             | TermKind::SetEmpty(_)
             | TermKind::SetUniv(_)

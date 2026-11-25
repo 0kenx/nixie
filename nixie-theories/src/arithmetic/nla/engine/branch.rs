@@ -14,9 +14,9 @@
 //! A split may only be used to refute if its cases cover every integer point,
 //! and both forms here do:
 //!
-//! * `x <= -1 ∨ x = 0 ∨ x >= 1` — over `Z` nothing lies strictly between `-1`
+//! * `x <= -1 ∨ x = 0 ∨ x >= 1` – over `Z` nothing lies strictly between `-1`
 //!   and `1` except `0`.
-//! * `v <= k ∨ v >= k+1` for integral `k` — the two halves of `Z` at `k`.
+//! * `v <= k ∨ v >= k+1` for integral `k` – the two halves of `Z` at `k`.
 //!
 //! The combination rule in [`NlaEngine::split`](super::NlaEngine::split) is the
 //! matching half: `Sat` from any case wins, `Refuted` demands that *every* case
@@ -36,7 +36,7 @@ use num_rational::Rational64;
 use num_traits::{One, Signed, Zero};
 
 impl NlaEngine<'_> {
-    // --- (d3) branching -----------------------------------------------------
+    // ======== (d3) branching ========
 
     /// Split on a variable of a violated monic and recurse into every case.
     ///
@@ -105,7 +105,7 @@ impl NlaEngine<'_> {
 
     /// Explore every case under its own scope and combine the answers.
     ///
-    /// `Sat` in any case wins outright. `Refuted` needs every case refuted —
+    /// `Sat` in any case wins outright. `Refuted` needs every case refuted –
     /// `saw_unknown` makes sure a case the budget cut short never passes for
     /// one that was explored and closed.
     fn split(
@@ -133,7 +133,7 @@ impl NlaEngine<'_> {
                     // The `x = 0` case of a sign split. Without a lemma the LP
                     // knows only that `x` is zero and nothing about the
                     // products `x` occurs in, so the case is unrefutable and
-                    // the whole split degrades to `Unknown` — the annihilation
+                    // the whole split degrades to `Unknown` – the annihilation
                     // lemma is what makes a sign split able to close.
                     (Some(x), None) => self.emit_zero_lemmas(x),
                     _ => {}
@@ -192,7 +192,7 @@ impl NlaEngine<'_> {
             // Sign of the product, when every factor's sign is known. `x`'s is
             // the case premise; the others must come from the bounds in scope.
             //
-            // The bilinear case goes through `sign`, which says what it means —
+            // The bilinear case goes through `sign`, which says what it means –
             // the two factor signs give the product's. Higher degrees have no
             // such pair, so the conclusion `self.product_sign` derived is
             // asserted directly rather than re-encoded as a synthetic pair.
@@ -257,7 +257,7 @@ impl NlaEngine<'_> {
     /// `x = 0` established by the case just pushed.
     ///
     /// A zero factor annihilates whatever it is multiplied by, at any degree
-    /// and whatever the other factors are — the one product lemma that needs no
+    /// and whatever the other factors are – the one product lemma that needs no
     /// bound on anything else. Branch-local all the same: the premise is the
     /// case's own `x = 0`.
     fn emit_zero_lemmas(&mut self, x: VarId) {
@@ -281,7 +281,7 @@ impl NlaEngine<'_> {
 
     /// The sign of `monic`'s product, given that `x` has sign `x_sign` and the
     /// bounds fix every other factor's sign. `None` when some factor's sign is
-    /// open — an unsigned factor could be zero, and then the product is zero,
+    /// open – an unsigned factor could be zero, and then the product is zero,
     /// so no strict sign lemma follows.
     ///
     /// A factor raised to an even power is positive whatever its own sign, but

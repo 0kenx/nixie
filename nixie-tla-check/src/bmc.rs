@@ -16,7 +16,7 @@
 //! # How the unrolling works
 //!
 //! A state variable becomes a family of SMT variables, one per step, and `'`
-//! raises the step — so `Next` encoded at step `i` relates `i` to `i + 1`
+//! raises the step – so `Next` encoded at step `i` relates `i` to `i + 1`
 //! without any rewriting of the term. The check at depth `j` is then
 //!
 //! ```text
@@ -48,7 +48,7 @@ use crate::trace::{State, Trace};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SimOutcome {
     /// Every sampled run reached the full length (or dead-ended) without an
-    /// invariant breaking. **Not** a claim that no error exists — only that
+    /// invariant breaking. **Not** a claim that no error exists – only that
     /// none appeared in the runs taken; the caller's message must say so.
     NoErrorInSampledRuns {
         /// How many runs were sampled.
@@ -86,7 +86,7 @@ pub enum Outcome {
     /// leaves**: a deadlock.
     ///
     /// Apalache's `check` looks for deadlocks by default, and its exit code
-    /// for one is the same 12 a counterexample gets — the distinction is in
+    /// for one is the same 12 a counterexample gets – the distinction is in
     /// the outcome line, not the code. The no-successor half is a *proof*
     /// (the `Next` query at this step came back `Unsat` over every state
     /// that has one), never a guess: an undecided query makes the whole
@@ -101,7 +101,7 @@ pub enum Outcome {
     /// is not "no error" but "nothing ran that far": every behaviour stopped
     /// short, which is either a deadlock nobody asked about or a bound past
     /// the specification's lifetime. Apalache's own outcome and exit code
-    /// (0) — the message carries the distinction.
+    /// (0) – the message carries the distinction.
     ExecutionsTooShort,
     /// The search could not be completed.
     ///
@@ -112,7 +112,7 @@ pub enum Outcome {
     /// behaviours at all**.
     ///
     /// TLC and Apalache report a violated assumption and stop, and so does
-    /// this — reporting `NoViolationWithin` instead would be technically true
+    /// this – reporting `NoViolationWithin` instead would be technically true
     /// (no counterexample exists) and practically a lie (it reads as "the
     /// invariant holds", when in fact there is nothing to check). Distinguished
     /// from [`Outcome::Unknown`], which is about what the search could not
@@ -152,7 +152,7 @@ pub enum SetupError {
     /// A frame's containment obligation failed (or could not be decided)
     /// under `--paranoid`: some member of the variable may lie outside the
     /// candidate universe the analysis derived, so instantiating a bounded
-    /// quantifier over the universe could have skipped it. Fail closed —
+    /// quantifier over the universe could have skipped it. Fail closed –
     /// the check is refused, never answered on a possibly-missing member
     /// (issue #20, step 6).
     #[error(
@@ -176,8 +176,8 @@ pub enum SetupError {
     },
     /// A formula is at the wrong TLA+ level to play the role asked of it.
     ///
-    /// An invariant must be a **state** predicate. An action used as one —
-    /// `Inv == UNCHANGED x` is the shape that found this — is not a
+    /// An invariant must be a **state** predicate. An action used as one –
+    /// `Inv == UNCHANGED x` is the shape that found this – is not a
     /// counterexample waiting to be found, it is a malformed specification,
     /// and reporting a `Violation` for it would answer a question nobody
     /// asked. `UnchangedAsInv1663.tla` in Apalache's test suite is exactly
@@ -199,7 +199,7 @@ pub enum SetupError {
     /// and checking one anyway reports counterexamples for a specification
     /// that does not exist. TLC and Apalache report the violated assumption
     /// and stop; so does this. The evaluation runs on the *substituted*
-    /// constants — after `.cfg` and `--cinit` pinning — because those are the
+    /// constants – after `.cfg` and `--cinit` pinning – because those are the
     /// constants the check is actually about.
     #[error("assumption violated: `{name}` is FALSE")]
     AssumptionViolated {
@@ -210,7 +210,7 @@ pub enum SetupError {
     ///
     /// Reported rather than skipped. `Ballot <- MCBallot` is usually the only
     /// thing making a specification finite, so proceeding without it checks a
-    /// different — and often unencodable — specification.
+    /// different – and often unencodable – specification.
     #[error("the configuration's `{name} <- {with}` could not be applied: {why}")]
     Replacement {
         /// The name being replaced.
@@ -272,7 +272,7 @@ pub struct Bmc {
     /// [`Bmc::dropped_assumptions`], which is why the split exists: a check
     /// that re-encodes must not double-count.
     dropped_setup: usize,
-    /// Assumptions that could not be lowered, typed or encoded — the split's
+    /// Assumptions that could not be lowered, typed or encoded – the split's
     /// published half.
     dropped_assumptions: usize,
     /// `CONSTRAINT`: a state predicate asserted in every state.
@@ -290,12 +290,12 @@ pub struct Bmc {
     counterexample: Option<Trace>,
     /// Whether that counterexample was confirmed independently.
     verification: Option<Verification>,
-    /// Whether the search also looks for **deadlocks** — reachable states no
+    /// Whether the search also looks for **deadlocks** – reachable states no
     /// transition leaves. Apalache's default (`checkDeadlocks = true`).
     check_deadlocks: bool,
     /// The step behind the last reported [`Outcome::Deadlock`].
     deadlock_step: Option<u32>,
-    /// The names of the **action** invariants — formulas constraining a step
+    /// The names of the **action** invariants – formulas constraining a step
     /// pair `(s_j, s_{j+1})`, checked over pairs rather than single states.
     action_invariant_names: Vec<String>,
     /// Clauses ruling out counterexamples already reported.
@@ -306,8 +306,8 @@ pub struct Bmc {
     blocked: Vec<TermId>,
     /// The `--view` body: what makes two counterexamples *the same* one.
     ///
-    /// When set, a reported trace is blocked **under the view** — the view's
-    /// value at each step is ruled out, not the whole state — so
+    /// When set, a reported trace is blocked **under the view** – the view's
+    /// value at each step is ruled out, not the whole state – so
     /// `--max-error=N` returns traces that differ where the author looks.
     /// Apalache's `ViewFinder`/`--view` semantics, and like Apalache's the
     /// view must be a **state-level** definition.
@@ -321,7 +321,7 @@ pub struct Bmc {
     frames_done: bool,
     /// `--paranoid` (issue #20, step 6): probe every frame's containment
     /// obligation `Init /\ Trans_{<k} /\ ~(v@k \subseteq U_k)` at every
-    /// step, and fail closed on `Sat` or `Unknown`. Off by default — the
+    /// step, and fail closed on `Sat` or `Unknown`. Off by default – the
     /// fixpoint argument already guarantees containment, and the probe
     /// roughly doubles the query count.
     paranoid: bool,
@@ -339,7 +339,7 @@ pub struct Bmc {
 /// The solver says the encoded formula is satisfiable. This says whether the
 /// states behind that answer could be read back and shown, by
 /// `nixie-tla`'s evaluator, to be a behaviour that really breaks the
-/// invariant — a completely separate implementation of TLA+, the one
+/// invariant – a completely separate implementation of TLA+, the one
 /// `bench/tla_eval` checks against TLC.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verification {
@@ -437,16 +437,16 @@ impl Bmc {
         } = roles;
         // ONE lowerer for all three formulas. Binder renaming uses a counter
         // held by the `Lowerer`, so separate lowerings would each start from
-        // zero and could give two unrelated binders — one in `Init`, one in
-        // `Next` — the same name. Inference keys its environment by name, so
+        // zero and could give two unrelated binders – one in `Init`, one in
+        // `Next` – the same name. Inference keys its environment by name, so
         // that would silently force two independent variables to one type.
         let mut low = Lowerer::new();
         low.add_spec(spec);
         let mut dropped = 0usize;
         let mut unapplied: Vec<String> = Vec::new();
 
-        // Replacements first: every later stage — levels, lowering, inference
-        // — must see the replaced definitions, because that is the
+        // Replacements first: every later stage – levels, lowering, inference
+        // – must see the replaced definitions, because that is the
         // specification the author configured.
         for (name, r) in &config.replacements {
             match &r.module {
@@ -468,7 +468,7 @@ impl Bmc {
         // `CONSTANT x = e` is a **substitution**, not an assumption. TLC's
         // own words are "replace the constant with the constant expression",
         // and the difference is load-bearing: an assumption `N = 3` reaches
-        // the solver, but the encoder needs the value earlier than that —
+        // the solver, but the encoder needs the value earlier than that –
         // `1..N` has no candidate list until `N` is literally `3`. Pinning it
         // as an equation and hoping the encoder catches up was the first
         // attempt, and it leaves the headline case exactly as blocked as it
@@ -486,7 +486,7 @@ impl Bmc {
         //     CInit == replicas = {"n1", "n2", "n3"}
         //
         // and asserting that leaves `[replicas -> S]` as unencodable as it was
-        // — the encoder needs the members before the solver runs, not after.
+        // – the encoder needs the members before the solver runs, not after.
         // Every top-level conjunct of the shape `name = expr`, where `name` is
         // a `CONSTANT` the module declares, is bound instead. The definition
         // is still asserted afterwards, where it becomes trivially true and
@@ -519,7 +519,7 @@ impl Bmc {
         // returns `None` when a level depends on a name it could not resolve,
         // and an unproven level is not grounds for rejection.
         // An `INSTANCE` target that never resolved is a defect in the
-        // specification, reported by name with the instance's span — not a
+        // specification, reported by name with the instance's span – not a
         // silent drop that surfaces much later as a name error at some use.
         if let Some((name, _)) = low.missing_instances().first() {
             return Err(SetupError::Lower {
@@ -567,14 +567,14 @@ impl Bmc {
         for inv in roles.inv {
             invs.push(((*inv).to_string(), lower_one(&mut low, module, inv)?));
         }
-        // Positive existentials over the standard infinite sets — and, per
+        // Positive existentials over the standard infinite sets – and, per
         // issue #20 step 4, over **symbolic set names the frame analysis
-        // could not derive a universe for** — are skolemized before anything
+        // could not derive a universe for** – are skolemized before anything
         // else sees them (`\E no \in Nat : …` is the idiom
         // `HandshakeWithTypes` and the message-passing corpus use;
         // `\E d \in Data : …` with an unpinned `Data` is the corpus's
         // remaining `no candidate list` class). The rewrite is
-        // polarity-tracked — see the pass — and runs on every role formula
+        // polarity-tracked – see the pass – and runs on every role formula
         // plus the constraint definitions, so a skolem in `Init` and one in
         // `Next` over the same set are still distinct witnesses.
         //
@@ -607,7 +607,7 @@ impl Bmc {
             .into_iter()
             .map(|(n, t)| {
                 // The invariant enters the query negated, so its polarity
-                // is inverted from the start — see the pass's doc.
+                // is inverted from the start – see the pass's doc.
                 (
                     n,
                     nixie_tla::lower::skolemize_with_syms_at(&t, false, &syms),
@@ -615,8 +615,8 @@ impl Bmc {
             })
             .collect();
         // The binder-uniqueness invariant, asserted on every lowered root: a
-        // shared binder makes two independent variables read as one — in
-        // inference, in substitution, and in the encoder's `bound` map — and
+        // shared binder makes two independent variables read as one – in
+        // inference, in substitution, and in the encoder's `bound` map – and
         // the wrong answer it produces would look like anything except its
         // cause. (An `EmptyBag` with a fixed binder name was the first
         // instance; this check is so there is not a second.)
@@ -637,7 +637,7 @@ impl Bmc {
         // pinning down a `CONSTANT`. Dropping them leaves every constant
         // completely arbitrary, which turns "this invariant holds for the
         // intended parameters" into "this invariant holds for *every* value
-        // of N" — a strictly harder claim that fails on specifications that
+        // of N" – a strictly harder claim that fails on specifications that
         // are perfectly correct. The resulting `Violation` would be a real
         // model of the encoded formula and a false alarm about the spec.
         let mut assumptions: Vec<(String, KeraRef)> = Vec::new();
@@ -647,7 +647,7 @@ impl Bmc {
         }
         // `CONSTRAINT C` bounds the state space TLC explores. Asserting it in
         // every state is the bounded-model-checking reading, and it is the
-        // *strengthening* direction — a search that ignores it explores states
+        // *strengthening* direction – a search that ignores it explores states
         // the author excluded and can report a counterexample outside the
         // intended model.
         let mut state_constraints = Vec::new();
@@ -663,7 +663,7 @@ impl Bmc {
         for (i, unit) in module.units.iter().enumerate() {
             if let UnitKind::Assume { body, .. } = &unit.kind {
                 // An assumption that will not lower is skipped rather than
-                // fatal — but it is skipped *loudly*, by weakening nothing:
+                // fatal – but it is skipped *loudly*, by weakening nothing:
                 // see `dropped_assumptions`.
                 match low.lower(body) {
                     Ok(k) => assumptions.push((format!("ASSUME #{i}"), k)),
@@ -690,7 +690,7 @@ impl Bmc {
         let mut inf = Inference::new();
         // `@type:` annotations seed it first: they are the author's claim
         // about a name's shape, and everything derived later is *checked
-        // against* them — a conflict is the type error it is (exit 120),
+        // against* them – a conflict is the type error it is (exit 120),
         // never a silent override. Only names the roles' formulas could
         // reach matter, but seeding every annotation of the loaded modules
         // is harmless (unification is lazy about unused names) and catches
@@ -699,7 +699,7 @@ impl Bmc {
             std::collections::HashMap::new();
         // Operator signatures are **checked**, not seeded: an application
         // has no kernel node to constrain (the body is inlined), so the
-        // check is the operator's own body against the signature — the
+        // check is the operator's own body against the signature – the
         // parameters assumed at their annotated types, the result unified.
         // A signature that names no operator, or one of the wrong arity,
         // is a defect in the specification and is reported as such.
@@ -776,12 +776,12 @@ impl Bmc {
         // the real caches (the same discipline the `.cfg` probe uses).
         for (ann, sig) in &signatures {
             // The anchor the attach pass chose is the *definition* this
-            // signature belongs to — a module-level operator or a `LET`
+            // signature belongs to – a module-level operator or a `LET`
             // definition inside a body, whichever the comment precedes.
             let Some((params, body)) =
                 nixie_tla_syntax::module::operator_at(module, ann.decl_offset)
             else {
-                // The annotated operator is not one this module defines —
+                // The annotated operator is not one this module defines –
                 // an `INSTANCE` member substituted by `WITH`, annotated in
                 // the module it came from. This checker cannot see that
                 // body, so the signature is neither checked nor failed:
@@ -867,7 +867,7 @@ impl Bmc {
         // A fully ground assumption is **evaluated**, not asserted: it has
         // only one value, and asking the solver what that value is would be
         // asking a question already answered. One that is FALSE means the
-        // specification has no behaviours at all — TLC and Apalache report
+        // specification has no behaviours at all – TLC and Apalache report
         // that and stop, and so does this, by name. One that is TRUE needs
         // no constraint at all. An assumption the evaluator cannot decide
         // (usually because it still mentions a symbolic `CONSTANT`) falls
@@ -891,7 +891,7 @@ impl Bmc {
         // perfectly good constant-level expression and a perfectly useless
         // invariant. Negating a non-Boolean and finding the result satisfiable
         // would report a `Violation` for a specification that never stated a
-        // property at all — answering a question nobody asked, which is the
+        // property at all – answering a question nobody asked, which is the
         // same failure `SetupError::Level` exists to prevent.
         //
         // `intent`'s compiler emits exactly this shape when a `.intent` file
@@ -920,7 +920,7 @@ impl Bmc {
         // Names reachable from the specification proper. These *must* get a
         // sort: a checker that quietly skipped one would be checking a
         // different specification. Names that only an assumption mentions are
-        // not in this set, and are allowed to go unsorted — see below.
+        // not in this set, and are allowed to go unsorted – see below.
         let required: std::collections::HashSet<String> =
             inf.free_names().map(|(n, _)| n.to_string()).collect();
         // Assumptions are typed in the same environment, so a constant they
@@ -939,8 +939,8 @@ impl Bmc {
 
         let state = all_state_variables(spec);
         // Native sets, not the arena. A set-valued **state variable** has no
-        // statically knowable candidate list — `s@1` holds whatever the
-        // transition relation puts there — so the arena cannot represent one
+        // statically knowable candidate list – `s@1` holds whatever the
+        // transition relation puts there – so the arena cannot represent one
         // at all. The solver's finite-set sort can, which is the whole reason
         // the theory was built.
         let mut encoder = Encoder::new().with_set_encoding(SetEncoding::Native);
@@ -953,7 +953,7 @@ impl Bmc {
         // Sorted, because `free_names` comes off a `HashMap` and its order
         // varies from process to process. Declaration order decides the order
         // sorts and SMT variables are interned, so an unsorted walk makes
-        // every `SortId` and `TermId` in the problem depend on the run — and a
+        // every `SortId` and `TermId` in the problem depend on the run – and a
         // corpus measurement that is not reproducible is not a measurement.
         names.sort();
         for (name, id) in names {
@@ -1004,11 +1004,11 @@ impl Bmc {
         // Hand the encoder the sort of every node whose term cannot sort
         // itself. `{}` is the case that matters: an empty set literal has no
         // element to take an element sort from, and an empty set at the wrong
-        // element sort is a different value — so it is supplied, not guessed.
+        // element sort is a different value – so it is supplied, not guessed.
         // The frame analysis (issue #20) runs **here**, before the node-sort
         // collection: a universe's elements are kernel terms the roles never
-        // mention by pointer — an instantiated `Variant` constructor is a
-        // new `Rc` — so their nodes must join the collection as roots, or
+        // mention by pointer – an instantiated `Variant` constructor is a
+        // new `Rc` – so their nodes must join the collection as roots, or
         // the first member encoding poisons the frame for want of a sort.
         let frames = crate::frames::analyze(&crate::frames::Input {
             init: &init_k,
@@ -1112,7 +1112,7 @@ impl Bmc {
                 // An assumption with no encoding is dropped, not approximated.
                 // Dropping one only *weakens* what is assumed, so the search
                 // explores a superset of the intended states: it can produce a
-                // spurious counterexample, never hide a real one — which is
+                // spurious counterexample, never hide a real one – which is
                 // why a later `Sat` under drops is reported `Unknown`.
                 Err(e) => {
                     if std::env::var_os("NIXIE_TLA_DEBUG_DROPS").is_some() {
@@ -1129,7 +1129,7 @@ impl Bmc {
 
         // The assumptions on their own decide whether the specification has
         // any behaviours. A contradictory assumption set makes every deeper
-        // query `Unsat` — indistinguishable from a passing specification —
+        // query `Unsat` – indistinguishable from a passing specification –
         // so it is answered here, once, by name. `Sat` and `Unknown` both
         // fall through: an assumption set the solver cannot decide is not
         // evidence of emptiness.
@@ -1172,7 +1172,7 @@ impl Bmc {
 
         // **One solver for the whole unrolling.** `Init` and `Trans_k`
         // persist; each depth's `~Inv_j` is asserted under `push`/`pop`, so
-        // the query is exactly the formula the fresh-solver path asked — but
+        // the query is exactly the formula the fresh-solver path asked – but
         // everything the search *learned* at depth j serves depth j+1, which
         // the fresh path threw away. That is Apalache's incremental context
         // (`IncrementalExecutionContext`) and it is what the corpus's
@@ -1181,9 +1181,9 @@ impl Bmc {
         // budget on the second pass.
         //
         // What sits **inside** the push is only the negated invariant (and
-        // the blocked-trace clauses): everything outside — assumptions,
+        // the blocked-trace clauses): everything outside – assumptions,
         // `Init`, the transitions, the `.cfg` constraints, the definitional
-        // side constraints — is a fact about the specification, not about
+        // side constraints – is a fact about the specification, not about
         // the query, and stays asserted for every later depth.
         let mut solver = Solver::new();
         // A **deterministic** budget per query, not a wall-clock timeout.
@@ -1191,7 +1191,7 @@ impl Bmc {
         // and datatype terms and do not finish in any useful time; a
         // corpus harness that hangs is not a measurement. A clock would
         // bound it too, and would make the verdict depend on machine load
-        // — the corpus numbers stopped being reproducible the moment they
+        // – the corpus numbers stopped being reproducible the moment they
         // did. Conflicts are counted by the solver itself, so the same
         // input gives the same answer on any machine, and running out
         // reports `Unknown` like any other undecided query.
@@ -1222,7 +1222,7 @@ impl Bmc {
             // configured. A constraint with no encoding is refused rather than
             // dropped: unlike an `ASSUME`, dropping one here would widen the
             // search past the configured model, which is the direction that
-            // manufactures counterexamples — and it would do so invisibly,
+            // manufactures counterexamples – and it would do so invisibly,
             // because nothing else records that the model was bounded.
             for c in &self.state_constraints {
                 let step = j;
@@ -1255,7 +1255,7 @@ impl Bmc {
             // The state-invariant query. Action-level names are NOT part of
             // it: their `j+1` half would be unconstrained here (the step's
             // transition is not asserted for this query), and a free `s_{j+1}`
-            // satisfies any negated action invariant — a counterexample the
+            // satisfies any negated action invariant – a counterexample the
             // specification cannot produce. They get their own query below,
             // with the transition asserted.
             let state_invs: Vec<&(String, KeraRef)> = self
@@ -1271,8 +1271,8 @@ impl Bmc {
                     .map_err(|e| named(name, &e))?;
                 negated.push(tm.mk_not(t));
             }
-            // Encoding this depth's invariant can itself introduce facts —
-            // a `CHOOSE x : x \\notin S` mints its non-membership here —
+            // Encoding this depth's invariant can itself introduce facts –
+            // a `CHOOSE x : x \\notin S` mints its non-membership here –
             // so drain again, before the query is asked rather than at the
             // next depth: one depth late is a different formula.
             let sides = self.encoder.side_constraints().to_vec();
@@ -1286,7 +1286,7 @@ impl Bmc {
             // ask whether any member of a framed variable can lie outside
             // the universe the analysis derived. The fixpoint argument says
             // no; this asks the solver to agree, and fails closed when it
-            // will not — a `\A x \in v` instantiated over a universe that
+            // will not – a `\A x \in v` instantiated over a universe that
             // misses a member would skip it, which is the unsound
             // direction.
             if self.paranoid {
@@ -1316,15 +1316,15 @@ impl Bmc {
                     SolverResult::Sat => {
                         // A `Sat` answer is a counterexample **candidate**. It is
                         // only a counterexample once it has been read back as
-                        // TLA+ values and replayed by `nixie-tla`'s evaluator —
+                        // TLA+ values and replayed by `nixie-tla`'s evaluator –
                         // the independent implementation of TLA+ that
                         // `bench/tla_eval` checks against TLC. Until both succeed
                         // the honest verdict is [`Outcome::Unknown`], never
                         // [`Outcome::Violation`]: exit 12 is what users and tools
                         // act on, and an undecodable or non-replaying trace is
                         // not evidence of a violation. It is evidence that the
-                        // pipeline disagrees with itself somewhere — lowering,
-                        // encoding or the solver — and every such disagreement
+                        // pipeline disagrees with itself somewhere – lowering,
+                        // encoding or the solver – and every such disagreement
                         // stays visible in [`Bmc::verification`] so it gets
                         // chased rather than explained away.
                         //
@@ -1352,7 +1352,7 @@ impl Bmc {
                         // A search that ran with dropped assumptions is a search
                         // over a **superset** of the intended states. A `Sat`
                         // there may be an artefact of exactly the widening, so it
-                        // is `Unknown` and says why — the count is what a caller
+                        // is `Unknown` and says why – the count is what a caller
                         // needs in order to decide whether to trust it.
                         if self.dropped_assumptions > 0 {
                             return Ok(Outcome::Unknown(format!(
@@ -1371,7 +1371,7 @@ impl Bmc {
                             ))),
                             Verification::NotReplayed(why) => Ok(Outcome::Unknown(format!(
                                 "a counterexample was read back but does not replay \
-                             — the encoding and the evaluator disagree: {why}"
+                             – the encoding and the evaluator disagree: {why}"
                             ))),
                         };
                     }
@@ -1384,11 +1384,11 @@ impl Bmc {
                 }
             } // state-invariant query
 
-            // ---- the action-invariant query, at this step ----
+            // ======== the action-invariant query, at this step ========
             //
             // Over the executed pair `(s_j, s_{j+1})`: the transition is
             // asserted, so the invariant's primed half reads a state that
-            // really follows — no free `s_{j+1}` can satisfy its negation.
+            // really follows – no free `s_{j+1}` can satisfy its negation.
             if !self.action_invariant_names.is_empty() {
                 // The step's own transition, asserted persistently for the
                 // rest of the unrolling (it is a fact about step j+1's
@@ -1465,7 +1465,7 @@ impl Bmc {
                             ))),
                             Verification::NotReplayed(why) => Ok(Outcome::Unknown(format!(
                                 "a counterexample was read back but does not replay \
-                                 — the encoding and the evaluator disagree: {why}"
+                                 – the encoding and the evaluator disagree: {why}"
                             ))),
                         };
                     }
@@ -1479,7 +1479,7 @@ impl Bmc {
             }
         }
 
-        // ---- the deadlock question, as a post-pass ----
+        // ======== the deadlock question, as a post-pass ========
         //
         // Asked per step, but **after** the whole invariant sweep. Apalache
         // interleaves the two per step (their `SeqModelChecker`), and the
@@ -1488,7 +1488,7 @@ impl Bmc {
         // the CDCL trajectory (clauses learned in a probe scope are popped,
         // but the activity state legitimately persists), and on exactly the
         // expensive specifications that trajectory decides whether the
-        // model-refutation loop converges at all — the PlusCal two-array
+        // model-refutation loop converges at all – the PlusCal two-array
         // corpus pin answered `Unknown` at depth 8 with interleaving and
         // checks clean without. Verdict identity for the invariants is the
         // acceptance criterion, so the deadlock queries run against an
@@ -1505,7 +1505,7 @@ impl Bmc {
             // all. Asserting the same hash-consed terms again is cheap; the
             // learning this pass loses is the price of never letting a
             // probe perturb an invariant query's trajectory (see the note
-            // above — that perturbation was measurable, not theoretical).
+            // above – that perturbation was measurable, not theoretical).
             let mut dl_solver = Solver::new();
             if let Some(limit) = self.conflict_limit {
                 dl_solver.set_conflict_limit(limit);
@@ -1580,8 +1580,8 @@ impl Bmc {
     ///
     /// The obligations are **built first, then asked**: building a universe
     /// term goes through `&mut self.encoder` (the step save/restore), so it
-    /// happens in one pass, and the solver probes — `push`/`assert`/`check`/
-    /// `pop`, which borrow nothing but the solver — happen in a second.
+    /// happens in one pass, and the solver probes – `push`/`assert`/`check`/
+    /// `pop`, which borrow nothing but the solver – happen in a second.
     fn probe_frames(
         &mut self,
         solver: &mut Solver,
@@ -1666,9 +1666,9 @@ impl Bmc {
     /// Assumes the prefix through `j` transitions is already asserted at
     /// the base scope. Two queries, and both of them cheap:
     ///
-    /// 1. `prefix_j /\ Next@j` — if **sat**, some reachable state at this
+    /// 1. `prefix_j /\ Next@j` – if **sat**, some reachable state at this
     ///    step has a successor, and the answer is *not a deadlock*;
-    /// 2. if **unsat**, `prefix_j` alone — if still sat, a reachable state
+    /// 2. if **unsat**, `prefix_j` alone – if still sat, a reachable state
     ///    exists and *none* of them has a successor: a deadlock, and the
     ///    no-successor half is a proof.
     ///
@@ -1676,7 +1676,7 @@ impl Bmc {
     /// choice, not an oversight: the some-state reading ("one reachable
     /// state is stuck while others continue") needs the state-blocking
     /// loop, which costs one `Sat` query with a model readback per
-    /// successor-having state — hundreds of rounds on exactly the
+    /// successor-having state – hundreds of rounds on exactly the
     /// specifications that are already expensive. Apalache's symbolic mode
     /// has the same limitation, documented as their issue 712 ("may miss a
     /// deadlock"), and `Deadlock712.tla` is the corpus pin for it. A
@@ -1746,14 +1746,14 @@ impl Bmc {
     ///
     /// # What a partial block means
     ///
-    /// A state may contain values with no term form — a set or a function,
+    /// A state may contain values with no term form – a set or a function,
     /// whose value lives in the query's membership and `select` terms rather
     /// than in anything [`crate::trace::encode_value`] can rebuild. Those
     /// conjuncts are left out, which makes the clause *stronger* and rules out
     /// more than the one trace. That is a loss of completeness and not of
     /// soundness: every counterexample still reported is still a real model of
     /// the encoded formula, and is still replayed before it is reported. The
-    /// alternative — dropping the block and asking again — returns the same
+    /// alternative – dropping the block and asking again – returns the same
     /// trace and never terminates.
     /// Sample behaviours: `runs` random walks of at most `depth` steps
     /// (issue #28).
@@ -1765,13 +1765,13 @@ impl Bmc {
     /// invariants are checked in the state reached, and a run that finds no
     /// enabled disjunct dead-ends. A run is a sampler: `NoErrorInSampledRuns`
     /// is a statement about the runs taken, never a proof, and a violation
-    /// found is decoded and **replayed** before it is reported — a sampled
+    /// found is decoded and **replayed** before it is reported – a sampled
     /// trace that does not replay is [`SimOutcome::Unknown`], not a
     /// counterexample.
     ///
     /// The PRNG is SplitMix64, seeded from `seed`: the same seed gives
     /// byte-identical behaviour, which the determinism test pins. No clock,
-    /// no OS entropy — anything else makes the sampler unreproducible.
+    /// no OS entropy – anything else makes the sampler unreproducible.
     ///
     /// # Errors
     ///
@@ -1930,7 +1930,7 @@ impl Bmc {
                             )),
                             Verification::NotReplayed(why) => SimOutcome::Unknown(format!(
                                 "a sampled counterexample was read back but does not replay \
-                                 — the encoding and the evaluator disagree: {why}"
+                                 – the encoding and the evaluator disagree: {why}"
                             )),
                         });
                         break;
@@ -1952,7 +1952,7 @@ impl Bmc {
                 // The run's path is satisfiable by construction (every step
                 // was taken from a `Sat`), so this check hands back the
                 // model the trace is read from. A trace that cannot be read
-                // is simply not kept — `--output-traces` is reporting, not
+                // is simply not kept – `--output-traces` is reporting, not
                 // a claim, and a half-invented trace would be worse than a
                 // missing file.
                 if solver.check(tm) == SolverResult::Sat
@@ -1973,8 +1973,8 @@ impl Bmc {
     /// Block a reported trace **under the view**: at each step, rule out the
     /// view's *value* rather than the whole state.
     ///
-    /// The value is computed by the evaluator over the decoded state — the
-    /// semantic truth the trace carries — and ruled out against the view's
+    /// The value is computed by the evaluator over the decoded state – the
+    /// semantic truth the trace carries – and ruled out against the view's
     /// own term at that step, so the next query must differ somewhere the
     /// author looks. A step whose view value has no term form (a set- or
     /// function-valued view) falls back to the full-state block, which is
@@ -2023,7 +2023,7 @@ impl Bmc {
     /// and their blocking helpers).
     ///
     /// Returns `false` when the trace could not be expressed as a
-    /// constraint at all — the signal to stop rather than loop forever.
+    /// constraint at all – the signal to stop rather than loop forever.
     pub fn block_counterexample(&mut self, tm: &mut TermManager) -> bool {
         let Some(trace) = self.counterexample.clone() else {
             return false;
@@ -2077,7 +2077,7 @@ impl Bmc {
         Some(self.render_itf(trace, source))
     }
 
-    /// Render one trace as an ITF document — the shared body of a
+    /// Render one trace as an ITF document – the shared body of a
     /// counterexample and a sampled run's `example<k>.itf.json`.
     #[must_use]
     pub fn trace_itf(&self, trace: &Trace, source: &str) -> Option<serde_json::Value> {
@@ -2148,7 +2148,7 @@ impl Bmc {
                 // A name the encoding never needed has no term and no value.
                 // That is not a hole in the trace: nothing in `Init`, `Next`
                 // or the invariant mentioned it, so the replay cannot ask for
-                // it either — and if it does, the replay fails loudly rather
+                // it either – and if it does, the replay fails loudly rather
                 // than reading a value that was never constrained.
                 let Some(t) = self.encoder.var_at(n, step) else {
                     continue;
@@ -2166,8 +2166,8 @@ impl Bmc {
     /// Check a trace really is a counterexample, with the evaluator.
     ///
     /// This is the independent half. The solver said the encoded formula is
-    /// satisfiable; this asks `nixie-tla`'s evaluator — a completely separate
-    /// implementation of TLA+, the one `bench/tla_eval` checks against TLC —
+    /// satisfiable; this asks `nixie-tla`'s evaluator – a completely separate
+    /// implementation of TLA+, the one `bench/tla_eval` checks against TLC –
     /// whether the states it produced actually form a behaviour that breaks
     /// the invariant. Everything the verdict depends on is re-examined:
     /// lowering, because the evaluator walks the same kernel term; the
@@ -2194,7 +2194,7 @@ impl Bmc {
         };
         // The assumptions constrain the `CONSTANT`s, and they are checked in
         // the first state because that is where the constants are. One that
-        // was *dropped* was never asserted, so it is not checked here either —
+        // was *dropped* was never asserted, so it is not checked here either –
         // `dropped_assumptions` is what says the search was weakened.
         for (i, a) in self.assumptions.iter().enumerate() {
             holds(&format!("`ASSUME` #{i}"), ev.eval_state(a, first))?;
@@ -2223,12 +2223,12 @@ impl Bmc {
             }
         }
         // And the point of the whole thing: at least one named invariant
-        // must actually fail, and the ones that do are recorded by name —
+        // must actually fail, and the ones that do are recorded by name –
         // the disjunction the search violated is an encoding detail; the
         // specification's question is *which* invariant broke.
         //
         // An **action** invariant constrains a step pair, so it is evaluated
-        // over the last pair of states, not the last state — the encoder
+        // over the last pair of states, not the last state – the encoder
         // reads its `'` at step `j+1`, and the replay reads the same pair.
         let mut violated = Vec::new();
         for (name, inv) in &self.invs {
@@ -2286,7 +2286,7 @@ impl Bmc {
     /// What the configuration said that this check did not act on.
     ///
     /// Empty is the good case. A non-empty list means the verdict is about a
-    /// specification that differs from the configured one in a named way —
+    /// specification that differs from the configured one in a named way –
     /// surfaced for the same reason [`Bmc::dropped_assumptions`] is, because
     /// a caller deciding whether to trust a trace needs it.
     #[must_use]
@@ -2307,7 +2307,7 @@ impl Bmc {
 /// (Apalache's `maybeActionInvariants`) mention `'` and constrain a step
 /// pair, so they are checked over `(s_j, s_{j+1})`; **temporal** ones are a
 /// different kind of question entirely (a lasso, not a state property) and
-/// are refused — Apalache's own exit code for `--inv=<temporal>` is 255.
+/// are refused – Apalache's own exit code for `--inv=<temporal>` is 255.
 fn invariant_kind(levels: &nixie_tla_syntax::LevelReport, name: &str) -> InvariantKind {
     use nixie_tla_syntax::Level;
     match levels.trusted_level_of(name) {
@@ -2324,7 +2324,7 @@ enum InvariantKind {
     State,
     /// Constrains a step pair `(s_j, s_{j+1})`.
     Action,
-    /// A temporal property — refused for `--inv`.
+    /// A temporal property – refused for `--inv`.
     Temporal,
 }
 
@@ -2354,11 +2354,11 @@ fn collect_unsortable(root: &KeraRef, out: &mut Vec<KeraRef>) {
         if !seen.insert(std::rc::Rc::as_ptr(&t)) {
             continue;
         }
-        // `{}` is the motivating case — an empty set literal has no element
+        // `{}` is the motivating case – an empty set literal has no element
         // to take a sort from. `<<…>>` is here for a different reason: a tuple
         // literal *is* a sequence in TLA+, and which of the two it encodes to
         // is a question only the inferred type can answer.
-        // `{}` is the motivating case — an empty set literal has no element
+        // `{}` is the motivating case – an empty set literal has no element
         // to take a sort from. `<<…>>` is here for a different reason: a tuple
         // literal *is* a sequence in TLA+, and which of the two it encodes to
         // is a question only the inferred type can answer. A recursive
@@ -2370,7 +2370,7 @@ fn collect_unsortable(root: &KeraRef, out: &mut Vec<KeraRef>) {
         // `Seq(a)` of the cast, not from anything the encoding can read off
         // the function value.
         // A variant node joins them: its datatype sort is the row's, which
-        // only inference knows — a one-tag constructor does not know the
+        // only inference knows – a one-tag constructor does not know the
         // union it flows into.
         if matches!(
             t.as_ref(),
@@ -2401,7 +2401,7 @@ fn collect_unsortable(root: &KeraRef, out: &mut Vec<KeraRef>) {
 }
 
 /// Whether `name` is a member of an **unnamed** instance the lowerer
-/// registered — visible unprefixed, which is what a role names
+/// registered – visible unprefixed, which is what a role names
 /// (`--init=Init` with `INSTANCE y2k WITH …`).
 fn open_instance_member(low: &Lowerer<'_>, name: &str) -> bool {
     low.open_instances_visible(name)
@@ -2422,11 +2422,11 @@ fn has_definition(module: &Module, name: &str) -> bool {
 /// treat `x` as a rigid `CONSTANT`. That misclassification is not cosmetic:
 /// `x'` encodes to the same variable as `x`, the transition becomes a
 /// self-loop, `Init /\ Next` is contradictory, and the deadlock check
-/// (correctly, given that formula!) reported a step-0 deadlock — the first
+/// (correctly, given that formula!) reported a step-0 deadlock – the first
 /// wrong verdict of the pass, found by the corpus on the day it landed.
 /// The free names used as a bounded quantifier's domain in the given terms
 /// (issue #20 step 4): the candidate skolem subjects. Walked with an
-/// explicit stack, pointer-deduplicated — a lowered term is a shared DAG.
+/// explicit stack, pointer-deduplicated – a lowered term is a shared DAG.
 fn quantifier_domain_names(roots: &[&KeraRef]) -> Vec<String> {
     let mut seen: std::collections::HashSet<*const Kera> = std::collections::HashSet::new();
     let mut out: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -2482,7 +2482,7 @@ pub fn mentions_prime(term: &KeraRef) -> bool {
 
 /// A configuration constant as a kernel term.
 ///
-/// `None` for a value with no kernel form — only
+/// `None` for a value with no kernel form – only
 /// [`ConfigValue::ModuleQualified`], which is recorded uninterpreted by the
 /// parser precisely so that this decision is explicit here rather than
 /// implied by a missing match arm.
@@ -2494,7 +2494,7 @@ pub fn mentions_prime(term: &KeraRef) -> bool {
 /// set (*Specifying Systems* §14.5.3). It becomes a string literal under a
 /// reserved prefix, which is Apalache's encoding and costs nothing here
 /// because distinct string literals are already distinct values in the
-/// solver — the same mechanism floating-point literals use. The prefix is what
+/// solver – the same mechanism floating-point literals use. The prefix is what
 /// keeps a model value `n1` apart from a specification that genuinely writes
 /// the string `"n1"`.
 fn config_value_to_kera(v: &ConfigValue) -> Option<KeraRef> {
@@ -2534,7 +2534,7 @@ fn constant_names(module: &Module) -> std::collections::HashSet<&str> {
 /// `declared` names.
 ///
 /// Only the *top level* of the conjunction, and only a bare name on one side.
-/// A constant pinned by something less direct — `Cardinality(S) = 3` — is left
+/// A constant pinned by something less direct – `Cardinality(S) = 3` – is left
 /// to the solver, which is where it belongs: this is substitution, and there
 /// is nothing to substitute.
 fn ground_bindings(
@@ -2638,7 +2638,7 @@ Inv == \\A x \\in s : x < 10
     /// A frame that really misses a member is caught: with `2` removed
     /// from `s`'s universe, the escape probe finds `s@0 = {1,2}` not
     /// contained in `{1}` and the check **fails closed**, naming the
-    /// variable, the step, and the falsified obligation — never answering
+    /// variable, the step, and the falsified obligation – never answering
     /// `NoViolation` on a quantifier that skipped the missing member.
     #[test]
     fn paranoid_probe_fails_closed_on_a_broken_frame() {

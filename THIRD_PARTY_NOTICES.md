@@ -5,7 +5,7 @@ It derives from the upstream projects listed below; their copyright and license
 notices are retained here as their licenses require. None of these projects
 ship a `NOTICE` file.
 
-## OxiZ — Apache License 2.0
+## OxiZ – Apache License 2.0
 
 Copyright 2026 COOLJAPAN OU (Team KitaSan)
 
@@ -21,10 +21,10 @@ WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 License for the specific language governing permissions and limitations under
 the License.
 
-Source: https://github.com/cool-japan/oxiz — this repository is a detached
+Source: https://github.com/cool-japan/oxiz – this repository is a detached
 fork of OxiZ.
 
-## CaDiCaL — MIT License
+## CaDiCaL – MIT License
 
 Copyright (c) 2016-2021 Armin Biere, Johannes Kepler University Linz, Austria
 Copyright (c) 2020-2021 Mathias Fleury, Johannes Kepler University Linz, Austria
@@ -55,7 +55,7 @@ SOFTWARE.
 
 Source: https://github.com/arminbiere/cadical
 
-## Kissat — MIT License
+## Kissat – MIT License
 
 Copyright (c) 2021-2025 Armin Biere, University of Freiburg, Germany
 Copyright (c) 2025-2025 Mathias Fleury, University of Freiburg, Germany

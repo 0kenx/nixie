@@ -165,8 +165,8 @@ impl BvSolver {
                 } else {
                     // Miter specialization (Z3 `isolate_term`'s strength
                     // reduction at the blast layer): `(x − y) = 0` (either
-                    // orientation) encodes as the plain equality `x = y` —
-                    // an XNOR+reduction — and the subtractor circuit never
+                    // orientation) encodes as the plain equality `x = y` –
+                    // an XNOR+reduction – and the subtractor circuit never
                     // exists.  Falls through to the generic encoder when
                     // the operands' bits are not (yet) available.
                     if let Some((x, y)) = Self::sub_zero_eq_operands(lhs, rhs, manager)

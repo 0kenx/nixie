@@ -1,9 +1,9 @@
-# Equality-only array contradictions answered `sat` — the missing axiom-1 self-reads
+# Equality-only array contradictions answered `sat` – the missing axiom-1 self-reads
 
 **Status:** **fixed** 2026-09-23, same day. Found by digging past the
 symptom named in `docs/handovers/2026-09-22-dom-pair-budget-handoff.md`
 (don't-care completion in the TLA+ trace decoder) into the layers below it.
-**Severity:** **false `sat`** — the catastrophic class. Two minimized
+**Severity:** **false `sat`** – the catastrophic class. Two minimized
 reproducers, both `unsat` in Z3 4.16.0 and `sat` in nixie before the fix.
 
 ## The reproducers
@@ -24,7 +24,7 @@ reproducers, both `unsat` in Z3 4.16.0 and `sat` in nixie before the fix.
 
 B is exactly the committed-equality set a PlusCal two-array depth-4
 unrolling produces when two branch-update atoms go simultaneously true
-through no-op writes and nothing in the query reads `x[1]` — the model the
+through no-op writes and nothing in the query reads `x[1]` – the model the
 `2026-09-22` handoff decoded into a trace the replay rejected.
 
 ## Why the solver said `sat`
@@ -35,11 +35,11 @@ collects array structure, and instantiates the lemma families the
 candidate does not already satisfy. Every family was gated on something
 observed:
 
-* read-over-write — for observed `select` terms;
-* upward read-over-write — for indices the base is *read* at;
-* write-index congruence — for indices something already READS
+* read-over-write – for observed `select` terms;
+* upward read-over-write – for indices the base is *read* at;
+* write-index congruence – for indices something already READS
   (`read_indices`);
-* extensionality witnesses — for pairs already *separated*
+* extensionality witnesses – for pairs already *separated*
   (Z3's `new_diseq_eh`).
 
 A contradiction that lives entirely in array **equalities** observes
@@ -59,7 +59,7 @@ confirmed against Z3 4.16.0 source and CVC5's `theory_arrays`): for every
 select(store(b, i, v), i) = v
 ```
 
-— one per store term, deduplicated by interned id, bounded by the input's
+– one per store term, deduplicated by interned id, bounded by the input's
 stores. This is the family that *bootstraps the reads*: with the
 self-read minted, the store's written value is pinned in the E-graph, EUF
 congruence closes over the merged arrays' self-reads, and two chains
@@ -74,8 +74,8 @@ shapes + two sat controls).
 
 ## The layers below the false verdict (the reason the trace decoder saw garbage)
 
-The handoff's named item — "don't-care completion independent of the
-taken branch" — was the visible symptom of three stacked defects. Fixing
+The handoff's named item – "don't-care completion independent of the
+taken branch" – was the visible symptom of three stacked defects. Fixing
 only the decoder would have hidden all three.
 
 1. **The false `sat` above** (theory). The committed-true equality set
@@ -84,7 +84,7 @@ only the decoder would have hidden all three.
 2. **Model construction** (`model_builder.rs`). Two sub-defects:
    - The EUF-reconcile pass ("overwrite every member's entry with its
      class representative's value") installed values that *mention their
-     own key* — `x@0 -> store(x@0, 1, 1)` — on which `Model::eval`
+     own key* – `x@0 -> store(x@0, 1, 1)` – on which `Model::eval`
      ping-pongs. Now occurs-guarded, like the recording pass always was.
    - Array **aliases** (`x@2 = x@1`, neither side a store) were never
      recorded at all, so an UNCHANGED variable had no value and every
@@ -97,7 +97,7 @@ only the decoder would have hidden all three.
 3. **The chain walk** (`select_in` in `solver/types.rs`). A model
    assignment that is a plain alias broke the walk: the minted
    `select(x@2, i)` matched no query-built select and the point read
-   back unconstrained — the decoder then had to invent a value the taken
+   back unconstrained – the decoder then had to invent a value the taken
    branch could disagree with. The walk now follows alias assignments
    (cycle-guarded), which is sound for the same reason the chain walk
    is: the assignment states an equality the query committed to.
@@ -114,13 +114,13 @@ Regressions for 2–3: `nixie-solver/tests/array_model_chain_walk.rs`
 ## Measured impact
 
 * `tla_bmc` full corpus (318 specs, depth 4): verdicts **byte-identical**
-  before/after, replay tally identical (68 clean / 21 violations — 19
+  before/after, replay tally identical (68 clean / 21 violations – 19
   replayed, 1 not decodable, 1 decoded-not-replayed / 4 undecided). The
   corpus never reaches the new paths; the fixes land on the multiprocess
   PlusCal shapes and the solver-level false-`sat` class.
 * The two-array pipeline pin (`a_two_array_pluscal_spec_never_answers_a_
   false_clean`) moves from `Violation{4}` + `NotReplayed` to
-  `Violation{4}` + **`Replayed`** — the arc's success criterion.
+  `Violation{4}` + **`Replayed`** – the arc's success criterion.
 * DiningPhilosophers `ExclusiveAccess` NP=2: depth ≤ 6 completes clean
   (TLC agrees the property holds); a deliberately false invariant
   decodes a 0-step counterexample, with the documented honest replay

@@ -106,7 +106,7 @@ impl DimacsParser {
     /// `parse_reader_impl` below) in the bulk-load deferral pair
     /// (`Solver::begin_deferred_big` / `finish_deferred_big`): binary
     /// clauses attach without their BIG edges while parsing, and the graph
-    /// is materialized in one exact-size CSR build at the end — same
+    /// is materialized in one exact-size CSR build at the end – same
     /// edges, same per-literal order, no per-literal doubling churn (the
     /// parse-time BIG overshoot measured ~85 MB above live on
     /// worker-class instances, and its freed slack stayed resident in
@@ -144,7 +144,7 @@ impl DimacsParser {
         // Chunked window (1 MiB reads + partial-line carry). Reading the
         // whole file into one buffer first (the previous shape) is faster
         // by a hair, but freeing that whole-file mmap raises glibc's
-        // dynamic mmap threshold to the file size — every later
+        // dynamic mmap threshold to the file size – every later
         // sub-file-size transient (walk rounds, occurrence lists, lucky
         // snapshots) then allocates from the main heap and stays resident
         // after free, which measured as a ~170 MB permanent RSS floor on
@@ -191,7 +191,7 @@ impl DimacsParser {
         }
 
         let mut i = 0usize;
-        // Prime the first window (short reads are fine — only line-complete
+        // Prime the first window (short reads are fine – only line-complete
         // prefixes are scanned).
         {
             let n = reader.read(&mut chunk)?;
@@ -213,7 +213,7 @@ impl DimacsParser {
             // End of the line-complete prefix (or an initially line-less
             // window): carry the partial tail forward and refill. At EOF
             // the whole window is scannable, with a synthetic final
-            // newline for a trailing partial line — exactly the
+            // newline for a trailing partial line – exactly the
             // whole-buffer version's end-of-input behaviour.
             if i == limit && !eof {
                 window.copy_within(limit.., 0);

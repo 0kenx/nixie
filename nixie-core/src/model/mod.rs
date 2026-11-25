@@ -81,7 +81,7 @@ pub enum Value {
     /// Distinct from `Set`: a bag value carries multiplicities, held sorted
     /// by element with positive multiplicities only (a zero multiplicity is
     /// absence, a negative one is ill-formed input the parser rejects).
-    /// Multiplicities are `i64` to match [`Value::Int`] — the arithmetic
+    /// Multiplicities are `i64` to match [`Value::Int`] – the arithmetic
     /// solver's values are the source, and they are already checked to fit.
     Bag(Vec<(Value, i64)>),
     /// Datatype constructor (constructor id, arguments)
@@ -90,7 +90,7 @@ pub enum Value {
     FloatingPoint(bool, u64, u64),
     /// A finite-field element: its residue in `[0, p)` and its field.
     ///
-    /// Exact (`BigInt`), because the ZK moduli are 254 bits wide — a
+    /// Exact (`BigInt`), because the ZK moduli are 254 bits wide – a
     /// fixed-width payload would truncate the very values the theory exists
     /// to decide (`AGENTS.md` → *Wide bit-vectors and bignums are exact*).
     FiniteField {
@@ -400,7 +400,7 @@ enum DebugStep<'a> {
     Node(&'a Value),
     /// Emit this literal.
     Text(&'static str),
-    /// Emit dynamic text (a bag multiplicity — the one payload that is
+    /// Emit dynamic text (a bag multiplicity – the one payload that is
     /// neither a `Value` nor a static literal).
     Owned(String),
 }
@@ -454,7 +454,7 @@ impl core::fmt::Debug for Value {
                     steps.push(DebugStep::Text("])"));
                     for (index, (e, n)) in pairs.iter().enumerate().rev() {
                         // Scheduled in reverse: `", "`, `")"`, element,
-                        // `"(n, "` — the multiplicity is dynamic text.
+                        // `"(n, "` – the multiplicity is dynamic text.
                         if index > 0 {
                             steps.push(DebugStep::Text(", "));
                         }
@@ -591,7 +591,7 @@ impl Value {
                 SortKind::String => break Value::String(String::new()),
                 SortKind::BitVec(width) => break Value::BitVec(width, 0),
                 SortKind::FloatingPoint { .. } => break Value::FloatingPoint(false, 0, 0),
-                // A finite field's canonical default is its zero element —
+                // A finite field's canonical default is its zero element –
                 // additive identity, and `p - 1` would do as well, but zero
                 // is the one every consumer folds first.
                 SortKind::FiniteField(field) => {

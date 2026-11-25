@@ -1,7 +1,7 @@
 # The Transcendental Theory (δ-Satisfiability)
 
-Nixie decides constraints over the reals with **transcendental functions** —
-`(exp x)`, `(log x)`, `(sin x)`, `(cos x)`, `(atan x)`, `(sqrt x)` — using
+Nixie decides constraints over the reals with **transcendental functions** –
+`(exp x)`, `(log x)`, `(sin x)`, `(cos x)`, `(atan x)`, `(sqrt x)` – using
 **dReal-style δ-satisfiability**: interval constraint propagation (ICP)
 driving a dPLL loop, with interval arithmetic whose enclosures are
 mathematically guaranteed. Real arithmetic with even one of these functions
@@ -10,8 +10,8 @@ decision procedure exists; this engine is the honest calculus for that
 world:
 
 * **`unsat`** answers are true refutations.
-* **`sat`** answers are **δ-satisfiability** witnesses — printed as
-  `delta-sat` — never claimed exact models.
+* **`sat`** answers are **δ-satisfiability** witnesses – printed as
+  `delta-sat` – never claimed exact models.
 * everything else is **`unknown`**, never a guess.
 
 This follows the δ-decision framework of Gao–Avigad–Clarke (the dReal
@@ -30,7 +30,7 @@ Ackermannization before the Boolean abstraction: every application `f(t…)`
 becomes a fresh Real variable and the functional-consistency implications
 `(t1 = t1' ∧ …) ⇒ v = v'` join the Boolean skeleton, so the dPLL loop
 carries exactly the ground congruence semantics EUF would (applications
-whose arguments are quantifier-bound are never Ackermannized — those goals
+whose arguments are quantifier-bound are never Ackermannized – those goals
 stay declined). A `distinct` expands to its pairwise negated equalities
 (arity ≤ 16; beyond that the goal is declined rather than atom-bombed).
 
@@ -49,9 +49,9 @@ engine decides against the **δ-weakened** bound `c ± δ·(1+|c|)`:
 
 * **`unsat`**: the δ-weakened *conjunction under every Boolean assignment*
   is proved empty by box pruning. Since weakening only ever adds
-  solutions, δ-unsat implies unsat — a sound refutation.
+  solutions, δ-unsat implies unsat – a sound refutation.
 * **`delta-sat`**: a witness point was found (and re-verified after
-  rounding to the published rationals — what `(get-value …)` prints is
+  rounding to the published rationals – what `(get-value …)` prints is
   exactly what was checked) that satisfies every constraint within its
   δ-tolerance. This is a model of a δ-perturbation of the formula, not of
   the formula itself; the CLI therefore prints `delta-sat`, dReal's
@@ -69,7 +69,7 @@ dominates the strictness, so `a < b` is decided as `a ≤ b`. Under
 * `sqrt(x)` for `x < 0` is `0`;
 * division by an interval that may contain 0 evaluates to the whole line
   (a sound over-approximation) and *blocks verification* of any constraint
-  whose value flows through it — the witness must pin the divisor away
+  whose value flows through it – the witness must pin the divisor away
   from 0 or the verdict stays `unknown`.
 
 ## Architecture
@@ -142,7 +142,7 @@ unsatisfiability after finitely many such lemmas is a proof.
 ## Semantic decisions (2026-09 optimization round)
 
 Three defects found by benchmarking (`bench/trans`, 20-goal corpus) and
-fixed — each pinned by a test or visible in the table below:
+fixed – each pinned by a test or visible in the table below:
 
 1. **Transcendentals stay INLINE (no `$p` purification proxies).**  The
    grammar-driven arith purifier used to replace `(exp (- t))` with a
@@ -150,7 +150,7 @@ fixed — each pinned by a test or visible in the table below:
    atom, a purified definition *chain* doubles the effective δ: the
    published point satisfied the purified form exactly on its δ-edges
    while the original formula was 2δ off (`sin x + cos y = 1` converged
-   to `sin(x)−s = −0.001`, `s+cos(y)−c = +0.001`, … — a witness of the
+   to `sin(x)−s = −0.001`, `s+cos(y)−c = +0.001`, … – a witness of the
    rewritten problem only).  Transcendental nodes are now arithmetic
    constructors (`purify_arith::is_arith_constructor`), dReal-style:
    one atom stays one atom.
@@ -165,21 +165,21 @@ fixed — each pinned by a test or visible in the table below:
    that snaps proxy variables to their defining expression, so the full
    δ budget lands on the real constraints.
 3. **Pruning bounds carry a few ulps of slack** beyond the exact
-   admissible bound (δ+ε pruning).  This is sound for `unsat` — the
+   admissible bound (δ+ε pruning).  This is sound for `unsat` – the
    ε-larger weakened problem contains the δ-weakened one, so emptying
-   the larger still empties the smaller — while the exact witness keeps
+   the larger still empties the smaller – while the exact witness keeps
    demanding the true δ.
 
 Also fixed on the way: a 1-ulp interval can no longer be branched on
 (the bisect midpoint rounds to an endpoint, so the "other half" equals
-the parent — an infinite dive), and a branch that runs out of
+the parent – an infinite dive), and a branch that runs out of
 branchable variables now backtracks into its deferred sibling instead
 of aborting the whole solve with `unknown`.
 
 ### Corpus results (release build, this machine, Z3 4.16.0)
 
 25 goals, `bench/trans/corpus/`: nixie decides **25/25** (14 delta-sat
-witnesses, 11 refutations) in ≤ 131 ms each; Z3 decides **0/25** —
+witnesses, 11 refutations) in ≤ 131 ms each; Z3 decides **0/25** –
 `unknown` on every sin/cos/atan goal it accepts, and it has no
 `exp`/`log`/`sqrt` on Reals at all (parse error).  Full table:
 `precompile/<sha>/benchmark/trans/*.tsv`.  Headline moves from the
@@ -188,23 +188,23 @@ unknown→delta-sat; the decay envelope 554 ms→98 ms→35 ms and unknown→
 delta-sat; the far-window periodic root (`sin x = 0.5` on `[90,100]`)
 303 ms→53 ms via the periodic-aware first split; bounded Pythagorean
 refutation 41 ms→19 ms.  The fragment round (2026-09-23) added the
-UF-congruence, `distinct` and nested-trans goals (t21–t25) — classes
+UF-congruence, `distinct` and nested-trans goals (t21–t25) – classes
 that were honest-`unknown` before it.
 
 ## Options
 
-* `(set-option :delta <rational>)` — the δ (default `0.001`, dReal's).
+* `(set-option :delta <rational>)` – the δ (default `0.001`, dReal's).
   A larger δ widens what counts as δ-satisfiable; `unsat` answers are
   sound for every δ ≥ 0.
-* `(set-option :trans-max-branches <uint>)` — branch-node budget
+* `(set-option :trans-max-branches <uint>)` – branch-node budget
   (default `100000`). Exhaustion answers `unknown`, never a guess.
-* `(set-option :trans-max-propagations <uint>)` — propagation-step budget
+* `(set-option :trans-max-propagations <uint>)` – propagation-step budget
   (default `8000000`).
 
 ## Numeric hygiene
 
 The witness values are `Rational64` midpoints, converted back through the
-rigorous interval layer and **re-verified** before publication — the
+rigorous interval layer and **re-verified** before publication – the
 `((x (/ n d)))` a `delta-sat` prints is exactly the point that was checked.
 No floating-point value is ever printed as a model component without that
 round-trip.

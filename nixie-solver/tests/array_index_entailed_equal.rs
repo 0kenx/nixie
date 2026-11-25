@@ -6,7 +6,7 @@
 //! `n = 1` asserted directly it was decided correctly. With `n = 1` *entailed*
 //! (`n0 = 0`, `n = n0 + 1`) it answered `Sat`.
 //!
-//! No array *lemma* is involved — there is no store, so nothing mints the
+//! No array *lemma* is involved – there is no store, so nothing mints the
 //! index-equality atom. What was missing is one step earlier:
 //! `nelson_oppen_combine`'s model-equal probe pairs terms that are both EUF
 //! application arguments *and* arithmetic interface terms, and a constant
@@ -14,8 +14,8 @@
 //! pinned constant arguments of `Apply` (the `pr30#3` fix) but walked past
 //! `Select`/`Store`.
 //!
-//! Found from Apalache's `Rec3.tla` — a recursive `Fib` over `0..15` read at a
-//! state variable, `Fib[n']` — which was reported violated with `Fib[1] = 2`.
+//! Found from Apalache's `Rec3.tla` – a recursive `Fib` over `0..15` read at a
+//! state variable, `Fib[n']` – which was reported violated with `Fib[1] = 2`.
 
 use nixie_core::TermManager;
 use nixie_solver::{Solver, SolverResult};

@@ -12,10 +12,10 @@ use num_rational::Rational64;
 use num_traits::Zero;
 
 /// Checked `(a - b) / eff` ratio computation (the ratio test's gap):
-/// `None` when the difference or the division does not fit `Rational64` —
+/// `None` when the difference or the division does not fit `Rational64` –
 /// the caller must abandon the optimization rather than wrap (a wrapped
 /// ratio walks the search off the feasible region and can report a
-/// bogus "optimum", which narrows `lp_int_bounds`'s case-split range —
+/// bogus "optimum", which narrows `lp_int_bounds`'s case-split range –
 /// the false-`unsat` direction).  `neg` flips the divisor's sign first
 /// (`gap / -eff`), also checked.
 fn ratio_gap(a: Rational64, b: Rational64, eff: &Rational64, neg: bool) -> Option<Rational64> {
@@ -206,7 +206,7 @@ impl Simplex {
             };
 
             // Ratio test: find the leaving variable (and the bound it is
-            // driven to — the pivot's snap target).
+            // driven to – the pivot's snap target).
             let mut leaving: Option<VarId> = None;
             let mut leaving_snap = SnapBound::LowerPreferred;
             let mut best_ratio: Option<Rational64> = None;

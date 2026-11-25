@@ -130,7 +130,7 @@ pub struct MBQIIntegration {
     /// Current round number
     current_round: usize,
     /// Lifetime round-consumption counter (STATS reporting): unlike
-    /// `current_round`, NEVER rewound by `restore_search_state` — the
+    /// `current_round`, NEVER rewound by `restore_search_state` – the
     /// per-check round counter is search state, the report is a stat.
     rounds_consumed_total: usize,
     /// Per-round instantiation budget.
@@ -160,10 +160,10 @@ pub struct MBQIIntegration {
     /// `clear()` empties it with the rest of the per-solve state.
     active_table_quantifiers: FxHashSet<TermId>,
     /// Whether the previous round ended barren (no fresh instantiation
-    /// anywhere) — the static-model signal that arms the convergence
+    /// anywhere) – the static-model signal that arms the convergence
     /// dividend (see `ModelChecker::refund_on_barren_round`).
     last_round_barren: bool,
-    /// Consecutive barren rounds without a verdict — two arms the
+    /// Consecutive barren rounds without a verdict – two arms the
     /// targeted cardinality escalation (see
     /// `ModelCompleter::thaw_axes_only`).
     barren_streak: u32,
@@ -174,7 +174,7 @@ pub struct MBQIIntegration {
     ground_assertions: Vec<TermId>,
     goal_assertions: Vec<TermId>,
     unnamed_only: bool,
-    /// Cached answer to [`Self::goal_uses_constructor_tables`] — a
+    /// Cached answer to [`Self::goal_uses_constructor_tables`] – a
     /// static property of the quantifier set, invalidated whenever the
     /// set changes.
     tables_goal_cache: Option<bool>,
@@ -183,7 +183,7 @@ pub struct MBQIIntegration {
     compound_representations: Vec<(TermId, TermId)>,
     /// Per-assertion violation counts (the gate's repair-arm arming):
     /// the asserted-equality materialization fires only on a
-    /// *persistent* violation — the second and later rounds the same
+    /// *persistent* violation – the second and later rounds the same
     /// assertion fails against the completed structure.  A round-1
     /// violation is the rows still in flux (the structure has not yet
     /// converged to anything), and materializing the equality pin there
@@ -192,7 +192,7 @@ pub struct MBQIIntegration {
     /// gate).
     gate_violations_seen: FxHashMap<TermId, u32>,
     /// Whether the gate's materialization has fired this search (the
-    /// literal-binding channel's arming signal — see
+    /// literal-binding channel's arming signal – see
     /// `CompletedModel::literal_channel_armed`).
     gate_materialized: bool,
 }
@@ -292,7 +292,7 @@ impl MBQIIntegration {
     }
 
     /// Record which boundary quantifiers' branches the SAT core currently
-    /// commits FALSE (vacuously satisfied) — refreshed by the solver before
+    /// commits FALSE (vacuously satisfied) – refreshed by the solver before
     /// each MBQI round.  An inactive guard makes the round skip the
     /// quantifier's counterexample search entirely: its guarded instances
     /// are inert under `!q`, and searching them would only starve the loop
@@ -310,7 +310,7 @@ impl MBQIIntegration {
     }
 
     /// Register the search's quantifier-free assertions (the assertion
-    /// gate's input — see `Self::ground_assertions_hold`).  Called once
+    /// gate's input – see `Self::ground_assertions_hold`).  Called once
     /// per search by the solver; cleared with the rest of the per-search
     /// state.
     pub fn set_ground_assertions(&mut self, assertions: Vec<TermId>) {
@@ -318,11 +318,11 @@ impl MBQIIntegration {
     }
 
     /// Whether the goal's quantifiers extract any constructor/hint tables
-    /// — a *static* property of the quantifier set (the extraction depends
+    /// – a *static* property of the quantifier set (the extraction depends
     /// only on the axiom shapes).  Decides which side of the
     /// EUF-representative export a term takes: table goals route
     /// assertion-mentioned compounds to
-    /// [`Self::note_compound_representations`] (the mining channel — an
+    /// [`Self::note_compound_representations`] (the mining channel – an
     /// exported assignment would become a never-overridden ground pin and
     /// derail the row search); non-table goals export them as readback
     /// values (the pigeonhole universe fix).  Cached on first call; the
@@ -343,7 +343,7 @@ impl MBQIIntegration {
     /// every completed model for the falsifier mining's literal-binding
     /// channel: `value_to_term` may map a value to the *compound* it
     /// denotes, so the mining can emit the instance at the literal tuple
-    /// — the refutation side's ticket through asserted equalities the
+    /// – the refutation side's ticket through asserted equalities the
     /// semantic collapse would otherwise erase.
     pub fn note_compound_representations(&mut self, pairs: Vec<(TermId, TermId)>) {
         self.compound_representations = pairs;
@@ -356,7 +356,7 @@ impl MBQIIntegration {
     ///
     /// Why it exists: the persistent structure is an interpretation
     /// candidate in its own right (z3's proto-model), not a readback of
-    /// the ground solver's model — its first-wins rows, minted points
+    /// the ground solver's model – its first-wins rows, minted points
     /// and computed tables are *choices* the ground solver never made.
     /// The nested checker certifies the quantified story against exactly
     /// those choices; the ground story (the assertions) needs its own
@@ -368,7 +368,7 @@ impl MBQIIntegration {
     /// On violation the gate also repairs: every assertion atom whose
     /// completed value disagrees with the ground model's (the partial
     /// model the structure was harvested from) is queued for the merge's
-    /// re-read channel — the ground model satisfies the assertions, so
+    /// re-read channel – the ground model satisfies the assertions, so
     /// re-reading those atoms restores agreement next round.  Returns
     /// `false` (blocking `Satisfied`) while any assertion fails.
     fn ground_assertions_hold(
@@ -423,17 +423,17 @@ impl MBQIIntegration {
         // The asserted-equality materialization (the gate's repair arm for
         // table goals): the e-graph has already merged the goal's compound
         // equalities (`a = difference(union(a b), b)`), but on table goals
-        // the export deliberately does not read those merges back — a
+        // the export deliberately does not read those merges back – a
         // round-1 pin derails the row search (measured on set16).  A
         // *violated* assertion is the late signal that the structure's own
         // row algebra will not honor the equality on its own: materialize
-        // exactly the merged pairs (compound != representative — a
+        // exactly the merged pairs (compound != representative – a
         // self-representative pair pinned to its own compound would re-mint
         // the chase the tables exist to kill) as structure entries, through
         // the same normalization the harvest path runs.  The next round's
         // tables then compute under the pin, the defining axiom falsifies
         // at the collapsed tuple, and the mining's literal-binding channel
-        // emits the instance at the *literal* tuple — the one the ground
+        // emits the instance at the *literal* tuple – the one the ground
         // solver refutes through (the extensional family's closure).
         if !persistent.is_empty() {
             let merged: Vec<(TermId, TermId)> = self
@@ -459,7 +459,7 @@ impl MBQIIntegration {
         // merge's re-read.  The ground model satisfies the assertion, so
         // adopting its values at the diverging atoms restores agreement;
         // a divergence the re-read cannot reach (minted rows, computed
-        // entries) blocks `Satisfied` permanently — honest `unknown`,
+        // entries) blocks `Satisfied` permanently – honest `unknown`,
         // never a fabricated `sat`.
         let mut atoms: Vec<TermId> = Vec::new();
         for &assertion in &violations {
@@ -495,12 +495,12 @@ impl MBQIIntegration {
     /// `quantifier` against a total completed interpretation with the
     /// nested model checker.  `Satisfied` records the certification (and,
     /// for a macro's defining axiom, emits the defining pins); a
-    /// counterexample yields sound instantiation lemmas and — for duplicate
-    /// falsifiers whose evaluation consumed only ground commitments — a
+    /// counterexample yields sound instantiation lemmas and – for duplicate
+    /// falsifiers whose evaluation consumed only ground commitments – a
     /// model-repair blocking clause.  A decline changes nothing.  Returns
     /// whether the check *vetoes* the legacy finite-exhaustion `Satisfied`
     /// verdict for this quantifier (any counterexample whose mined lemmas
-    /// were all duplicates — or none were minable at all).
+    /// were all duplicates – or none were minable at all).
     fn escalate_to_model_checker(
         &mut self,
         quantifier: &QuantifiedFormula,
@@ -524,7 +524,7 @@ impl MBQIIntegration {
                 // SatisfiedWithPins: certifying a macro's defining axiom
                 // also emits its defining instances at universe tuples.
                 // Every instance of an asserted universal is a sound
-                // consequence, so this only adds lemmas — but *forcing*
+                // consequence, so this only adds lemmas – but *forcing*
                 // ones: they pin the function at the universe's compound
                 // elements (`union(b,a)`, ...) whose diagonal the
                 // enumerative seeder can no longer reach once its
@@ -546,7 +546,7 @@ impl MBQIIntegration {
             }
             ModelCheckOutcome::Counterexample { falsifiers } => {
                 // The nested refutation found a falsifier *inside the Skolem
-                // restriction* — the finite universe — so the completed model
+                // restriction* – the finite universe – so the completed model
                 // demonstrably fails this quantifier on a domain point.
                 // When even the mined lemmas are all duplicates, the
                 // sampling engines' "true on every candidate tuple" verdict
@@ -587,7 +587,7 @@ impl MBQIIntegration {
                             // atoms whose completed values the falsifying
                             // evaluation consumed, and the fresh lemma is
                             // about to force the ground solver's value at
-                            // exactly the arrangement they describe — queue
+                            // exactly the arrangement they describe – queue
                             // them for the next merge's re-read so the
                             // structure follows the refinement instead of
                             // holding a stale first-wins row against it
@@ -599,16 +599,16 @@ impl MBQIIntegration {
                             // A duplicate falsifier: its lemma already
                             // landed (or was a duplicate at birth), so the
                             // ground solver has already answered this
-                            // arrangement — queue the commitments for the
+                            // arrangement – queue the commitments for the
                             // merge's re-read regardless of `fully_pinned`
                             // (a re-read adopts the ground's current word,
-                            // forced or free — a legitimate interpretation
+                            // forced or free – a legitimate interpretation
                             // choice either way; the *blocking clause*
                             // below stays gated on `fully_pinned`, that is
                             // the soundness-critical transfer).
                             // Without this, a stale first-wins pin the
                             // falsifier consumes spins forever: the set
-                            // family's `subset(b,a)`-shaped stall — the
+                            // family's `subset(b,a)`-shaped stall – the
                             // structure holds the stale pin, every round
                             // re-finds the same duplicate, and nothing
                             // ever re-reads the atom (measured on the
@@ -632,7 +632,7 @@ impl MBQIIntegration {
                                 // recorded ground-model commitments alone, so
                                 // every model of the assertions that agrees
                                 // with all of them falsifies this asserted
-                                // quantifier at this point — no such model
+                                // quantifier at this point – no such model
                                 // exists, and the blocking disjunction
                                 // `or_i (atom_i != value_i)` the caller emits
                                 // excludes only non-solutions.
@@ -644,16 +644,16 @@ impl MBQIIntegration {
                                 // hits and entry hits (recorded), the entry
                                 // normalizations the chains bake in (recorded
                                 // since 2026-09-15), and structural constant
-                                // folds (rigid — transfer for free).  Every
-                                // completion *choice* — else fallthroughs,
+                                // folds (rigid – transfer for free).  Every
+                                // completion *choice* – else fallthroughs,
                                 // macro unfoldings, computed tables, universe
-                                // distinctness — sets `free_choice`, and a
+                                // distinctness – sets `free_choice`, and a
                                 // falsifier that consumed any is not
                                 // `fully_pinned`.  This closes the removed
                                 // emission's failure mode (its recording
                                 // missed the normalization consults, its
                                 // chains baked unflagged choices, and blocking
-                                // refuted satisfiable goals — the quant_fuzz
+                                // refuted satisfiable goals – the quant_fuzz
                                 // false-`unsat`); the `fully_pinned` gate plus
                                 // the complete recording is what the old
                                 // emission lacked.
@@ -664,7 +664,7 @@ impl MBQIIntegration {
                                 // entirely (the scope-rebase convergence pin
                                 // regressed past 400 s when the repair was
                                 // ungated), while within a table problem every
-                                // quantifier's stale pins are repairable — the
+                                // quantifier's stale pins are repairable – the
                                 // witness axioms are not table-owned but their
                                 // falsifiers are exactly the fully-pinned
                                 // shape this exists for.
@@ -696,7 +696,7 @@ impl MBQIIntegration {
     /// `SatisfiedWithPins`: the nested checker just certified `quantifier`
     /// against a total completed interpretation, and `quantifier` is the
     /// winning defining axiom of one or more macros.  Emit the axiom's
-    /// instances at universe tuples — diagonals first, then the rest — so
+    /// instances at universe tuples – diagonals first, then the rest – so
     /// the ground solver pins the defined function at every element of the
     /// universe, compound constructor terms included.  Each pin is an
     /// instance of an *asserted* universal, hence a sound consequence; the
@@ -725,13 +725,13 @@ impl MBQIIntegration {
         }
 
         // The tuple axes: the quantifier's bound-var sorts' universes.
-        // Only uninterpreted sorts qualify — their universe *is* the
+        // Only uninterpreted sorts qualify – their universe *is* the
         // domain (finite-model semantics); an interpreted sort's universe
         // entry is a sample of an infinite domain, and pinning at samples
         // buys nothing (the macro is defined there by evaluation anyway).
         // A constructor argument axis of a defining axiom takes its
         // *semantic* domain (see `constructor_tables`): the universe with
-        // compounds collapsed through the computed tables — the pin at
+        // compounds collapsed through the computed tables – the pin at
         // `(x, b, b)` subsumes `(x, b, union(b,b))`, and minting the
         // compound twice would itself restart the chase.
         let mut sets: Vec<Vec<TermId>> = Vec::with_capacity(quantifier.bound_vars.len());
@@ -759,8 +759,8 @@ impl MBQIIntegration {
         // Diagonals first (the `(z,z)` forcing pins), then the remaining
         // tuples in odometer order, under the product cap.  A diagonal is
         // per **sort class**: axes of the same sort take the same value.
-        // Repeating one element of `sets[0]` across *all* axes — the
-        // original construction — mints ill-typed tuples on every
+        // Repeating one element of `sets[0]` across *all* axes – the
+        // original construction – mints ill-typed tuples on every
         // heterogeneous defining axiom: `forall ?x:Elem ?s1:Set ?s2:Set`
         // pinned at `(u!3, u!3, u!3)` substitutes an Elem constant into
         // the Set positions, asserting `member(u!3, union(u!3, u!3))`
@@ -768,7 +768,7 @@ impl MBQIIntegration {
         // back as garbage table entries (`member(u!4, u!4) = false`),
         // poison the instantiation sets (an Elem value bucketed under
         // Set), and surface in the nested checks as free compound terms
-        // (`union(u!3, u!3)`) the walk can never reproduce — the exact
+        // (`union(u!3, u!3)`) the walk can never reproduce – the exact
         // walk-vs-aux divergence that stalled the set family (see
         // `docs/studies/2026-09-14-model-finder-constructor-tables.md`).
         let mut tuples: Vec<SmallVec<[TermId; 4]>> = Vec::new();
@@ -862,7 +862,7 @@ impl MBQIIntegration {
             }
             // Defense in depth: a tuple value whose sort does not match
             // its axis's bound variable is malformed (a domain bug
-            // somewhere upstream) — substituting it would mint ill-typed
+            // somewhere upstream) – substituting it would mint ill-typed
             // terms.  Skip the tuple; the search stays sound, only this
             // pin is lost.
             if tuple.iter().enumerate().any(|(i, &v)| {
@@ -969,15 +969,15 @@ impl MBQIIntegration {
         if self.current_round > 1 {
             self.conflict_scores.decay_on_restart();
         }
-        // Convergence dividend: the previous round found nothing fresh —
-        // the model is static — so the per-quantifier check budgets are
+        // Convergence dividend: the previous round found nothing fresh –
+        // the model is static – so the per-quantifier check budgets are
         // refunded for exactly one certification wave.  The global budgets
         // are not, so this cannot loop.
         self.model_checker
             .set_table_mode(!self.active_table_quantifiers.is_empty());
         // A round that minted fresh row elements is NOT barren: the
         // completed structure grew (a certification-enabling row the
-        // domain lacked — see `mint_fresh_row_element`), and escalating
+        // domain lacked – see `mint_fresh_row_element`), and escalating
         // the axis domains while the structure grows explodes the row
         // space (set9: 17-wide rows, the 32-element cap, and every
         // nested check past its conflict budget).
@@ -986,16 +986,16 @@ impl MBQIIntegration {
             self.model_checker.refund_on_barren_round();
             // The *targeted* cardinality escalation: two barren rounds
             // without a verdict mean the frozen structure cannot carry
-            // the model — a witness axiom falsified for want of an
+            // the model – a witness axiom falsified for want of an
             // element the freeze never saw (the ground solver has
             // already minted the distinguishing `skf!0` witnesses; they
             // are outside the frozen axis domain).  Thaw only the axis
-            // sorts — the constructor *range* sorts stay frozen, so the
+            // sorts – the constructor *range* sorts stay frozen, so the
             // tuple space, the tables and every already-landed
             // certification stay stable while the axes re-freeze at the
             // grown universe and the rows refine.  (The full thaw
             // re-freezes the range sorts over their stale pins too and
-            // re-stalls at a higher cardinality — measured: set16
+            // re-stalls at a higher cardinality – measured: set16
             // 0 s -> 35 s, no verdict.  See the study.)
             self.barren_streak += 1;
             if self.barren_streak >= 2 && self.model_completer.thaw_axes_only() {
@@ -1037,18 +1037,18 @@ impl MBQIIntegration {
                     return MBQIResult::Unknown;
                 }
             };
-        // Stamp the readback's compound pairs (the mining channel — see
+        // Stamp the readback's compound pairs (the mining channel – see
         // `CompletedModel::compound_values`); readback info, not
         // structure state.
         completed_model.compound_values = self.compound_representations.clone();
         completed_model.literal_channel_armed = self.gate_materialized;
         // The assertion gate, always on: a violated quantifier-free
         // assertion is repaired immediately (diverging atoms re-read;
-        // asserted-equality merges materialized as pins — see the gate's
+        // asserted-equality merges materialized as pins – see the gate's
         // repair arm), instead of waiting for a `Satisfied` attempt the
         // loop may never reach (the extensional family died in
         // certification with the violated equality unrepaired).  The
-        // verdict is not consumed here — the `Satisfied` sites re-run the
+        // verdict is not consumed here – the `Satisfied` sites re-run the
         // gate for the blocking decision; this call exists for the repair.
         let _ = self.ground_assertions_hold(&completed_model, partial_model, manager);
 
@@ -1156,21 +1156,21 @@ impl MBQIIntegration {
                 // Instantiation budget exhausted.  This is NOT satisfaction:
                 // the quantifier simply stops being searched, and a `Satisfied`
                 // verdict that quietly ignores it certifies a model nobody
-                // checked — the Rodin false-`sat` (`smt4688353851435564037`,
+                // checked – the Rodin false-`sat` (`smt4688353851435564037`,
                 // `:status unsat`): rounds of heavy instantiation exhausted
                 // the goal quantifiers' budgets, the finite-exhaustion gate
                 // then saw only the survivors, and a fabricated finite model
                 // was printed.  A vacuously-satisfied guard is genuinely
                 // done; anything else must veto `Satisfied` unless the
                 // nested checker certifies it (below).  (Existentials with
-                // an exhausted budget equally lack a witness — same veto,
+                // an exhausted budget equally lack a witness – same veto,
                 // and no refutation-based certification exists for them.)
                 //
                 // The nested model checker still runs for a non-vacuous
                 // universal: its certification is a *proof* of satisfaction
                 // against a total interpretation, bounded by its own
                 // budgets (signature gate, per-quantifier lifetime cap,
-                // global conflict budget) — not by the instantiation budget
+                // global conflict budget) – not by the instantiation budget
                 // that bounds the *search*.  This is also the only road to
                 // convergence for definitional axioms whose forcing
                 // instances at fresh universe elements (compound
@@ -1207,9 +1207,9 @@ impl MBQIIntegration {
                 .inject_extra_candidates(&self.extra_candidates);
 
             // The Z3-style nested model checker (see `model_checker`) runs
-            // as the certification of LAST RESORT — after this loop, when
+            // as the certification of LAST RESORT – after this loop, when
             // the sampling engines produced neither a counterexample nor a
-            // certification — because a nested full solve per quantifier
+            // certification – because a nested full solve per quantifier
             // per round is the most expensive tool in the box and the
             // cheap engines already converge on most goals.
 
@@ -1229,7 +1229,7 @@ impl MBQIIntegration {
             // *fresh* instantiation this round.  A round that samples only
             // duplicates is unproductive for the quantifier: the ground
             // model will not move on its account, and the rounds spin on
-            // the same falsifiers until the streak bail — the set-family
+            // the same falsifiers until the streak bail – the set-family
             // stall.  Such rounds now escalate to the nested model checker
             // too (see the escalation below), which is what makes the
             // duplicate-falsifier point reachable at all.
@@ -1289,13 +1289,13 @@ impl MBQIIntegration {
             }
 
             // Escalation: the sampling search found *no counterexample at
-            // all* for this universal — or every falsifier it found was a
+            // all* for this universal – or every falsifier it found was a
             // duplicate (a spin round: the instance set is saturated for
             // this quantifier and the ground model will not move).  Decide
             // it against a *total* completed interpretation with a nested
             // full solve (Z3's `smt_model_checker`): `Satisfied` certifies
-            // over the whole (possibly infinite) domain — something no
-            // finite sample can do — and a counterexample yields sound
+            // over the whole (possibly infinite) domain – something no
+            // finite sample can do – and a counterexample yields sound
             // instantiation lemmas mined from the instantiation set.  A
             // decline changes nothing.
             // Only universals: an existential needs a witness, not a
@@ -1335,14 +1335,14 @@ impl MBQIIntegration {
             // The veto gate: the sampling engines' tuple evaluations are the
             // legacy certification's only evidence, and their evaluator has
             // a documented liar in its lookup path (stale-entry TermId
-            // matches — the Rodin false-`sat`).  Before accepting, every
+            // matches – the Rodin false-`sat`).  Before accepting, every
             // unresolved quantifier gets the nested checker's second
             // opinion (memoized per model signature; `true` = the completed
             // model demonstrably fails it, or the check could not run).
             // The veto gate is evaluated LAST: the cheap gates first
             // (ground evaluations, then the finite-domain enumeration),
             // because a second opinion is a nested solve and most rounds
-            // fail the cheap gates — evaluating it eagerly cost the
+            // fail the cheap gates – evaluating it eagerly cost the
             // 600-rerun convergence pins 20x (a nested solve per round
             // per quantifier, on goals the cheap gates disqualify anyway).
             let logic_hint = self.logic_hint.clone();
@@ -1698,7 +1698,7 @@ impl MBQIIntegration {
         self.tables_goal_cache = None;
         self.compound_representations.clear();
         // Scope consistency (AGENTS.md): the persistent structure was
-        // derived under the popped assertions — its rows, frozen domains
+        // derived under the popped assertions – its rows, frozen domains
         // and minted points do not roll back per-atom, so the whole
         // table-search state resets and the next check re-derives it.
         self.model_completer.reset_structure();
@@ -2344,7 +2344,7 @@ impl MBQIIntegration {
             /// simplifier, so a tautological-antecedent instantiation
             /// `(forall x. P(x) => P(x)) => subset(z,z)` kept its wrapper
             /// and the SAT core dodged the consequence by committing the
-            /// wrapper's free Boolean FALSE — the committed-existential
+            /// wrapper's free Boolean FALSE – the committed-existential
             /// dodge.  Descending lets the existing `p -> p` collapse fire
             /// under the binder, and a constant body collapses the binder
             /// itself.
@@ -2653,7 +2653,7 @@ impl MBQIIntegration {
                             Some(TermKind::True) => sr,
                             _ => match manager.get(sr).map(|t2| &t2.kind) {
                                 Some(TermKind::True) => manager.mk_true(),
-                                // `p -> p` is a tautology — syntactic
+                                // `p -> p` is a tautology – syntactic
                                 // identity after simplification.  This is
                                 // the reflexive-implication shape the set
                                 // axioms instantiate into (`A3[z,z]`'s
@@ -2717,8 +2717,8 @@ impl MBQIIntegration {
                         // `forall x. true -> true`, `forall x. false ->
                         // false`, and dually for `exists`.  Sound because
                         // every SMT-LIB sort is non-empty (the empty-domain
-                        // counterexamples — `forall` vacuously true,
-                        // `exists` vacuously false — cannot arise).  This
+                        // counterexamples – `forall` vacuously true,
+                        // `exists` vacuously false – cannot arise).  This
                         // is what turns
                         // `(forall x. P(x) => P(x)) => subset(z,z)` into
                         // the forcing unit `subset(z,z)` at emission: the

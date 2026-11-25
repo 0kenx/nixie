@@ -12,14 +12,14 @@ model exists.
 
 A first version refused to move "pinned" results (assignments the model
 builder recorded for applications).  Instrumenting the downgrade showed
-two split groups, both fully pinned — e.g. `t.nxt(t.l)=1` vs
+two split groups, both fully pinned – e.g. `t.nxt(t.l)=1` vs
 `t.nxt(i1)=0` at model-equal arguments (three pointer constants all at
 −7).  The z3 cross-check settled the semantics:
 
 * `F ∧ (= (t.nxt t.l) (t.nxt i1))` → **sat**
 * `F ∧ (distinct (t.nxt t.l) (t.nxt i1))` → **sat**
 
-Neither side is entailed — the recorded results are **search-arbitrary
+Neither side is entailed – the recorded results are **search-arbitrary
 choices**, not assertion obligations.  A pin rule built on "the builder
 wrote it" is therefore unsound in the completeness direction: it
 preserves exactly the arbitrary collisions the pass exists to repair.
@@ -29,10 +29,10 @@ preserves exactly the arbitrary collisions the pass exists to repair.
 `Solver::canonicalize_model_congruence` (new module
 `solver/model_congruence.rs`): group each function's applications by
 their arguments' ground model values; unify every split group's results
-to a representative (majority, ties by smallest TermId — deterministic)
+to a representative (majority, ties by smallest TermId – deterministic)
 as a **trial repair**; the caller post-validates with
-`model_refutes_assertions` — the same ground evaluator the
-model-refutation gate uses — and **discards the repair wholesale**
+`model_refutes_assertions` – the same ground evaluator the
+model-refutation gate uses – and **discards the repair wholesale**
 (original assignments restored) if it falsifies any ground assertion.
 The gate then fires only when *every* congruent choice is inconsistent
 with the assertions: the genuinely unsat-shaped candidates.
@@ -52,7 +52,7 @@ is the recovered `sat`.  Full suite 10 083, clippy/fmt/doc, Z3 parity
 ## Disposition
 
 Landed with the gate (`04329ea` + this): the `Sat` exit now has both
-halves — the trajectory-independent refusal of uninterpretable models,
+halves – the trajectory-independent refusal of uninterpretable models,
 and the repair of models that differ from a real one only in
 unconstrained application results.
 

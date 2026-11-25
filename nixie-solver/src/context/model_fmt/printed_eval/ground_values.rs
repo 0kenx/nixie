@@ -1,5 +1,5 @@
 //! A closed quantifier-free assertion over datatype, enumeration and
-//! uninterpreted-sort VALUES, decided by value — without interning a term
+//! uninterpreted-sort VALUES, decided by value – without interning a term
 //! (re-fix pass 17, decision (79)(a)).
 //!
 //! # Why the quantifier-free net needs it
@@ -11,13 +11,13 @@
 //! open there.  The quantifier-free datatype net (decision (72)(a),
 //! `Context::withhold_a_falsifying_datatype_model`) therefore only ever saw
 //! the comparisons the term builder had already folded while the printed
-//! model was substituted in — two literal constructor applications, which
+//! model was substituted in – two literal constructor applications, which
 //! `mk_eq` decides at construction (`#P2b-76`).  Whether a check's model was
 //! caught depended on how its printed tables happened to read: `gen_dt.py`
 //! seed 30093154 `d00239`'s first model prints `h` as an `ite` chain over its
 //! argument, so `(= (cons (k (v nil)) l3) (h (+ 1 (- 1))))` closed to an
 //! equality between an `ite` whose conditions compare `(+ 1 (- 1))` with
-//! numerals and the list `(cons 5 (cons 2 nil))` — open, published, and
+//! numerals and the list `(cons 5 (cons 2 nil))` – open, published, and
 //! false; its second and third checks closed the same assertion to two
 //! literal constructor applications, which folded to `false` and were
 //! withheld.  A `distinct` of two constructor values was never decided at
@@ -49,7 +49,7 @@
 //! search of a LATER check is sensitive to what the term arena holds (the
 //! note on `(get-value)`'s printed reading says the same): a first version
 //! that rewrote the assertion through the term builder moved later checks'
-//! trajectories — `gen_dt.py` seed 30093154 `d00261`'s third check printed
+//! trajectories – `gen_dt.py` seed 30093154 `d00261`'s third check printed
 //! a model pass 16 printed and z3 confirms, and that version found another.
 //! So the reading borrows the term manager shared and builds nothing.
 
@@ -108,8 +108,8 @@ impl Context {
         }
     }
 
-    /// The truth value of `term` — a closed Boolean term, with no free
-    /// symbol but the uninterpreted-sort witnesses in `witnesses` — read by
+    /// The truth value of `term` – a closed Boolean term, with no free
+    /// symbol but the uninterpreted-sort witnesses in `witnesses` – read by
     /// value (see the module docs); `None` where the reading is open.
     pub(in crate::context) fn ground_truth(
         &self,
@@ -428,7 +428,7 @@ impl GroundReader<'_> {
                 {
                     return self.value(*args.first()?, steps);
                 }
-                // Any other array term — a read of an array of arrays —
+                // Any other array term – a read of an array of arrays –
                 // is read by value.
                 _ => {
                     let array = self.value(level, steps)?;
@@ -621,7 +621,7 @@ impl GroundReader<'_> {
     }
 
     /// Whether `term` has a datatype- or uninterpreted-sorted sub-term (or a
-    /// witness) — memoised, depth-bounded (a term past the bound counts as
+    /// witness) – memoised, depth-bounded (a term past the bound counts as
     /// having one, so it is read structurally rather than handed whole to
     /// the scalar evaluator).
     fn has_valued_sort(&self, term: TermId, _depth: u32) -> bool {
@@ -720,7 +720,7 @@ mod tests {
     }
 
     /// `d00239`'s first check: an equality between an `ite` over
-    /// `(+ 1 (- 1))` and a list, and a `distinct` of lists — both open to the
+    /// `(+ 1 (- 1))` and a list, and a `distinct` of lists – both open to the
     /// exact evaluator, both read by value, and nothing interned for it.
     #[test]
     fn an_ite_over_a_closed_condition_and_a_distinct_of_lists_are_read() {

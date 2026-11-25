@@ -618,11 +618,11 @@ fn test_division_directed_rounding_brackets_rne() {
     assert!(rtp_f > 3.333 && rtn_f < 3.334);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // SMT-LIB `fp.min` / `fp.max` semantics (NaN yields the other operand; a tie
 // prefers the negative zero for min / the positive zero for max).  The
 // previous `Ordering::Equal => a` made `fp.min(+0,-0)` the wrong datum.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn min_max_mixed_zero_ties_follow_smtlib() {
@@ -650,7 +650,7 @@ fn min_max_nan_yields_the_other_operand() {
     assert_eq!(engine.max(&one, &nan).to_f64(), Some(1.0));
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Directed-mode gradual underflow: the rounding decision for a result below
 // the normal range belongs on the SUBNORMAL grid.  `(-min_sub) * (+min_sub)`
 // underflows far below the smallest subnormal; RTN must round the negative
@@ -658,7 +658,7 @@ fn min_max_nan_yields_the_other_operand() {
 // +min_subnormal, while RNE/RTZ give zero.  The previous underflow path
 // truncated with the dropped bits never consulted and returned ±0
 // unconditionally (false-`sat` on the `= -0` refutation; z3: `unsat`).
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn directed_rounding_underflow_rounds_on_the_subnormal_grid() {

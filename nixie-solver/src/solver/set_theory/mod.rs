@@ -13,7 +13,7 @@
 //! the assertion is encoded, so the SAT layer and EUF decide sets without a
 //! mid-search propagator. The reason is not simplicity: a theory solver here
 //! holds only `&TermManager` during search and cannot create the membership
-//! atoms or disequality witnesses it would need — the same constraint that
+//! atoms or disequality witnesses it would need – the same constraint that
 //! makes `ArrayTheory` pre-create its extensionality witnesses at encode time.
 //!
 //! # The axioms
@@ -76,7 +76,7 @@ enum Shape {
     /// own this sort, but it runs *after* this reduction, so by the time the
     /// conditional equalities exist the survey that would have picked them up
     /// has already happened. Leaving it opaque made `(= (ite c {1} {2}) {})`
-    /// answer `Sat` — a wrong `sat`, since neither branch is empty.
+    /// answer `Sat` – a wrong `sat`, since neither branch is empty.
     ///
     /// [`Solver::eliminate_nonbool_ite`]: super::super::Solver::eliminate_nonbool_ite
     Ite(TermId, TermId, TermId),
@@ -88,7 +88,7 @@ enum Shape {
     Product(TermId, TermId),
     /// `(rel.transpose r)`.
     Transpose(TermId),
-    /// `(rel.iden s)` — the operand is a plain set.
+    /// `(rel.iden s)` – the operand is a plain set.
     Iden(TermId),
     /// `(as set.universe (Set T))`.
     Univ,
@@ -145,7 +145,7 @@ fn shape_of(set: TermId, manager: &TermManager) -> Shape {
 ///
 /// Budget on **derived** element growth per sort: the join's splits and
 /// the compose's glued tuples re-enter the next pass's survey as fresh
-/// elements, and each pass then derives more of them — unbounded
+/// elements, and each pass then derives more of them – unbounded
 /// feedback, measured at 12 → 39 → 91 → 148 elements across the asserts
 /// of a five-line script. CVC5 never re-derives: its
 /// `computeMembersForBinOpRel` composes lazily over equivalence-class
@@ -153,18 +153,18 @@ fn shape_of(set: TermId, manager: &TermManager) -> Shape {
 /// reduction's honest analogue is a budget: crossing it skips further
 /// split derivation and raises the reduction's `incomplete` flag, so a
 /// `Sat` resting on an under-derived relation fragment degrades to
-/// `Unknown` (an `Unsat` stays — every emitted axiom is valid
-/// regardless). User-surveyed elements are never counted against it —
+/// `Unknown` (an `Unsat` stays – every emitted axiom is valid
+/// regardless). User-surveyed elements are never counted against it –
 /// the input's own size is not feedback. Aligned with the counting cap
 /// ([`cardinality`]'s `MAX_COUNT_ELEMENTS`): the same population drives
-/// both passes' pair products. Env-overridable and reported on firing —
+/// both passes' pair products. Env-overridable and reported on firing –
 /// see [`crate::solver::caps`].
 fn max_derived_elements() -> usize {
     crate::solver::caps::cap("set_derived_elements", 24)
 }
 
 /// The returned list may contain duplicates and terms that are only
-/// *candidates* — membership still decides which are really in. That is what
+/// *candidates* – membership still decides which are really in. That is what
 /// makes the de-duplication in [`cardinality_axiom`] necessary.
 fn support(set: TermId, manager: &mut TermManager, depth: usize) -> Option<Vec<TermId>> {
     // Bounded: the walk follows a term the user wrote.
@@ -185,13 +185,13 @@ fn support(set: TermId, manager: &mut TermManager, depth: usize) -> Option<Vec<T
         }
         Shape::Minus(a, _) => support(a, manager, depth + 1),
         // The result *is* one of the branches, so the two supports together
-        // confine it — the same argument as a union, and it needs both.
+        // confine it – the same argument as a union, and it needs both.
         Shape::Ite(_, a, b) => {
             let mut xs = support(a, manager, depth + 1)?;
             xs.extend(support(b, manager, depth + 1)?);
             Some(xs)
         }
-        // A complement's members are everything *but* the operand's — not
+        // A complement's members are everything *but* the operand's – not
         // confined to any finite list.
         Shape::Complement(_) => None,
         // The universe set's members are the whole element sort: confined
@@ -199,7 +199,7 @@ fn support(set: TermId, manager: &mut TermManager, depth: usize) -> Option<Vec<T
         // term-enumerable here. `cardinality` states |U| directly instead.
         Shape::Univ => None,
         // The converse's members are the operand's reversed, so a confined
-        // operand confines it — each reversed once, bounded by the same
+        // operand confines it – each reversed once, bounded by the same
         // list.
         Shape::Transpose(r) => support(r, manager, depth + 1)
             .map(|xs| xs.iter().map(|&e| reverse_tuple(e, manager)).collect()),
@@ -207,7 +207,7 @@ fn support(set: TermId, manager: &mut TermManager, depth: usize) -> Option<Vec<T
         Shape::Iden(x) => support(x, manager, depth + 1)
             .map(|xs| xs.iter().map(|&e| duplicate_tuple(e, manager)).collect()),
         // A product's members are the pairs of the operands': confined
-        // when both are, with the pair count the product of the two —
+        // when both are, with the pair count the product of the two –
         // bounded, because a support list is already bounded by the caps
         // upstream.
         Shape::Product(a, b) => {
@@ -233,7 +233,7 @@ fn support(set: TermId, manager: &mut TermManager, depth: usize) -> Option<Vec<T
     }
 }
 
-// ===== tuple helpers (the relation operators' term algebra) =====
+// ======== tuple helpers (the relation operators' term algebra) ========
 //
 // Tuples are single-constructor datatypes (`TermManager::tuple_sort`), so
 // these are thin structural builders; every one is hash-consed and
@@ -267,14 +267,14 @@ fn join_arities(
     }
     // The FULL operand arities. (This once returned the decremented front
     // and back lengths while the join definition arm indexed with it as
-    // the full arity — a binary ⨝ binary built the splits `(k)` and
+    // the full arity – a binary ⨝ binary built the splits `(k)` and
     // `(k, 1, 3)` instead of `(1, k)` and `(k, 3)`, cross-sort elements
     // that no faithful model could value.)
     Some((n1, middle, n2))
 }
 
 /// `sel_i(t)`: the i-th component as a selector term. Uniform for any
-/// tuple term — constructor or variable — because EUF and the datatype
+/// tuple term – constructor or variable – because EUF and the datatype
 /// axioms own selector semantics (a selector of a constructor folds at
 /// encode time; of a variable it is the accessor the theory decides).
 fn select_i(t: TermId, i: usize, manager: &mut TermManager) -> TermId {
@@ -314,7 +314,7 @@ fn full_concat_tuple(u: TermId, v: TermId, manager: &mut TermManager) -> TermId 
 }
 
 /// The **join** concatenation: `u`'s columns except its last, then `v`'s
-/// except its first — the shared middle column is dropped (CVC5's
+/// except its first – the shared middle column is dropped (CVC5's
 /// `computeMembersForBinOpRel` glue; `(a,b) ⨝ (b,c) = (a,c)`).
 fn concat_tuple(u: TermId, v: TermId, manager: &mut TermManager) -> TermId {
     let nu = tuple_arity(u, manager).unwrap_or(1).max(1);
@@ -330,8 +330,8 @@ fn concat_tuple(u: TermId, v: TermId, manager: &mut TermManager) -> TermId {
 /// membership-congruence traversal.
 ///
 /// The congruence block ties `member(x, s)` to `member(y, s)` across
-/// equalities `x = y`. Traversing through **arithmetic composites** —
-/// `set.card` terms, the counting sums, the slack variables inside them —
+/// equalities `x = y`. Traversing through **arithmetic composites** –
+/// `set.card` terms, the counting sums, the slack variables inside them –
 /// used to make each pass's own axioms seed the next pass's element list
 /// with those composites (12 → 19 → 59 elements in four asserts), which
 /// both quadratically grew the de-duplication guards and eventually tripped
@@ -342,7 +342,7 @@ fn concat_tuple(u: TermId, v: TermId, manager: &mut TermManager) -> TermId {
 /// element list directly from the survey of their membership atoms, and
 /// its equalities to other plausible terms still tie.
 /// Whether a term's spelling contains one of the join skolem variables
-/// (`@set_join_*`) — i.e. it is itself split-derived.
+/// (`@set_join_*`) – i.e. it is itself split-derived.
 /// Whether every leaf equality of an unfolded tuple-equality antecedent
 /// is *committable*: both sides of each leaf `Eq` sit in one group of the
 /// equality-adjacency closure. A pair whose leaves straddle groups has no
@@ -414,7 +414,7 @@ fn element_plausible(t: TermId, manager: &TermManager) -> bool {
         // Encoder-internal variables (`__nixie_*`, `$p*`) are never user
         // elements; their defining equalities (`$p = ite …`) are the ite/
         // purification rewrites, and traversing them only mints membership
-        // atoms for proxies — which then grow the element list every pass.
+        // atoms for proxies – which then grow the element list every pass.
         TermKind::Var(name) => {
             let n = manager.resolve_str(*name);
             !nixie_core::reserved::is_encoder_proxy(n)
@@ -446,7 +446,7 @@ fn element_plausible(t: TermId, manager: &TermManager) -> bool {
         // Arithmetic composites (`set.card`, sums, `ite`, the linear
         // operators), Booleans, and string projections do not participate
         // in congruence *traversal*. A user membership over such a term
-        // still counts it — via the survey — as an element.
+        // still counts it – via the survey – as an element.
         _ => false,
     }
 }
@@ -474,7 +474,7 @@ struct Survey {
     /// Every set-sorted term, in discovery order.
     sets: Vec<TermId>,
     seen_sets: FxHashSet<TermId>,
-    /// Element terms, grouped by their sort — an `Int` element can never be a
+    /// Element terms, grouped by their sort – an `Int` element can never be a
     /// member of a `Set Bool`, so instantiating across sorts would be waste.
     elements: FxHashMap<nixie_core::SortId, Vec<TermId>>,
     seen_elements: FxHashSet<TermId>,
@@ -512,13 +512,13 @@ impl Survey {
 /// # Walking under a binder
 ///
 /// This descends into quantifier bodies, and a bound variable in this AST is
-/// an ordinary named `Var` — so a set-sorted bound name is the *same*
+/// an ordinary named `Var` – so a set-sorted bound name is the *same*
 /// hash-consed term as a free one of that name, and any axiom mentioning it
 /// is emitted at the top level, where the name reads free.
 ///
 /// That is sound, and the argument is worth writing down because the shape
 /// looks like variable capture. Every axiom [`reduce`] emits is a **tautology
-/// of the theory of finite sets in all of its variables** — `e \in {y}` is
+/// of the theory of finite sets in all of its variables** – `e \in {y}` is
 /// `e = y` for *every* `e` and `y`, `(= a b)` implies agreement on every
 /// element for *every* `a` and `b`. Reading a bound name as a free one
 /// therefore instantiates a valid universally-quantified lemma at a fresh
@@ -529,7 +529,7 @@ impl Survey {
 /// What it is not is *complete*: a membership atom that only exists after a
 /// quantifier is instantiated never gets an axiom of its own, because
 /// instantiation happens after this runs. The cost of that is `Unknown`, not a
-/// wrong answer — memberships over an opaque set are free atoms the SAT layer
+/// wrong answer – memberships over an opaque set are free atoms the SAT layer
 /// owns, and an instantiated copy is the same term.
 fn survey(roots: &[TermId], manager: &TermManager) -> Survey {
     let mut out = Survey::default();
@@ -598,8 +598,8 @@ pub(crate) struct Reduction {
 /// answers `Sat` to an unsatisfiable problem. That is a wrong `sat`, and it is
 /// what this signature exists to prevent.
 ///
-/// The axioms are *valid* — each is a consequence of the theory of finite sets
-/// — so asserting them alongside the original formula preserves both
+/// The axioms are *valid* – each is a consequence of the theory of finite sets
+/// – so asserting them alongside the original formula preserves both
 /// satisfiability and unsatisfiability. They are also *sufficient* for the
 /// fragment they cover: every membership atom the formula can reach is defined
 /// in terms of its children, down to `set.empty`, a singleton, or an opaque
@@ -638,7 +638,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // The witness is named after **the pair it witnesses**, not by a counter.
     //
     // `reduce` runs once per `assert`, over the whole assertion stack, and a
-    // counter restarts each time — so the same name, and therefore (names
+    // counter restarts each time – so the same name, and therefore (names
     // being hash-consed) the same SMT variable, was handed to a *different*
     // pair on a later call. The axioms from the two calls then demanded that
     // one element witness two unrelated disequalities, which is not a
@@ -657,8 +657,8 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // a place where the two sets can differ.
     //
     // **Every pair of same-sorted set terms is a relation here, not only the
-    // ones the formula writes down.** There is no set theory *solver* — the
-    // classification `TermTheory::Set` has no consumer — so `set.member` is
+    // ones the formula writes down.** There is no set theory *solver* – the
+    // classification `TermTheory::Set` has no consumer – so `set.member` is
     // not a congruence-closed symbol, and two membership atoms over sets the
     // solver merges *at solve time* are unrelated SAT variables. Every
     // equality this reduction does not see is therefore invisible:
@@ -676,8 +676,8 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // equality atom is decided by EUF whatever derived it, and the axioms
     // below then force the memberships to agree.
     //
-    // Only pairs with an **opaque** side. Two structurally determined sets —
-    // `set.empty`, a singleton, a union, an `ite` over those — have every
+    // Only pairs with an **opaque** side. Two structurally determined sets –
+    // `set.empty`, a singleton, a union, an `ite` over those – have every
     // membership atom defined by their children, so a derived equality between
     // them says nothing their definitions do not already; being hash-consed,
     // the solver can only merge two of them through an equality that *is* in
@@ -688,7 +688,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     //
     // The cap exists because the pair count is quadratic in set terms and each
     // pair costs a witness, which is itself an element every set then needs an
-    // axiom against — `sets x pairs`, so cubic if pairs were left unbounded.
+    // axiom against – `sets x pairs`, so cubic if pairs were left unbounded.
     // Overflowing it raises the honesty gate, so the price of the bound is
     // `Unknown` rather than a silently weaker encoding. A control run with
     // these pairs switched off entirely was no faster on the corpus, so the
@@ -702,17 +702,17 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // The equality-shaped subset of `relations`: the pairs whose atom,
     // when committed true, makes the two sets *one* set. Cardinality needs
     // these separately from the subsets (an equality forces the card
-    // terms equal; a subset only bounds them) — see [`cardinality::reduce`]
-    // — and the model synthesizer needs them for its equality classes.
+    // terms equal; a subset only bounds them) – see [`cardinality::reduce`]
+    // – and the model synthesizer needs them for its equality classes.
     let mut eq_pairs: Vec<(TermId, TermId)> =
         s.set_equalities.iter().map(|&(_, a, b)| (a, b)).collect();
     // **Choose pairs, early.** `choose(s) = choose(t)` is conditioned on the
     // equality atom `(= s t)`, and that atom is decided by exactly the
-    // extensional machinery below — witnesses, definitions, adjacency. A
+    // extensional machinery below – witnesses, definitions, adjacency. A
     // pair that enters only at the axiom-minting stage (where the
     // congruence implications are built) conditions on an atom nobody ever
     // defines, and `CHOOSE x \in {1, 2} : TRUE = CHOOSE y \in {2, 1} :
-    // TRUE` — the same set in two orders — goes undecided. So the pairs are
+    // TRUE` – the same set in two orders – goes undecided. So the pairs are
     // enumerated here, registered with the equality machinery, and the
     // implications are minted later from this very list.
     const MAX_CHOOSE_PAIRS: usize = 128;
@@ -766,19 +766,19 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     }
 
     // Cardinality comes *before* the membership definitions below, because
-    // building the counting cone introduces new set terms — the `a ∩ b`
-    // twins of every `a ∪ b` whose size the problem constrains — and those
+    // building the counting cone introduces new set terms – the `a ∩ b`
+    // twins of every `a ∪ b` whose size the problem constrains – and those
     // twins need membership definitions of their own from the loop that
     // follows. See [`cardinality`].
-    // ---- the join's derived elements, BEFORE cardinality ----
+    // ======== the join's derived elements, BEFORE cardinality ========
     //
     // The join definition mints its splits (`u = (front, k)`, `v = (k,
-    // back)`) and the middle skolem `k` — and those are *elements*: the
+    // back)`) and the middle skolem `k` – and those are *elements*: the
     // counting equations must see them in the same pass, or a final
     // assert's split is never counted and `(a,c) ∈ r ⨝ s` with `r` pinned
     // exactly to a non-matching pair answers `sat` (a false `sat`: `J` is
-    // determined by its operands). Deriving them here — ahead of
-    // [`cardinality::reduce`] — keeps the axiom emission in the definition
+    // determined by its operands). Deriving them here – ahead of
+    // [`cardinality::reduce`] – keeps the axiom emission in the definition
     // loop below (the terms are hash-consed, so the second build is the
     // same term).
     let mut rel_incomplete = false;
@@ -799,7 +799,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         // Only *user-reachable* elements get splits. A split of a
         // split-derived element re-derives memberships the original's split
         // and the compose rule already force, and minting them feeds the
-        // axioms back into the next pass's survey — the element lists then
+        // axioms back into the next pass's survey – the element lists then
         // grow without bound across asserts (measured: the join-pairs cap
         // overflowed on a three-assert script). A split-derived element is
         // recognizable by its `@set_join_*` skolem component.
@@ -849,7 +849,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             let v = manager.mk_tuple(&r2_parts);
             // The splits are *elements*: they join the bucket keyed by
             // their OWN sort (the operand's tuple sort). `element_sort`
-            // would read it as a set's element sort — `None` for a tuple —
+            // would read it as a set's element sort – `None` for a tuple –
             // and the push silently never happened, leaving the counting
             // equations blind to the splits (a final assert's join split
             // was never counted).
@@ -873,8 +873,8 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
 
     let pre_card_len = axioms.len();
     let card = cardinality::reduce(&s, &elements, &relations, &eq_pairs, manager, &mut axioms);
-    // The counting equations mint de-duplication guards — equality atoms
-    // BETWEEN ELEMENTS (`e = earlier`) — that did not exist when this pass's
+    // The counting equations mint de-duplication guards – equality atoms
+    // BETWEEN ELEMENTS (`e = earlier`) – that did not exist when this pass's
     // survey ran. The congruence block below reads `s.element_equalities`,
     // so without this extension those guard equalities are unaudited for
     // exactly one pass: SAT may commit `k = 5` while `k ∈ S` and `5 ∉ S`
@@ -909,10 +909,10 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // malformed join, a compose-pair budget overflow below, or the
     // derived-element budget crossing.
 
-    // ---- derived elements: the relation operators' projections ----
+    // ======== derived elements: the relation operators' projections ========
     //
     // `transpose`, `product` and `iden` define their memberships through
-    // tuples built from *their element list's* selectors — reversed
+    // tuples built from *their element list's* selectors – reversed
     // tuples, projections and diagonals that live in the OPERANDS' sorts.
     // Adding them to those sorts' lists before the definition loop runs
     // means a compound operand's own definition covers them in this same
@@ -982,7 +982,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         }
     }
 
-    // ---- tuple surjectivity ----
+    // ======== tuple surjectivity ========
     //
     // Every tuple-sorted element equals its selector rebuild
     // (`e = (sel₁ e, …, selₙ e)`): the datatype constructor-surjectivity
@@ -990,7 +990,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // a `declare-datatype`. Without it, a rebuilt spelling of a witness
     // (built by the model layer, or by anything else that projects and
     // reconstructs) carried independently decided membership atoms, and
-    // the model could not value both spellings faithfully — the collision
+    // the model could not value both spellings faithfully – the collision
     // that used to decline relation sorts wholesale.
     {
         let mut surjectivity: Vec<(TermId, TermId)> = Vec::new();
@@ -1032,7 +1032,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
 
     // Define every membership atom, for every element of the matching sort.
     // `pre_defs_len` marks where the definitions (and everything after:
-    // witnesses, subsets, choose congruence) begin — the membership-
+    // witnesses, subsets, choose congruence) begin – the membership-
     // congruence pass at the end re-scans exactly that range for the `Eq`
     // terms those passes mint.
     let pre_defs_len = axioms.len();
@@ -1099,7 +1099,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                 Shape::Univ => {
                     axioms.push(atom);
                 }
-                // ===== relations (CVC5 `theory_sets_rels` rules, eager) =====
+                // ======== relations (CVC5 `theory_sets_rels` rules, eager) ========
                 //
                 // `e \in transpose(r)  <=>  rev(e) \in r`: the converse's
                 // members are the operand's, reversed. `rev(e)` is built
@@ -1153,12 +1153,12 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                 Shape::Join(r1, r2) => {
                     let Some((n1, middle_sort, _n2)) = join_arities(r1, r2, manager) else {
                         // Malformed (the parser checks this; a
-                        // builder-made term may still slip through) —
+                        // builder-made term may still slip through) –
                         // decline honestly.
                         rel_incomplete = true;
                         continue;
                     };
-                    // Only *user-reachable* elements get splits here too —
+                    // Only *user-reachable* elements get splits here too –
                     // the pre-pass above derives exactly those, and a split
                     // of a split-derived element only re-derives what the
                     // original's split and the compose rule already force
@@ -1242,11 +1242,11 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // ground reduction has to, and not stating it is a wrong `sat`: with
     // `Nodes` an opaque set, `x \in Nodes`, `y = x` and `~(y \in Nodes)` were
     // three independent Booleans and all three could be satisfied at once. The
-    // shape that found it is the most ordinary one there is —
+    // shape that found it is the most ordinary one there is –
     //
     //     Init == x \in Nodes     Next == UNCHANGED x     Inv == x \in Nodes
     //
-    // — which has no counterexample at all and was reported as violated at
+    // – which has no counterexample at all and was reported as violated at
     // step 1, because `x@1 = x@0` said nothing about their membership.
     //
     // Stated over the equalities the formula **contains**, not over every pair
@@ -1262,12 +1262,12 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // because the *base* atoms it is defined from are congruent, and those
     // bottom out in opaque sets.
     // Congruence is only ever stated at an **opaque** set (see below), so a
-    // formula with none needs none of this — not the adjacency map, not the
+    // formula with none needs none of this – not the adjacency map, not the
     // closure, not the axioms. That is most of them: a TLA+ specification's
     // sets are overwhelmingly literals, ranges and unions of those, whose
     // membership is *defined* above. Checking first is what keeps the cost on
     // the specifications that actually have an opaque set in them.
-    // ---- the join compose rule (CVC5's `computeMembersForBinOpRel`) ----
+    // ======== the join compose rule (CVC5's `computeMembersForBinOpRel`) ========
     //
     // `u \in r1 ∧ v \in r2 ∧ last(u) = first(v)  =>  concat(u, v) \in J`:
     // the backward half of the join's membership definition, over ground
@@ -1357,7 +1357,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         // Not every equality, and not only the ones whose sides are already
         // elements. Not every equality, because the axiom's own `set.member` makes
         // its term an element, the definition loop above instantiates every set
-        // against every element, and `reduce` runs once per `assert` — stating it
+        // against every element, and `reduce` runs once per `assert` – stating it
         // for `pc' = pc + 1` and its like turned a four-minute corpus into a
         // quarter of an hour by that route. Not only the already-elements,
         // because an unrolling connects `x@0` to `x@2` *through* `x@1`, which
@@ -1372,7 +1372,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             // A single walk out from the seeds, over an adjacency map built once.
             //
             // The obvious way to close this is to sweep the equalities until
-            // nothing changes, and that is **quadratic** in their number — which
+            // nothing changes, and that is **quadratic** in their number – which
             // in a bounded unrolling is every `x' = e` and every `s = "foo"` in
             // every step, thousands of them, re-swept once per `assert`. That, and
             // not the axioms it produces, is what made the corpus take twenty
@@ -1438,8 +1438,8 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                     continue;
                 }
                 // **Opaque sets only.** A structured set's membership is *defined*
-                // from its bases by the loop above — `e \in (a \cup b)` is
-                // `e \in a \/ e \in b` — so congruence at the bases gives it at
+                // from its bases by the loop above – `e \in (a \cup b)` is
+                // `e \in a \/ e \in b` – so congruence at the bases gives it at
                 // the union, and every chain of definitions bottoms out in opaque
                 // sets. Stating it at every set as well is redundant, and it is
                 // not cheap redundancy: it took the corpus from four minutes to
@@ -1511,7 +1511,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // congruence-tracked application); here a set-sorted equality atom is a
     // SAT variable the reduction itself relates, so the congruence has to be
     // stated over the pairs of choose terms the survey found. Without it,
-    // `S = T ∧ |S| ≥ 1 ∧ choose(S) ≠ choose(T)` answered `Sat` — the member
+    // `S = T ∧ |S| ≥ 1 ∧ choose(S) ≠ choose(T)` answered `Sat` – the member
     // axioms let both chooses sit in the (equal) sets as two distinct
     // elements, and nothing forced the two applications to agree.
     //
@@ -1519,7 +1519,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // opaque pair that is exactly the atom the pair machinery above relates
     // (and EUF commits when a derivation exists), and for an asserted
     // equality it is the assertion itself, hash-consed to the same term.
-    // From the list enumerated before the witness minting — the pairs are
+    // From the list enumerated before the witness minting – the pairs are
     // already registered with the equality machinery there, so the
     // antecedent here is an atom with a definition rather than a hope.
     for &(ua, ub, ta, tb) in &choose_pairs {
@@ -1528,14 +1528,14 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         axioms.push(manager.mk_implies(same, agree));
     }
     // `choose(ite c a b) = ite c (choose a) (choose b)`: with `c` the ite
-    // *is* `a`, so the two chooses must agree — but the equality atom the
+    // *is* `a`, so the two chooses must agree – but the equality atom the
     // pair rule above conditions on (`ite c a b = a`) is never asserted by
     // anyone, so without this the valid identity went unstated and
     // `c ∧ choose(ite c A B) ≠ choose(A)` answered `Sat`. The cardinality
     // analogue (`|ite c a b| = ite c |a| |b|`) is already exact in
     // [`cardinality`]; this is the same shape for the element the ite
-    // yields. Minting `choose a`/`choose b` is sound — the SET_CHOOSE axiom
-    // the next survey emits for a minted term is valid for every set — and
+    // yields. Minting `choose a`/`choose b` is sound – the SET_CHOOSE axiom
+    // the next survey emits for a minted term is valid for every set – and
     // hash-consing keeps it stable across the per-assert re-runs.
     for &(u, t) in &s.chooses {
         if let Shape::Ite(c, a, b) = shape_of(t, manager) {
@@ -1546,24 +1546,24 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         }
     }
 
-    // ---- membership congruence ----
+    // ======== membership congruence ========
     //
     // Runs **last**: the equalities it feeds on are minted by the passes
-    // above — the definitions loop's singleton unfoldings, the counting
-    // guards, the extensional witnesses below — and the adjacency must see
+    // above – the definitions loop's singleton unfoldings, the counting
+    // guards, the extensional witnesses below – and the adjacency must see
     // them in the same pass, or a one-assert script's pairs are refused
     // (measured: the singleton's `e ∈ {t} ↔ e = t` folds its own axiom to
-    // `true` in the builder — `mk_set_member(e, singleton)` *is* the
-    // equality — so the surviving `Eq` nodes live inside the witness
+    // `true` in the builder – `mk_set_member(e, singleton)` *is* the
+    // equality – so the surviving `Eq` nodes live inside the witness
     // axioms, minted only here at the end).
     //
     // Congruence is needed exactly where a set's membership is not
     // per-element defined from congruent bases: **opaque sets** (no
     // definition at all) and **joins** (their membership is defined
-    // forward — the split — plus a compose over ground spellings, so
+    // forward – the split – plus a compose over ground spellings, so
     // base congruence does not propagate to the compound). A formula
     // whose sets are all literal leaves and iff-defined compounds
-    // (`set.singleton`, unions, …) needs none of this — every membership
+    // (`set.singleton`, unions, …) needs none of this – every membership
     // atom there is one Boolean with a fixed meaning.
     let needs_congruence = s
         .sets
@@ -1572,7 +1572,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     let mut congruence_budget_exceeded = false;
     if needs_congruence {
         // Extend the equality list with the `Eq` terms the passes above
-        // minted — the same extension the post-cardinality re-survey does,
+        // minted – the same extension the post-cardinality re-survey does,
         // over everything minted since the definitions loop began.
         {
             let mut seen: FxHashSet<(TermId, TermId)> = s
@@ -1602,7 +1602,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         // Not every equality, and not only the ones whose sides are already
         // elements. Not every equality, because the axiom's own `set.member` makes
         // its term an element, the definition loop above instantiates every set
-        // against every element, and `reduce` runs once per `assert` — stating it
+        // against every element, and `reduce` runs once per `assert` – stating it
         // for `pc' = pc + 1` and its like turned a four-minute corpus into a
         // quarter of an hour by that route. Not only the already-elements,
         // because an unrolling connects `x@0` to `x@2` *through* `x@1`, which
@@ -1616,7 +1616,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         // The sides of the collected equalities seed their sorts' groups
         // too: a component-level equality (`x = 3`, `k = 2`) relates two
         // terms that are *leaves* of tuple elements rather than elements
-        // of their own — no membership atom ever mentions them directly,
+        // of their own – no membership atom ever mentions them directly,
         // so the element seed alone leaves their sort's group empty and
         // the constructor-pair filter below would refuse exactly the
         // pairs an asserted component equality makes committable (a
@@ -1636,7 +1636,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             // A single walk out from the seeds, over an adjacency map built once.
             //
             // The obvious way to close this is to sweep the equalities until
-            // nothing changes, and it is **quadratic** in their number — which
+            // nothing changes, and it is **quadratic** in their number – which
             // in a bounded unrolling is every `x' = e` and every `s = "foo"` in
             // every step, thousands of them, re-swept once per `assert`. That, and
             // not the axioms it produces, is what made the corpus take twenty
@@ -1702,14 +1702,14 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                     continue;
                 }
                 // **Opaque sets and joins.** A structured set's membership
-                // is *defined* from its bases by the loop above — `e ∈ (a
-                // ∪ b)` is `e ∈ a ∨ e ∈ b` — so congruence at the bases
+                // is *defined* from its bases by the loop above – `e ∈ (a
+                // ∪ b)` is `e ∈ a ∨ e ∈ b` – so congruence at the bases
                 // gives it at the union, and every chain of definitions
                 // bottoms out in opaque sets. A **join is the exception**:
                 // its definition is a forward split per element plus a
                 // compose over ground spellings, so congruence at the
                 // operands does not reach the compound's own membership
-                // atoms — `t = (1,x) ∧ x = 3 ∧ (1,3) ∈ r ⨝ s ∧ t ∉ r ⨝ s`
+                // atoms – `t = (1,x) ∧ x = 3 ∧ (1,3) ∈ r ⨝ s ∧ t ∉ r ⨝ s`
                 // answered `sat` before joins were listed here. Stating it
                 // at every set as well is redundant, and it is not cheap
                 // redundancy: it took the corpus from four minutes to
@@ -1729,37 +1729,37 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         // equality componentwise (datatype injectivity as a builder
         // rewrite), so two ctor-spelled tuple elements never carry a
         // syntactic `Eq` between them: their equality is decided at the
-        // *component* level — the join's skolem middle `k = 2` pinned by
+        // *component* level – the join's skolem middle `k = 2` pinned by
         // the counting guards or an extensional singleton, a user's
-        // `x = 3` by an assertion — and the syntactic loop above is
+        // `x = 3` by an assertion – and the syntactic loop above is
         // blind to exactly those pairs. Membership is a function of the
         // element's *value*: `C(xs) = C(ys) → (C(xs) ∈ S ↔ C(ys) ∈ S)`,
         // and the antecedent `mk_eq(x, y)` *is* the componentwise
-        // conjunction after the unfold — this states the dual of the
+        // conjunction after the unfold – this states the dual of the
         // injectivity rewrite directly. Without it, `k = 2` committed
-        // beside `(k,3) ∈ s` and `(2,3) ∉ s` answered `sat` — an
+        // beside `(k,3) ∈ s` and `(2,3) ∉ s` answered `sat` – an
         // arrangement no set family realizes (the model side's collision
         // repair caught the shape only as a declined display, never as a
         // verdict).
         //
         // Three filters keep the pass's cost where the soundness risk is:
         //
-        // * **Vacuous pairs** — a constantly unequal component (`1 = 2`)
+        // * **Vacuous pairs** – a constantly unequal component (`1 = 2`)
         //   folds the antecedent to `false` and the implication says
         //   nothing; skipped.
-        // * **Unconnected pairs** — the antecedent's leaf equalities are
+        // * **Unconnected pairs** – the antecedent's leaf equalities are
         //   committable only if an `Eq` atom relating the two sides
         //   *exists somewhere* (an assertion, a counting guard, an
-        //   extensional singleton's unfolding — collected into the
+        //   extensional singleton's unfolding – collected into the
         //   adjacency above, closed transitively). A pair whose leaves
         //   sit in different groups of that closure cannot have its
         //   antecedent committed by any Boolean the formula owns, so the
-        //   implication is vacuous for every assignment — skipped. This
+        //   implication is vacuous for every assignment – skipped. This
         //   is also what keeps the join's split/compose feedback
         //   affordable: feedback elements (splits of glued tuples) carry
         //   fresh skolem components no equality relates, so their pairs
         //   drop out instead of weaving a quadratic implication web.
-        // * **Fully-constant spellings first** — every closed door pairs
+        // * **Fully-constant spellings first** – every closed door pairs
         //   a constant tuple against one carrying a variable or skolem
         //   component (`(2,3)` vs `(k,3)`, `(1,3)` vs `(1,x)`), while the
         //   feedback population is mostly constant glued tuples; sorting
@@ -1768,7 +1768,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         //   tight budget still covers them.
         //
         // The pair product carries a budget as the backstop: overflowing
-        // it raises the honesty gate (`incomplete`) — a skipped pair here
+        // it raises the honesty gate (`incomplete`) – a skipped pair here
         // is a wrong-`sat` shape, never a cost saving.
         const MAX_CONGRUENCE_PAIRS: usize = 1024;
         let mut congruence_pairs = 0usize;
@@ -1852,7 +1852,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
 /// terms with an opaque side that the formula never equates explicitly.
 ///
 /// Factored out of [`reduce`] so the model synthesizer
-/// ([`survey_for_model`]) relates *exactly* the same pairs — the equality
+/// ([`survey_for_model`]) relates *exactly* the same pairs – the equality
 /// classes the synthesizer builds must match the equality atoms the
 /// reduction created axioms for, or the two would disagree about which
 /// sets are one set. `start_len` is the number of relations already
@@ -1873,15 +1873,15 @@ fn implicit_pairs(
         }
     }
     // Pair-eligibility: opaque terms pair with opaque terms and with the
-    // *constructors* (`∅`, `{x}`, `U`) — never with compound `∪`/`∩`/`\`/
+    // *constructors* (`∅`, `{x}`, `U`) – never with compound `∪`/`∩`/`\`/
     // `ite` terms. Constructors are stable under hash-consing, so the pair
-    // set — and with it the witness element list — is stable across the
+    // set – and with it the witness element list – is stable across the
     // per-assert re-runs of `reduce`; the compound terms the reduction
     // itself creates (twins, chain unions) would otherwise mint fresh
     // pairs every pass and grow the element list without bound. A compound
     // term's memberships are *defined* from its operands, and the operands
     // are already paired, so the insurance this loop buys for them is
-    // negligible — and the one documented case it exists for
+    // negligible – and the one documented case it exists for
     // (`select`-over-`store` merged with `(as set.empty …)`) is a
     // constructor pair, kept.
     let pair_eligible = |t: TermId| {
@@ -1913,7 +1913,7 @@ fn implicit_pairs(
                 // order changes as assertions accumulate, and an
                 // order-flipped pass minted a *second* witness for the
                 // same disequality (`@set_ext_a_b` beside `@set_ext_b_a`)
-                // with the opposite xor orientation — two skolems the
+                // with the opposite xor orientation – two skolems the
                 // model then had to value, whose defaulted-equal collision
                 // declined the whole sort. One unordered pair, one
                 // witness, stable across passes.

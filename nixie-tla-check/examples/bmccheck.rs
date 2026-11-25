@@ -52,7 +52,7 @@ fn main() {
     let itf_dir = std::env::var("NIXIE_BMC_ITF").ok();
     // A deterministic per-query budget. Some specifications now reach the
     // solver with hundreds of set and datatype terms and do not finish in any
-    // useful time — `Consensus_epr.tla` ran for twenty minutes and counting —
+    // useful time – `Consensus_epr.tla` ran for twenty minutes and counting –
     // and a corpus harness that hangs is not a measurement. Conflicts rather
     // than seconds, so the same input gives the same verdict on any machine;
     // the numbers stopped being reproducible the last time something here
@@ -195,8 +195,8 @@ fn main() {
         let mut bmc = match Bmc::prepare_with_config(&spec, module, roles, use_cfg, &mut tm) {
             Ok(mut b) => {
                 // Deterministic, so two runs over the corpus agree; see
-                // `Bmc::set_conflict_limit`. Deadlock checking is ON —
-                // Apalache's default — so the corpus measures it too.
+                // `Bmc::set_conflict_limit`. Deadlock checking is ON –
+                // Apalache's default – so the corpus measures it too.
                 b.set_conflict_limit(limit);
                 b.set_check_deadlocks(true);
                 b
@@ -335,7 +335,7 @@ fn main() {
             }
             // A specification that prepared and then failed to *encode* is
             // as blocked as one that never prepared, and must appear in the
-            // per-spec list too — it went missing there at first, which is
+            // per-spec list too – it went missing there at first, which is
             // exactly the silent gap a spec-by-spec diff exists to catch.
             Err(e) => {
                 let key = reason(&e);

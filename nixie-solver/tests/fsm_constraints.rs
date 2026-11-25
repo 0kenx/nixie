@@ -220,7 +220,7 @@ fn differential_self_loops_parallel() {
 }
 
 /// Independent exact SAT encoding: layered one-hot reachability with
-/// bounded epsilon relaxation (`|Q|` unrolling steps — the closure
+/// bounded epsilon relaxation (`|Q|` unrolling steps – the closure
 /// converges within `|Q|` monotone steps, and the layering makes the
 /// biconditional system acyclic, so its fixpoint is unique and the
 /// encoding is exact). Structurally unrelated to the product-graph
@@ -389,7 +389,7 @@ fn synthesis_from_positive_and_negative_examples() {
     model.set_initial(a, 0).unwrap();
     model.add_accepting(a, 2).unwrap();
     // Candidate transitions with symbolic guards: from every state on
-    // every symbol, either STAY or MOVE to the next state (mod 3) — the
+    // every symbol, either STAY or MOVE to the next state (mod 3) – the
     // guard chooses. This is nondeterministic, so word acceptance depends
     // on the guard assignment: "010" can end at 2 (move,stay,move).
     let mut stay = vec![vec![TermId::new(u32::MAX); 2]; 3];
@@ -551,7 +551,7 @@ fn boolean_combinations_and_arithmetic_guards() {
     let accepts_empty = model.accepts(a, &[], &mut tm).unwrap();
     let mut solver = Solver::new();
     solver.register_fsm(model, &mut tm).unwrap();
-    // "01" requires x ≤ 5 ∧ x > 5 — impossible, so accepting it is unsat
+    // "01" requires x ≤ 5 ∧ x > 5 – impossible, so accepting it is unsat
     // no matter what; rejecting "0" and "" adds consistent demands.
     solver.push();
     solver.assert(accepts01, &mut tm);
@@ -562,7 +562,7 @@ fn boolean_combinations_and_arithmetic_guards() {
     // Without the contradictory acceptance demand: satisfiable.
     assert_eq!(solver.check(&mut tm), SolverResult::Sat);
     // Requiring rejection of "0" (x ≤ 5 must not enable the step, i.e.
-    // x > 5) and acceptance of "" is impossible — state 2 is unreachable
+    // x > 5) and acceptance of "" is impossible – state 2 is unreachable
     // in zero steps, so both cannot hold... "" is rejected anyway; the
     // interesting consistent demand is ¬accepts("0") alone.
     solver.assert(tm.mk_not(accepts0), &mut tm);
@@ -604,13 +604,13 @@ fn push_pop_lifecycle() {
     // Root: acceptance of "0" alone, still satisfiable after retraction.
     assert_eq!(solver.check(&mut tm), SolverResult::Sat);
     // Asserting ¬accepts("0") at root contradicts the earlier root-level
-    // accepts("0") — unsat, and it stays unsat (root assertions are
+    // accepts("0") – unsat, and it stays unsat (root assertions are
     // permanent until reset).
     solver.assert(tm.mk_not(accepts0), &mut tm);
     assert_eq!(solver.check(&mut tm), SolverResult::Unsat);
 }
 
-/// Certification: FSM registrations are *proved* callbacks — the product
+/// Certification: FSM registrations are *proved* callbacks – the product
 /// graphs are validated against the automaton declarations at
 /// registration, every consequence carries a checkable path/cut witness,
 /// and certified verdicts stand on the checked chain (models re-validated

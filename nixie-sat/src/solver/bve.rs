@@ -38,7 +38,7 @@ impl Solver {
         // ids are filtered by the same `!c.deleted` check below). The
         // collected `Vec<ClauseId>` cost one ~4 B/clause allocation on
         // clause-dense instances (~41 MB live + growth slack on
-        // worker-class) whose freed pages stay resident — pure RSS floor.
+        // worker-class) whose freed pages stay resident – pure RSS floor.
         let norm_end = self.clauses.num_slots() as u32;
         for i in 0..norm_end {
             let cid = ClauseId::new(i);
@@ -73,7 +73,7 @@ impl Solver {
         const OCC_CAP: usize = 512;
         let mut removed = 0usize;
         // Snapshot-free loop over the ids that existed when the pass began
-        // (see the `norm_end` note above — same semantics, no 41 MB Vec).
+        // (see the `norm_end` note above – same semantics, no 41 MB Vec).
         let sub_end = self.clauses.num_slots() as u32;
         for i in 0..sub_end {
             let cid = ClauseId::new(i);

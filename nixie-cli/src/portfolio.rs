@@ -428,7 +428,7 @@ pub fn solve_portfolio_custom(
             modified_args.strategy = None;
             // Names were validated in `main` and SAT presets rejected at the
             // top of `solve_portfolio_custom`, so the remaining failure mode
-            // is an unparseable name from a non-CLI caller — surface it
+            // is an unparseable name from a non-CLI caller – surface it
             // rather than solving under an unintended configuration.
             if let Err(e) = crate::apply_solver_options(&mut ctx, &modified_args) {
                 eprintln!("error: {e}");

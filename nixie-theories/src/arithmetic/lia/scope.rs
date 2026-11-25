@@ -3,8 +3,8 @@
 //! [`LiaSolver`] owns its [`Simplex`](super::super::simplex::Simplex) as a
 //! module-private field, so a solver *layered on top* of the LIA core cannot
 //! open a scope of its own, nor read back the bounds the LP currently holds.
-//! Branch-and-bound inside this module needs neither — it pushes and pops
-//! internally and reads bounds through the tableau — but the nonlinear driver
+//! Branch-and-bound inside this module needs neither – it pushes and pops
+//! internally and reads bounds through the tableau – but the nonlinear driver
 //! in `arithmetic::nla` needs both: it explores a case split by asserting
 //! lemmas valid only inside one case (so it must retract exactly those), and
 //! it runs interval propagation over the monics from whatever box the LP has
@@ -15,7 +15,7 @@
 //! alternative is wrong: `branch_stack`, `active_cuts` and `pseudo_costs` are
 //! *heuristic* state, not semantic state. Whether a pseudo-cost survives a pop
 //! changes which variable gets branched on next and nothing else, whereas the
-//! constraint set — the only thing soundness depends on — lives entirely in
+//! constraint set – the only thing soundness depends on – lives entirely in
 //! the simplex trail and is restored exactly by [`Simplex::pop`].
 
 use super::super::simplex::VarId;
@@ -85,7 +85,7 @@ impl LiaSolver {
     /// The guard is what makes this safe to call repeatedly and in any order.
     /// [`Simplex::set_lower`] *replaces* a bound rather than intersecting with
     /// it, so an unguarded write could relax a tighter bound already
-    /// established — losing a refutation. Writing only strict improvements
+    /// established – losing a refutation. Writing only strict improvements
     /// makes the sequence of writes monotone, which is exactly the intersection
     /// semantics a constraint would have given.
     ///
@@ -125,8 +125,8 @@ impl LiaSolver {
     ///
     /// Without this, `x + y <= 10 ∧ x >= 0 ∧ y >= 0` leaves both variables
     /// looking unbounded above even though the LP plainly bounds them, and any
-    /// consumer that needs a finite box — interval propagation over products,
-    /// a McCormick envelope — comes away with nothing.
+    /// consumer that needs a finite box – interval propagation over products,
+    /// a McCormick envelope – comes away with nothing.
     ///
     /// Every bound it writes is routed through the undo trail, so a
     /// [`LiaSolver::pop`] retracts it along with the constraints that implied

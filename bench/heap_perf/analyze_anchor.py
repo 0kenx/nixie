@@ -72,7 +72,7 @@ def analyze(directory, output):
         for arm in experiment.ARMS:
             row = next(r for r in rows if r['case'] == case and r['arm'] == arm+'-total')
             value = row['instructions_median']
-            values.append(f"{value/1e6:.2f} ({row['solved']}/11)" if value else '— (0/11)')
+            values.append(f"{value/1e6:.2f} ({row['solved']}/11)" if value else '– (0/11)')
         lines.append('| '+case+' | '+' | '.join(values)+' |')
     lines += ['', 'Millions of user instructions; median among completed runs. Partial Unknown costs excluded.', '',
               '| Subset | Comparator | Shared pairs | Reduced / comparator cost |', '|---|---|---:|---:|']
@@ -90,7 +90,7 @@ def analyze(directory, output):
                 ratios.append(treatment['metrics']['primary']['value']/control['metrics']['primary']['value'])
             ratio = math.exp(statistics.mean(map(math.log, ratios))) if ratios else None
             lines.append(f'| {subset} | {arm} | {len(ratios)} | {ratio:.4f} |' if ratio else
-                         f'| {subset} | {arm} | 0 | — |')
+                         f'| {subset} | {arm} | 0 | – |')
     (output/'tables.md').write_text('\n'.join(lines)+'\n')
     print('\n'.join(lines))
 

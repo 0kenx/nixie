@@ -4,7 +4,7 @@
 //!
 //! Before the fix these names fell through to the parser's generic
 //! `Uninterpreted` fallback, so `(declare-const x Float32)` created a variable
-//! whose sort was `Uninterpreted("Float32")` — a *different* sort from every
+//! whose sort was `Uninterpreted("Float32")` – a *different* sort from every
 //! term the `fp.*` operators produce.  Each such variable was a stranger to
 //! all FP machinery (the pattern conflict checks, the concrete model builder,
 //! the atoms the FP honesty gate tracks), so any constraint linking it to an
@@ -39,7 +39,7 @@ fn run_script(script: &str) -> SolverResult {
 
 /// The direct repro: a `Float32` variable defined by an fp addition of two
 /// literals.  The concrete model builder must pin the variable and verify the
-/// definitional equality — `sat`, matching z3.
+/// definitional equality – `sat`, matching z3.
 #[test]
 fn float32_variable_defined_by_fp_add_decides_sat() {
     let script = r#"
@@ -78,7 +78,7 @@ fn float64_alias_disequality_against_folded_sum_decides_sat() {
         (declare-const y Float64)
         ;; Binary spellings throughout: a Float64 exponent is 11 bits, and
         ;; hex literals are 4 bits per digit, so the original `#x3ff` /
-        ;; `#x401` spellings were 12-bit exponents (FloatingPoint 12 53) —
+        ;; `#x401` spellings were 12-bit exponents (FloatingPoint 12 53) –
         ;; ill-typed against Float64, rejected by Z3, and the old `sat`
         ;; verdict here was an artifact of accepting that equality.
         (assert (= x (fp #b0 #b01111111111 #b1000000000000000000000000000000000000000000000000000)))
@@ -95,7 +95,7 @@ fn float64_alias_disequality_against_folded_sum_decides_sat() {
 /// the pattern catalogue (Check 1 covers a *same-lhs* gt/lt pair against one
 /// value), and the two free variables carry no positive special-value
 /// predicate, so the concrete model builder honestly declines.  The pinned
-/// property is the one that matters for soundness: **never `sat`** — the
+/// property is the one that matters for soundness: **never `sat`** – the
 /// honesty gate's whole purpose.  (z3: `unsat`; deciding this shape is the
 /// fp-constant-folding-through-EUF rung, see the fp-gap study.)
 #[test]

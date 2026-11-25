@@ -2,11 +2,11 @@
 //!
 //! Every verdict here is a soundness contract (see `docs/TRANS.md`):
 //!
-//! * `unsat` answers must be TRUE refutations — δ-unsat implies unsat;
+//! * `unsat` answers must be TRUE refutations – δ-unsat implies unsat;
 //! * `delta-sat` answers must come with a witness whose published values
 //!   were re-verified after rounding (the engine checks exactly what it
 //!   prints), and that witness must make every assertion's arithmetic
-//!   δ-tolerable — several tests re-check the printed values against the
+//!   δ-tolerable – several tests re-check the printed values against the
 //!   known roots (ln 2, π, tan 1, …);
 //! * `unknown` is the required answer for the fragments the engine
 //!   declines (UF inside arithmetic, quantifiers, closed logics).
@@ -236,7 +236,7 @@ fn sqrt_negative_lower_bound_is_unsat() {
 #[test]
 fn trig_identity_contradiction_bounded_is_unsat() {
     // sin²(x) + cos²(x) = 0 is impossible (it is 1 everywhere), with a
-    // δ-margin of 1 — over a BOUNDED x, propagation + bisection covers
+    // δ-margin of 1 – over a BOUNDED x, propagation + bisection covers
     // every box and refutes.
     let r = run_sat(
         r#"(set-logic QF_NRT)
@@ -251,7 +251,7 @@ fn trig_identity_contradiction_bounded_is_unsat() {
 #[test]
 fn trig_identity_contradiction_unbounded_is_unknown() {
     // The same identity over ALL of ℝ cannot be refuted by bisection (a
-    // periodic function over an unbounded ray never runs out of boxes) —
+    // periodic function over an unbounded ray never runs out of boxes) –
     // the honest verdict is `unknown`, never a guess.  dReal shares this
     // limitation; see docs/TRANS.md.
     let r = run_sat(
@@ -270,8 +270,8 @@ fn uninterpreted_function_in_trans_arithmetic_is_decided() {
     // Ground UF over the reals is Ackermannized before the Boolean
     // abstraction: each application becomes a fresh variable and the
     // congruence `(x = y) ⇒ (f x = f y)` joins the skeleton as a clause.
-    // With x = y asserted, both exp atoms read the SAME value — one below
-    // 1, one above 2 — so every assignment is refuted: unsat, the EUF
+    // With x = y asserted, both exp atoms read the SAME value – one below
+    // 1, one above 2 – so every assignment is refuted: unsat, the EUF
     // answer (the pre-Ackermann engine honestly declined this to
     // `unknown`; the declined behavior is pinned below for quantifier-
     // tainted applications, which must NOT be Ackermannized).
@@ -314,7 +314,7 @@ fn ground_uf_trans_goal_can_be_delta_sat() {
 
 #[test]
 fn ground_uf_congruence_unsat_tighter_than_delta() {
-    // The same shape tightened past δ: f(y) = 0.68 vs f(x) = ln 2 — the
+    // The same shape tightened past δ: f(y) = 0.68 vs f(x) = ln 2 – the
     // δ-windows (0.68 ± 0.00168 and ln2 ± 0.0015 ⇒ [0.67832, 0.68168] vs
     // [0.69158, 0.69459]) are disjoint, so congruence refutes.
     let r = run_sat(
@@ -355,7 +355,7 @@ fn quantifier_is_declined_by_the_logic_contract() {
 #[test]
 fn closed_logic_keeps_contract() {
     // QF_LRA does not contain transcendentals: the contract layer rejects
-    // the script outright — never a linearized guess.
+    // the script outright – never a linearized guess.
     let mut ctx = Context::new();
     let out = ctx.execute_script(
         r#"(set-logic QF_LRA)
@@ -423,7 +423,7 @@ fn distinct_from_the_sin_root_refutes() {
     // rational 3.14159 whose δ-window (±0.001·(1+3.14159) ≈ ±0.0041)
     // swallows every δ-root of sin x = 0 (π ± ~0.001): the negated
     // equality's box lies wholly inside the window, so the disequality
-    // conflict fires — unsat.
+    // conflict fires – unsat.
     let r = run_sat(
         r#"(set-logic QF_NRT)
         (declare-const x Real)
@@ -439,7 +439,7 @@ fn distinct_from_the_sin_root_refutes() {
 #[test]
 fn distinct_from_a_far_point_is_delta_sat() {
     // Same, but distinct from 2.0: π is ~1.14 away, far outside every
-    // δ-window — the negated equality verifies pointwise.
+    // δ-window – the negated equality verifies pointwise.
     let r = run_sat(
         r#"(set-logic QF_NRT)
         (declare-const x Real)
@@ -457,7 +457,7 @@ fn three_way_distinct_over_reals_decides() {
     // distinct(x, y, 0.0) under y = −x and x = sin-root-sized bounds: the
     // pairwise atoms x≠y (holds unless both 0), x≠0, y≠0.  sin(x)=0 with
     // x ∈ [3,4] pins x=π ≠ 0; y = −x ≠ 0; x ≠ y unless π = −π.  All three
-    // verify — delta-sat.
+    // verify – delta-sat.
     let r = run_sat(
         r#"(set-logic QF_NRT)
         (declare-const x Real)
@@ -494,7 +494,7 @@ fn distinct_of_size_two_is_negated_equality() {
 fn nested_uninterpreted_applications_decide() {
     // f(f(x)) with x = y: the congruence chain is two implications deep
     // (x=y ⇒ f x = f y ⇒ f(f x) = f(f y)), and the inner applications
-    // appear as congruence ARGUMENTS — the Ackermannization must compare
+    // appear as congruence ARGUMENTS – the Ackermannization must compare
     // them through their fresh variables, not the raw `Apply` terms (the
     // raw terms declined the trans fragment and the goal floundered to
     // `unknown`).

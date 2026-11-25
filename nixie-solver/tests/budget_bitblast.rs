@@ -2,7 +2,7 @@
 //! upstream, not this fork. Explicit scopes select the embedded BV path where
 //! a test measures that engine, since Nixie also supports unified bit-blasting.
 //!
-//! U-Z12 — `:timeout` / `:max-conflicts` / `:max-decisions` must bound the
+//! U-Z12 – `:timeout` / `:max-conflicts` / `:max-decisions` must bound the
 //! bit-blasted solves too.
 //!
 //! # What Nixie 0.3.3 / 0.3.4 did before this fix
@@ -10,7 +10,7 @@
 //! `BvSolver::check()` runs a full `nixie_sat::Solver::solve()` on its own
 //! embedded solver, once per asserted bit-vector atom, from inside the
 //! enclosing CDCL(T) search's `on_assignment` callback. Every budget poll lived
-//! *outside* that call — `check_core` checked the deadline between MBQI rounds,
+//! *outside* that call – `check_core` checked the deadline between MBQI rounds,
 //! `TheoryManager` checked it at the entry of a theory callback, and
 //! `:max-conflicts` was compared against `Statistics::conflicts`, a counter
 //! only ever incremented on a *theory* conflict. Nothing in the workspace ever
@@ -25,7 +25,7 @@
 //! | option | verdict | wall time |
 //! |---|---|---|
 //! | none | `unsat` | 15 760 ms |
-//! | `(set-option :timeout 100)` | `unsat` | 17 052 ms — 170x the budget |
+//! | `(set-option :timeout 100)` | `unsat` | 17 052 ms – 170x the budget |
 //! | `(set-option :timeout 1000)` | `unsat` | 6 573 ms |
 //! | `(set-option :max-conflicts 50)` | `unsat` | 13 079 ms |
 //! | `(set-option :max-decisions 50)` | `unsat` | 5 766 ms |
@@ -53,7 +53,7 @@
 //! is `opt-level = 1`, and this suite runs under `cargo nextest` beside other
 //! CPU-bound jobs; the same bounded check then costs several times more. The
 //! `:max-conflicts 50` case, whose release bound is 2 s, was measured at 1.45 s
-//! in the dev profile at load average ~11 and at 8.67 s at load 24-60 — the
+//! in the dev profile at load average ~11 and at 8.67 s at load 24-60 – the
 //! release-calibrated bound is simply not a fact about a debug build on a busy
 //! machine.
 //!
@@ -62,19 +62,19 @@
 //! figure. Nothing is lost by that, because wall time is the *weakest* witness
 //! in each of these tests. The load-independent ones are:
 //!
-//! * the verdict — `unknown` rather than the `unsat` this goal is refutable to;
-//! * `(get-info :reason-unknown)` — a real reason, not `"not applicable"`;
-//! * `Context::bv_conflicts_spent()` — the budget's own accounting, in the same
+//! * the verdict – `unknown` rather than the `unsat` this goal is refutable to;
+//! * `(get-info :reason-unknown)` – a real reason, not `"not applicable"`;
+//! * `Context::bv_conflicts_spent()` – the budget's own accounting, in the same
 //!   unit `(set-option :max-conflicts N)` is expressed in, so it is the *direct*
 //!   bound wherever that option is the budget under test;
-//! * `Context::stats().propagations` / `.decisions` — the outer engine's
+//! * `Context::stats().propagations` / `.decisions` – the outer engine's
 //!   counters.
 
 use nixie_solver::{Context, SolverResult};
 use std::time::{Duration, Instant};
 
 /// The 64x64 multiplier VC: `a, b < 2^32` implies the high half of their
-/// 128-bit product is zero, asserted negated — so the goal is `unsat`, and the
+/// 128-bit product is zero, asserted negated – so the goal is `unsat`, and the
 /// refutation costs the bit-blaster a full 128-bit multiplier circuit.
 ///
 /// Copied verbatim from the Phase 2 probe's `h20_u64mul` case.
@@ -110,7 +110,7 @@ struct Measured {
     /// This is the witness that a `(check-sat)` really reached `check_core`:
     /// `Solver::check` consults a verdict cache first
     /// (`solver/verdict_cache.rs`), so a second, *identical* check in the same
-    /// script replays the first verdict without searching at all — measured,
+    /// script replays the first verdict without searching at all – measured,
     /// the counter stays at exactly 3 for one check and for two identical ones,
     /// and rises for two that differ. On this bit-blasted goal it is the only
     /// outer counter that moves (conflicts and decisions stay at 0: the work is
@@ -122,7 +122,7 @@ struct Measured {
     ///
     /// `check_core` calls `BvSolver::set_budget` once per check, which re-arms
     /// the accumulator, so this is that check's own spend rather than a total
-    /// over the script — see `Solver::bv_conflicts_spent`. It is the budget's
+    /// over the script – see `Solver::bv_conflicts_spent`. It is the budget's
     /// own bookkeeping, in the unit `(set-option :max-conflicts N)` is written
     /// in, and it is therefore the same number on a loaded machine as on an
     /// idle one.
@@ -163,11 +163,11 @@ fn run_script_measured(script: &str) -> Measured {
 /// loaded machine; each call site quotes what it measured.
 ///
 /// The dev figure is deliberately generous. This bound is not what pins the
-/// budget — the verdict, the `:reason-unknown` text and
+/// budget – the verdict, the `:reason-unknown` text and
 /// `Context::bv_conflicts_spent()` do that, and none of them moves with machine
 /// load (see this file's header). All it has to catch is a regression that lets
 /// a bounded check run the multiplier refutation to completion, which is 15.8 s
-/// in release and 264.3 s in the dev profile — measured by running the
+/// in release and 264.3 s in the dev profile – measured by running the
 /// `#[ignore]`d `the_same_vc_without_a_budget_is_still_unsat` below at load
 /// average 22-37. Every dev ceiling passed in is an order of magnitude under
 /// that.
@@ -196,9 +196,9 @@ fn verdicts(output: &str) -> Vec<SolverResult> {
         .collect()
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // 1. The acceptance case, both directions
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 #[test]
 fn a_timeout_bounds_the_bit_blasted_multiplier_vc() {
@@ -216,7 +216,7 @@ fn a_timeout_bounds_the_bit_blasted_multiplier_vc() {
     // still failing loudly if the budget stops reaching the embedded solver.
     //
     // Dev: measured 0.47 s at load average ~11 and 2.74 s at 24-60, against
-    // 264.3 s for the same goal with the budget removed — so 20 s still
+    // 264.3 s for the same goal with the budget removed – so 20 s still
     // separates "bounded" from "ran to completion" by a wide margin. The three
     // `:reason-unknown` assertions below are the load-independent half of this
     // test and are unchanged.
@@ -243,7 +243,7 @@ fn a_timeout_bounds_the_bit_blasted_multiplier_vc() {
 
 /// The other direction: with no budget the same goal must still be refuted.
 ///
-/// `#[ignore]` because it is the one slow test in this file — it runs the
+/// `#[ignore]` because it is the one slow test in this file – it runs the
 /// multiplier refutation to completion. Measured at 12.2 s in release on the
 /// development machine, and at 264.3 s in the dev profile at load average
 /// 22-37 (see this file's header table for the pre-fix baseline). That dev
@@ -260,9 +260,9 @@ fn the_same_vc_without_a_budget_is_still_unsat() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // 2. The conflict budget reaches the bit-blasted search
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 #[test]
 fn a_conflict_budget_bounds_the_bit_blasted_multiplier_vc() {
@@ -283,7 +283,7 @@ fn a_conflict_budget_bounds_the_bit_blasted_multiplier_vc() {
     // state it: `:max-conflicts` is a budget in conflicts, and
     // `Context::bv_conflicts_spent()` is the solver's own count of the ones it
     // charged to the bit-blasting share of it. Measured: exactly 38, on a
-    // loaded machine as on an idle one — `first_solve_allowance` keeps a
+    // loaded machine as on an idle one – `first_solve_allowance` keeps a
     // quarter of the remainder back for the `Unsat` re-verification, so a probe
     // that exhausts its share stops at `BUDGET - BUDGET / 4`. Before the fix
     // nothing charged the embedded solver at all and this check ran to
@@ -312,9 +312,9 @@ fn a_conflict_budget_bounds_the_bit_blasted_multiplier_vc() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // 3. A budget must not change a verdict the solver reaches quickly
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// Easy QF_BV goals, each with its verdict, exercised with and without a
 /// generous budget. This is what catches an off-by-one in the
@@ -365,12 +365,12 @@ fn a_generous_budget_does_not_change_a_fast_verdict() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // 4. The budget survives `rebase_theory_state`
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 //
 // `Solver::rebase_theory_state` calls `BvSolver::reset()`, which calls
-// `sat.reset()`, which zeroes the embedded solver's statistics — and it runs
+// `sat.reset()`, which zeroes the embedded solver's statistics – and it runs
 // once per check *and* again on every repair round inside one. A budget
 // expressed purely in those statistics would silently re-arm each time; the
 // `conflicts_spent` accumulator on `BvSolver` is what keeps it a total.
@@ -378,7 +378,7 @@ fn a_generous_budget_does_not_change_a_fast_verdict() {
 #[test]
 fn two_checks_under_one_timeout_are_both_bounded() {
     // The two checks must differ, or the verdict cache replays the first
-    // verdict and the second one never reaches `check_core` — this test would
+    // verdict and the second one never reaches `check_core` – this test would
     // then say nothing about it. The extra assertion changes the goal
     // fingerprint; the propagation growth below is what proves the second check
     // really searched.
@@ -386,7 +386,7 @@ fn two_checks_under_one_timeout_are_both_bounded() {
     // under a wall budget the propagation counts are machine-load-dependent
     // and the growth assertion below flaked on shared machines (observed
     // 2026-11-16 and 2026-11-17 at load 19-30; the counter-based budget
-    // makes both runs deterministic — the propagations comparison then
+    // makes both runs deterministic – the propagations comparison then
     // measures the solver, not the load).  The budget value is calibrated:
     // large enough that a bounded check stays well inside it in wall time
     // (the ceiling assertion below still guards runaway runs) and small
@@ -462,7 +462,7 @@ fn a_budget_survives_push_and_pop() {
         one.propagations,
         two.propagations
     );
-    // The budget's own accounting for the check inside the *second* scope —
+    // The budget's own accounting for the check inside the *second* scope –
     // `bv_conflicts` reports the last `(check-sat)` of a script, and this is the
     // property the test is about: `check_core` re-arms the allowance for every
     // check, so popping the first scope must neither carry the first check's
@@ -490,9 +490,9 @@ fn a_budget_survives_push_and_pop() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // 5. The embedded allowance is a total, not a grant per probe
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 #[test]
 fn the_embedded_conflict_allowance_is_a_total_not_a_per_probe_grant() {
@@ -506,7 +506,7 @@ fn the_embedded_conflict_allowance_is_a_total_not_a_per_probe_grant() {
     // under a larger budget must spend *more* than `BUDGET`, which is what
     // makes "spent <= BUDGET" evidence that the small budget bound it rather
     // than evidence that the goal was easy. `GENEROUS` is itself a budget
-    // rather than "unbounded" only to keep this test's wall time down — the
+    // rather than "unbounded" only to keep this test's wall time down – the
     // goal runs for tens of seconds if nothing stops it, which is itself the
     // property being relied on.
     //
@@ -519,7 +519,7 @@ fn the_embedded_conflict_allowance_is_a_total_not_a_per_probe_grant() {
     //
     // | atom width | BUDGET | GENEROUS | bounded | generous | wall |
     // |---|---|---|---|---|---|
-    // | 32 | 200 | 5000 | 150 |    — | > 400 s (`cargo nextest` kills it at 180 s) |
+    // | 32 | 200 | 5000 | 150 |    – | > 400 s (`cargo nextest` kills it at 180 s) |
     // | 32 | 100 | 1000 |  75 |  750 | 56.7 s |
     // | 16 | 100 | 1000 |  75 |  750 | 12.3 s |
     // | 16 | 100 |  400 |  75 |  300 |  4.5 s |
@@ -527,7 +527,7 @@ fn the_embedded_conflict_allowance_is_a_total_not_a_per_probe_grant() {
     // The spends are exact, not timings: `first_solve_allowance` hands a probe
     // `r - r / 4` of the `r` it has left, so a goal that exhausts its allowance
     // spends exactly `BUDGET - BUDGET / 4`. Nothing about the property under
-    // test moves with the size — `GENEROUS` only has to be spent *past*
+    // test moves with the size – `GENEROUS` only has to be spent *past*
     // `BUDGET` for the bound to be non-vacuous, and 400 witnesses that as
     // surely as 5000 did.
     const BUDGET: u64 = 100;
@@ -573,8 +573,8 @@ fn the_embedded_conflict_allowance_is_a_total_not_a_per_probe_grant() {
 /// CDCL(T) loop asserts one bit-vector atom at a time and re-checks after each.
 ///
 /// The atoms are 16 bits rather than 32. What this goal has to supply is the
-/// *probe count* — six shared variables and fifteen pairwise atoms, both
-/// unchanged — and a total cost above the allowance under test, which it still
+/// *probe count* – six shared variables and fifteen pairwise atoms, both
+/// unchanged – and a total cost above the allowance under test, which it still
 /// has: under the 400-conflict allowance its caller uses it spends 300 and
 /// still answers `unknown`, never reaching a verdict of its own. The width only
 /// sets how long each bit-blasted probe takes, and at 32 bits the
@@ -586,7 +586,7 @@ fn the_embedded_conflict_allowance_is_a_total_not_a_per_probe_grant() {
 /// 16-bit value, as `#x7fffffff` was at 32 bits. Leaving it at `#x7fffffff`
 /// would not fit a 16-bit literal at all, and pinning the threshold to the
 /// widest value instead would make `(bvugt (bvmul v0 v1) ...)` unsatisfiable by
-/// construction — the goal would then cost no conflicts and every assertion
+/// construction – the goal would then cost no conflicts and every assertion
 /// over it would pass vacuously.
 fn multi_probe_goal() -> String {
     let mut goal = String::new();
@@ -604,9 +604,9 @@ fn multi_probe_goal() -> String {
     goal
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // 6. `:max-decisions` bounds the outer Boolean search
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 //
 // By design `:max-decisions` is scoped to the outer CDCL(T) search: the
 // embedded bit-blasting solver is bounded by `:timeout` and `:max-conflicts`.
@@ -637,7 +637,7 @@ fn a_decision_budget_bounds_the_outer_boolean_search() {
     let bounded_decisions = ctx.stats().decisions;
 
     // Without the budget the same goal is decided normally, and takes more
-    // decisions than the budget allowed — so the bound above is not vacuous.
+    // decisions than the budget allowed – so the bound above is not vacuous.
     let mut free_ctx = Context::new();
     let free_output = free_ctx
         .execute_script(&format!("(set-logic QF_BV)\n{goal}"))

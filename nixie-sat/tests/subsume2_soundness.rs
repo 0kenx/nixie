@@ -1,5 +1,5 @@
 //! Dirty-schedule subsumption (`NIXIE_SUBSUME2`, cadical's
-//! `flags(lit).subsume` scheme) — differential soundness.  The schedule
+//! `flags(lit).subsume` scheme) – differential soundness.  The schedule
 //! can only *miss* subsumption opportunities (fewer candidates), never
 //! fabricate them; verdicts must agree and SAT models must satisfy the
 //! original clauses under both the treatment and the null arm.
@@ -113,7 +113,7 @@ fn differential(label: &str, iters: usize, seed0: u64) {
 #[test]
 fn subsume2_differential_soundness() {
     // The env selects the arm process-wide; nextest runs each test in its
-    // own process.  Both arms run the SAME solver config — the env is read
+    // own process.  Both arms run the SAME solver config – the env is read
     // by the library, so this test IS the dirty arm.
     unsafe { std::env::set_var("NIXIE_SUBSUME2", "1") };
     differential("dirty", 20_000, 0xB4A1_202C);

@@ -5,7 +5,7 @@
 //! dispatch_nl_solver` calls it on QF_NIA goals the cell-decomposition core
 //! declined, gated on [`SolverConfig::nonlinear_relaxation_engine`]. Because it
 //! runs *after* that core, the only answers it can change are goals that
-//! previously came back `unknown` — which is what makes this a completeness
+//! previously came back `unknown` – which is what makes this a completeness
 //! gain with no parity exposure, and what these tests are shaped to check.
 //!
 //! # Why every unsat case here is a paired measurement
@@ -13,8 +13,8 @@
 //! A test that only asserts `unsat` proves nothing about the wiring: the static
 //! pattern detector in `check_core` already refutes several nonlinear shapes
 //! (`x*x = -1` among them) and would keep the test green with the engine ripped
-//! out. So each goal below is solved *twice* — once with the flag on, once with
-//! it off — and both halves are asserted:
+//! out. So each goal below is solved *twice* – once with the flag on, once with
+//! it off – and both halves are asserted:
 //!
 //! * flag **on** → `unsat`, the new answer;
 //! * flag **off** → `unknown`, which is what this tree measurably answered
@@ -74,7 +74,7 @@ fn assert_engine_refutes(
     );
     // (Fork note: this tree's static patterns and sat-only searches already
     // decide SOME of these goals without the engine, so the with-off arm
-    // asserts the weaker, fork-honest claim — never a *different* verdict —
+    // asserts the weaker, fork-honest claim – never a *different* verdict –
     // rather than upstream's measured-with-off `unknown`.)
     assert_ne!(
         solve_with_engine(false, build),
@@ -83,15 +83,15 @@ fn assert_engine_refutes(
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // 1. Multivariate goals the engine refutes and nothing before it could.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// `x ≥ 3 ∧ y ≥ 3 ∧ x*y ≤ 8`.
 ///
 /// Unsatisfiable because the product of two integers each at least 3 is at
 /// least 9. No single-variable square pattern sees this, and the linear
-/// relaxation alone does not either — it takes the monomial bound `x*y ≥ 9`
+/// relaxation alone does not either – it takes the monomial bound `x*y ≥ 9`
 /// derived from the two factor bounds, which is exactly what the engine's
 /// interval layer contributes.
 #[test]
@@ -134,7 +134,7 @@ fn a_sum_of_squares_is_never_negative() {
 /// `y = x - 5 ∧ y*y < 0`.
 ///
 /// The square is of a *derived* term rather than a declared variable, so the
-/// static detector — which matches `x * x` syntactically — has nothing to bite
+/// static detector – which matches `x * x` syntactically – has nothing to bite
 /// on. The engine linearises `y` as a variable in its own right and the square
 /// bound applies.
 #[test]
@@ -176,9 +176,9 @@ fn a_three_factor_product_chain_has_a_floor() {
     });
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // 2. The engine is a completeness gain, so nothing already answered moves.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// The in-repo parity benchmark `bench/z3_parity/benchmarks/qf_nia/
 /// nia_01_simple_mult.smt2`, verbatim. It answered `sat` before the engine was
@@ -206,14 +206,14 @@ fn the_parity_benchmark_still_answers_sat() {
 /// Satisfiable QF_NIA goals that were already decided, checked through the
 /// script layer with their models. A `sat` that lost its model, or gained a
 /// wrong one, is exactly the regression the "verdicts do not move" claim is
-/// supposed to exclude — so the verdict and the model are both asserted.
+/// supposed to exclude – so the verdict and the model are both asserted.
 ///
 /// The models are asserted as *sets of valid roots*, not as exact strings, and
 /// that is deliberate rather than lax. The engine sits above the two searches
 /// `nonlinear_model_search` gates, so on a goal both can solve it now answers
 /// first and reports its own witness. Measured on this tree, `x*y = 6 ∧
 /// x+y = 5` reports (2, 3) in the default build and (3, 2) in the no-`nlsat`
-/// build — where the cell decomposition is absent, so the engine is what
+/// build – where the cell decomposition is absent, so the engine is what
 /// answers. Both satisfy the script; neither is more correct. Pinning one
 /// string would fail in the other build for no defect, which is why the
 /// property under test is "a genuine solution", not "this solution".
@@ -229,7 +229,7 @@ fn already_decided_sat_goals_keep_their_models() {
     );
 
     // (Fork note: without `nlsat` this tree's searches are gated off and the
-    // engine declines the multivariate witness — Unknown, sound. Pin the
+    // engine declines the multivariate witness – Unknown, sound. Pin the
     // univariate root above in both builds; pin the multivariate one only
     // where the searches that decide it are compiled in.)
     #[cfg(feature = "nlsat")]
@@ -247,7 +247,7 @@ fn already_decided_sat_goals_keep_their_models() {
     }
 }
 
-/// The engine may never invert a verdict — only fill one in. Turning the flag
+/// The engine may never invert a verdict – only fill one in. Turning the flag
 /// off on a goal that was *already* decided must therefore change nothing at
 /// all, which is the complement of the `unsat`/`unknown` pairs above.
 #[test]
@@ -269,7 +269,7 @@ fn the_flag_does_not_move_an_already_decided_goal() {
     // With `nlsat` ON, the searches that already decided this goal run ahead
     // of the engine either way. With it OFF (this fork's searches route
     // through the gated dispatch), the engine was the decider, so turning it
-    // off leaves an honest decline — the flag still cannot *move* a verdict
+    // off leaves an honest decline – the flag still cannot *move* a verdict
     // to a different one.
     #[cfg(feature = "nlsat")]
     assert_eq!(
@@ -281,14 +281,14 @@ fn the_flag_does_not_move_an_already_decided_goal() {
     assert_eq!(
         solve_with_engine(false, build),
         SolverResult::Unknown,
-        "with the searches gated off and the engine off, the goal declines — \
+        "with the searches gated off and the engine off, the goal declines – \
          never a different verdict"
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // 3. The engine is `std`-gated, not `nlsat`-gated.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// No `cfg`: this test runs in both feature builds and must agree, which is
 /// what makes it a proof that the engine survives `--no-default-features
@@ -306,9 +306,9 @@ fn the_engine_answers_the_same_in_both_feature_builds() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // 4. QF_NRA is untouched.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// The dispatch gates the engine on `is_nia`, and the engine itself declines a
 /// linearisation carrying a Real-sorted variable (its case splits are

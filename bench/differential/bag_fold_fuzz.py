@@ -13,7 +13,7 @@ Protocol (the honest comparator):
   - nixie `unknown` is counted but never a match;
   - either-side timeout (10 s) excludes the sample;
   - cvc5 error output containing "Unhandled" is inconclusive (it crashes
-    on some bag shapes) — excluded, never evidence.
+    on some bag shapes) – excluded, never evidence.
 
 Usage: python3 bench/differential/bag_fold_fuzz.py [nixie] [N] [SEED]
 """

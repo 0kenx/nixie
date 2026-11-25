@@ -189,7 +189,7 @@ impl Context {
             // Feed the resolved sort upward through the pending frames:
             // a finished domain schedules its partner range; a finished
             // range completes its `Array` node; a finished element completes
-            // its `Set` node — each continuing upward.
+            // its `Set` node – each continuing upward.
             loop {
                 match pending.pop() {
                     None => return Ok(resolved),

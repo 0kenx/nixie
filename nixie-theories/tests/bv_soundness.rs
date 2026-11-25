@@ -80,14 +80,14 @@ fn test_empty_conflict_fixed_with_guard_terms() {
 }
 
 /// Multiple guard terms: every recorded term whose assertion the refutation
-/// uses appears in the conflict clause — and, since the explanation became
+/// uses appears in the conflict clause – and, since the explanation became
 /// the failed-assumption core (decision (45), `bv/solver/scope.rs`), a
 /// recorded term whose assertion plays no part does not.
 ///
 /// A term blames the assertions made since the previous
 /// `record_constraint_term`, which is how the theory manager calls it (assert,
 /// then record).  This test used to record both guards after all three
-/// assertions and require both in the clause — the whole-scope explanation,
+/// assertions and require both in the clause – the whole-scope explanation,
 /// under which every recorded term was blamed for every conflict.
 #[test]
 fn test_conflict_clause_contains_all_guard_terms() {
@@ -100,7 +100,7 @@ fn test_conflict_clause_contains_all_guard_terms() {
     solver.new_bv(b, 8);
     solver.new_bv(c, 8);
 
-    // a = 100, b = 200 (guard1), a = b (guard2) — UNSAT; c = 7 (guard3) is
+    // a = 100, b = 200 (guard1), a = b (guard2) – UNSAT; c = 7 (guard3) is
     // consistent with everything and takes no part in the refutation.
     solver.assert_const(a, 100, 8);
     solver.assert_const(b, 200, 8);

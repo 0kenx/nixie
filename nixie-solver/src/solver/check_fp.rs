@@ -1224,7 +1224,7 @@ impl Solver {
     /// `fp.lt x y ∧ fp.lt y x`, which are unsatisfiable.
     /// Whether an IEEE ORDERING predicate (`fp.lt`/`fp.gt`) appears with
     /// syntactically different operand terms: a same-class refutation
-    /// candidate — congruence may merge the operands in-search, and the
+    /// candidate – congruence may merge the operands in-search, and the
     /// strict comparison is then false for every value (NaN included).
     /// Syntactically identical operands are folded by the constant layer.
     pub(super) fn fp_predicates_have_congruence_candidates(&self, manager: &TermManager) -> bool {
@@ -1266,7 +1266,7 @@ impl Solver {
             // still needs real theory semantics and stays gated: the IEEE
             // ordering/class predicates (free Booleans) and every
             // CONVERSION in either direction (`RealToFp`/`FpToFp`/
-            // `SBV/UBVToFp`/`FpToReal`/`FpToSBV/UBV`) — conversions are
+            // `SBV/UBVToFp`/`FpToReal`/`FpToSBV/UBV`) – conversions are
             // NOT congruence applications (their value is not determined
             // by operand equality), and un-gating them re-opens the
             // free-atom false-`sat` the d-series regression pins.

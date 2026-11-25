@@ -166,7 +166,7 @@ fn get_unsat_assumptions_parses_to_command() {
 fn genuinely_unknown_command_is_still_leniently_skipped() {
     // Commands with no defined SMT-LIB semantics we understand (vendor /
     // tooling extensions) are still balance-skipped for interoperability
-    // — but OBSERVABLY: they parse as `Command::Unsupported` so the
+    // – but OBSERVABLY: they parse as `Command::Unsupported` so the
     // consumer answers them per SMT-LIB (`unsupported`) instead of the
     // historical silent swallow.  Only recognized-but-unsupported
     // commands with real solving-semantics impact are hard-rejected.

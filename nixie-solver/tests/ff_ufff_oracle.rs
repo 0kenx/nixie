@@ -1,4 +1,4 @@
-//! Exhaustive brute-force oracle for `QF_UFFF` — the finite-field
+//! Exhaustive brute-force oracle for `QF_UFFF` – the finite-field
 //! combination's replacement for a Z3 differential (Z3 has no finite-
 //! field theory; see `docs/FF_THEORY_DESIGN.md` §10).
 //!
@@ -13,12 +13,12 @@
 //!
 //! The generator builds its own small IR first, then (a) prints the
 //! SMT-LIB script for the solver and (b) evaluates the same IR
-//! semantics directly — the two paths share nothing but the instance,
+//! semantics directly – the two paths share nothing but the instance,
 //! so an encoder bug cannot corrupt both sides the same way.
 
 use nixie_solver::Context;
 
-// ---- The instance IR ----
+// ======== The instance IR ========
 
 #[derive(Clone, Debug)]
 enum FfTerm {
@@ -51,7 +51,7 @@ struct Instance {
     form: Form,
 }
 
-// ---- Deterministic RNG (a plain LCG; reproducibility is the point) ----
+// ======== Deterministic RNG (a plain LCG; reproducibility is the point) ========
 
 struct Rng(u64);
 
@@ -68,7 +68,7 @@ impl Rng {
     }
 }
 
-// ---- Random instance generation ----
+// ======== Random instance generation ========
 
 fn gen_term(rng: &mut Rng, inst: &Instance, depth: u32) -> FfTerm {
     let choice = rng.below(10);
@@ -124,7 +124,7 @@ fn gen_form(rng: &mut Rng, inst: &Instance, depth: u32) -> Form {
     }
 }
 
-// ---- SMT-LIB printing ----
+// ======== SMT-LIB printing ========
 
 fn term_str(t: &FfTerm, p: u64) -> String {
     match t {
@@ -204,7 +204,7 @@ fn script(inst: &Instance) -> String {
     s
 }
 
-// ---- Exact brute-force semantics ----
+// ======== Exact brute-force semantics ========
 
 /// Evaluate a term under a variable assignment and function tables.
 fn eval_term(t: &FfTerm, p: u64, vars: &[u64], tables: &[Vec<u64>]) -> u64 {
@@ -251,7 +251,7 @@ fn eval_form(f: &Form, p: u64, vars: &[u64], tables: &[Vec<u64>]) -> bool {
 /// Enumerate every model: all variable assignments × all function
 /// tables. The tables are one mixed-radix counter over their ENTRIES
 /// (each entry ranges over `p` values), so the count is `p^(Σ table
-/// sizes)` — NOT the product of the table sizes. Returns true iff some
+/// sizes)` – NOT the product of the table sizes. Returns true iff some
 /// model satisfies the formula.
 fn brute_force_sat(inst: &Instance) -> bool {
     let p = inst.p as usize;
@@ -289,7 +289,7 @@ fn brute_force_sat(inst: &Instance) -> bool {
     false
 }
 
-// ---- The oracle drivers ----
+// ======== The oracle drivers ========
 
 fn run_oracle(p: u64, n_vars: usize, arities: &[usize], instances: u32, seed: u64) {
     let mut rng = Rng(seed);
@@ -377,7 +377,7 @@ fn oracle_f5_unary() {
 
 #[test]
 fn oracle_f7_unary_shallow() {
-    // 7 × 7^7 ≈ 5.7M models: too many — restrict to shallow forms and
+    // 7 × 7^7 ≈ 5.7M models: too many – restrict to shallow forms and
     // fewer instances; still exercises real congruence structure.
     run_oracle(7, 1, &[1], 12, 0xFF00_0007);
 }
@@ -385,7 +385,7 @@ fn oracle_f7_unary_shallow() {
 #[test]
 fn every_verdict_is_reproduced_deterministically() {
     // Same instance, two fresh contexts: identical verdict (the solver
-    // must stay reproducible — no hash-order or wall-clock input).
+    // must stay reproducible – no hash-order or wall-clock input).
     let mut rng = Rng(0xABCD_EF01);
     let proto = Instance {
         p: 3,

@@ -11,16 +11,16 @@ instrumentation that is now permanent.
 
 | target | premise (handover) | measured verdict |
 |---|---|---|
-| 1. arena locality (size-sorted compaction) | "20–40% of arena cache misses" | **refuted** — LLC-load-misses are 0.06–0.37 per propagation; the loop is instruction/branch-bound |
+| 1. arena locality (size-sorted compaction) | "20–40% of arena cache misses" | **refuted** – LLC-load-misses are 0.06–0.37 per propagation; the loop is instruction/branch-bound |
 | 2. watcher compression (8-byte) | "10–20% watch-scan cost" | **already closed** by [`2026-08-watcher-8byte.md`](2026-08-watcher-8byte.md) (+0.7%, reverted); the handover's variant is strictly worse (adds a ref→id lookup) |
-| 3. BIG/watch single pass | "15–25% per-prop cost" | **refuted by anatomy** — BIG traffic is 1.37 edges/prop on 6s167, 0.07 on crypto1, vs 17.4 watch visits/prop; the merge adds a branch to 100% of visits |
-| 4. `propagate_step_limit` hoist | — | landed earlier (`7fc47eb`), below noise — confirmed |
-| *(new)* BIG probe fold + `assign` cold split | found by disassembly | **landed** — 22/22 files faster, geomean 1.0104 instructions (capped) / −1.56% (6s167 full solve), bit-identical trajectories; sub-bar, landed under the zero-complexity rule below |
+| 3. BIG/watch single pass | "15–25% per-prop cost" | **refuted by anatomy** – BIG traffic is 1.37 edges/prop on 6s167, 0.07 on crypto1, vs 17.4 watch visits/prop; the merge adds a branch to 100% of visits |
+| 4. `propagate_step_limit` hoist | – | landed earlier (`7fc47eb`), below noise – confirmed |
+| *(new)* BIG probe fold + `assign` cold split | found by disassembly | **landed** – 22/22 files faster, geomean 1.0104 instructions (capped) / −1.56% (6s167 full solve), bit-identical trajectories; sub-bar, landed under the zero-complexity rule below |
 
 ## The profile that decided everything (step 2 of the handover)
 
 `stats_solve` (CaDiCaL preset), `perf stat` pinned to E-core 10, whole run,
-6s167-opt full solve (62 241 conflicts, 7.41 M propagations — the handover's
+6s167-opt full solve (62 241 conflicts, 7.41 M propagations – the handover's
 anchor):
 
 | | nixie (HEAD `ad375d1`) | cadical 4.02 | ratio |
@@ -31,11 +31,11 @@ anchor):
 | branches / prop | 389 | 189 | 2.06× |
 | branch-misses / prop | 18.2 | 9.6 | 1.9× |
 | IPC | 1.43 | 1.86 | 0.77× |
-| **LLC-load-misses / prop** | **0.37** | 0.024 | — |
+| **LLC-load-misses / prop** | **0.37** | 0.024 | – |
 
 The handover's cost model ("8 entries × 3 cache accesses × ~30 cycles ≈
 720 ≈ the measured 770 cycles/prop") requires ~24 LLC/L3 accesses per
-propagation. Measured: **0.37 per propagation** — under 2 % of the cycle
+propagation. Measured: **0.37 per propagation** – under 2 % of the cycle
 budget at E-core LLC latency. The same holds on crypto1 (0.06/prop). This
 independently reproduces the 2026-09-02 closure study's finding on
 `mrpp_4x4` ("not memory-bound; instruction-count and branch-mispredict
@@ -48,7 +48,7 @@ propagation of *retired work*, half of it branches.
 
 ## The BCP anatomy (now a permanent instrument)
 
-Landed: `nixie_sat::diag_bcp` — process-global counters printed by
+Landed: `nixie_sat::diag_bcp` – process-global counters printed by
 `stats_solve` under `NIXIE_BCP_STATS=1` (requires `--features bcp-stats`;
 see the harness note at the end for why it is a feature).
 
@@ -57,34 +57,34 @@ see the harness note at the end for why it is a feature).
 | per propagated literal | 6s167 | crypto1 |
 |---|---|---|
 | watch visits | **17.4** | **17.9** |
-| — blocker hits | 70.0 % | 45.2 % |
-| — miss visits (arena deref) | 30.0 % | **54.8 %** |
-| — deleted skips | 0.008 % | 0.0001 % |
+| – blocker hits | 70.0 % | 45.2 % |
+| – miss visits (arena deref) | 30.0 % | **54.8 %** |
+| – deleted skips | 0.008 % | 0.0001 % |
 | of miss visits: watch **moved** | 47.6 % | **72.4 %** |
-| — satisfied first watch | 10.8 % | 3.2 % |
-| — parked on satisfied repl | 29.4 % | 12.3 % |
-| — unit propagation | 12.1 % | 11.8 % |
-| — conflict | 0.14 % | 0.14 % |
+| – satisfied first watch | 10.8 % | 3.2 % |
+| – parked on satisfied repl | 29.4 % | 12.3 % |
+| – unit propagation | 12.1 % | 11.8 % |
+| – conflict | 0.14 % | 0.14 % |
 | replacement-scan steps / miss | 1.95 | 1.49 |
 | 0/1 normalize swaps / miss | 39.8 % | 33.6 % |
 | BIG edges | **1.37** | **0.073** |
 | BIG propagations | 0.40 | 0.041 |
 
 (The replacement-scan counter was measured with the throwaway per-step form
-and dropped from the landed set — it is the only counter that needs a branch
+and dropped from the landed set – it is the only counter that needs a branch
 on an inner scan step.)
 
 Reading: the loop's workload is ~17–18 watcher visits per propagated
 literal with 30–55 % miss rate, plus a per-literal BIG pass that is *small*
 (≤8 % of entry traffic on 6s167, ~0.4 % on crypto1). Against cadical's
 ~430 cycles/prop, our ~1 317 (E-core, whole-run) is spread across the whole
-loop body — per-visit instruction count and data-dependent branches — not
+loop body – per-visit instruction count and data-dependent branches – not
 concentrated in any one structure. That is the closure study's conclusion
 again, now with exact numerators.
 
 ## Target verdicts in detail
 
-### Target 1 — arena size-sort at compaction: premise refuted, not built
+### Target 1 – arena size-sort at compaction: premise refuted, not built
 
 1. *The memory argument*: measured LLC misses above. Even attributing every
    L1-miss→L2 hit (~19/prop) full E-core L2 latency, exposure is bounded
@@ -92,14 +92,14 @@ again, now with exact numerators.
 2. *The reference argument*: the handover's mechanism claim about cadical is
    wrong. `opts.arenasort` (`collect.cpp:427`) sorts the *clause pointer
    vector* for iteration determinism, not the arena; cadical's locality
-   comes from `arenatype == 3` — a **copying** GC whose 'to'-space order is
+   comes from `arenatype == 3` – a **copying** GC whose 'to'-space order is
    decision-queue × watch lists ("clauses watched by the same literal are
    allocated consecutively", `arena.hpp`). kissat's `collect.c` is an
    in-place **order-preserving** sweep (plus a stable
    irredundant/redundant boundary). Neither sorts by size.
 3. *The engineering argument*: reordering variable-size records in place is
    not achievable below ~O(live) scratch (cycle-chasing degenerates to
-   stashing ~everything for any real permutation — inversions are cycles),
+   stashing ~everything for any real permutation – inversions are cycles),
    so any reorder is a copying GC. That directly reverses the RSS property
    the arena was rebuilt to have ("peak RSS never exceeds the
    pre-compaction footprint"; the fresh-buffer copy measured +25 % peak on
@@ -111,20 +111,20 @@ misses/prop above ~5 on some instance class (worker-class instances with
 multi-hundred-MB arenas are the only plausible candidate, and the
 worker-class memory studies own that domain).
 
-### Target 2 — 8-byte watcher: closed by prior measurement
+### Target 2 – 8-byte watcher: closed by prior measurement
 
 [`2026-08-watcher-8byte.md`](2026-08-watcher-8byte.md): 12→8 B watchers
 were built, measured +0.7 % instructions (70/72 cells faster, none
 significantly), reverted at the ≥1.02 bar. The handover's variant (drop
 `clause`, keep `r`) has the *same* density effect plus a new ref→id reverse
 lookup on every unit-propagation reason assignment, conflict, and watch
-move — strictly more work than the measured variant. Not re-run; the prior
+move – strictly more work than the measured variant. Not re-run; the prior
 verdict stands.
 
-### Target 3 — BIG/watch single pass: refuted by anatomy, not built
+### Target 3 – BIG/watch single pass: refuted by anatomy, not built
 
 The BIG pass is 1.37 edges/propagated literal on the BIG-heaviest anchor
-(6s167) and 0.073 on crypto1 — against 17.4/17.9 watch visits. A merged
+(6s167) and 0.073 on crypto1 – against 17.4/17.9 watch visits. A merged
 structure replaces two loop setups with one, but adds a per-entry binary
 tag branch to **every** watch visit (129 M on 6s167) to save a per-literal
 probe (7.4 M). The 15–25 % estimate cannot survive those denominators.
@@ -134,7 +134,7 @@ detection and AND-gate factoring off the CSR. Verdict: **do not build**;
 the per-literal BIG overhead that *is* real was attacked by the landed
 probe fold below.
 
-### Target 4 — step-limit hoist
+### Target 4 – step-limit hoist
 
 Landed at `7fc47eb` before this session; structurally correct, below noise.
 Confirmed, nothing to do.
@@ -146,7 +146,7 @@ codegen defects, both trajectory-identical by construction:
 
 1. **BIG probe fold** (`propagate.rs`): the per-literal emptiness probe
    `!self.binary_graph.get(lit).is_empty()` was a real (non-inlined) `call`
-   — the `BigList` view construction is too big for LLVM's cost model —
+   – the `BigList` view construction is too big for LLVM's cost model –
    followed by post-call register restores and a re-derivation of the same
    `span_of`/`extra_len` reads the loop needs. Folded to: read `span_of` +
    `extra_len` once, probe `plen + xlen != 0` (exactly `BigList::is_empty`:
@@ -154,7 +154,7 @@ codegen defects, both trajectory-identical by construction:
 2. **`Trail::assign` cold split** (`trail.rs`): assignment was a real `call`
    at the BIG-edge propagation site (3.0 M on 6s167) because the rarely-taken
    standalone-test resize path sat inside it. The grow path moved to
-   `#[cold] assign_grow`, `assign` made `#[inline]` — the hot core (2 value
+   `#[cold] assign_grow`, `assign` made `#[inline]` – the hot core (2 value
    stores + VarInfo write + trail push) now inlines into both BCP paths.
 
 ### Measurements (PMU `instructions`, pinned E-core 10, paired binaries)
@@ -166,13 +166,13 @@ Isolated pair (identical naive instrumentation in both arms):
 | 6s167 full solve | 14.660 G | 14.359 G | **−2.05 %** |
 | crypto1 @40k | 7.670 G | 7.571 G | **−1.29 %** |
 
-Landed state (feature off — counters compiled out) vs HEAD `ad375d1`:
+Landed state (feature off – counters compiled out) vs HEAD `ad375d1`:
 
 | | HEAD | landed | Δ |
 |---|---|---|---|
 | 6s167 full solve | 13.938 G | 13.713 G | **−1.56 %** |
 | crypto1 @40k | 7.259 G | 7.216 G | **−0.60 %** |
-| 22-file corpus sample, `MAXC=40000` | — | — | geomean **−1.04 %**, 22/22 non-negative (max −6.0 %) |
+| 22-file corpus sample, `MAXC=40000` | – | – | geomean **−1.04 %**, 22/22 non-negative (max −6.0 %) |
 
 Trajectory identity: every file in both tables (plus the two full-solve
 anchors) reports **bit-identical** `conflicts=/decisions=/propagations=`
@@ -198,22 +198,22 @@ instructions inside a loop the closure study already showed compiles
 near-optimally for its shape. The anatomy above says the remaining levers
 are:
 
-* **visit count** (17.4/prop) — blocker quality and watch-move policy:
+* **visit count** (17.4/prop) – blocker quality and watch-move policy:
   *heuristic class*, matched-null discipline required (the handover's
   expected-outcome framing of "pure engineering" does not survive contact
   with these numbers);
-* **per-visit body cost** — register pressure around the take/put watch
+* **per-visit body cost** – register pressure around the take/put watch
   list and the reason-id plumbing; the remaining items (per-literal Vec
   header traffic ~2 %, bounds-check elision on the write-back index ~1 %)
   are individually sub-noise and were deliberately not chased;
-* **the other half of the run** — conflict analysis + search glue are ~45 %
+* **the other half of the run** – conflict analysis + search glue are ~45 %
   of samples; nobody has profiled `minimize_literal_plain` /
   `shrink_and_minimize_clause` against cadical's the way BCP now has been.
 
 ## Addendum (same session, second half): the analysis side
 
 The study's closing map named the non-BCP half (~45 % of samples) as
-unexplored. It was decomposed the same way — 55 k-sample `perf record` on
+unexplored. It was decomposed the same way – 55 k-sample `perf record` on
 6s167 (single-sample percentages before that were noise: at ~110 samples,
 one sample ≈ 0.9 %, which had inflated `minimize` to "18 %" in one capture):
 
@@ -238,7 +238,7 @@ The obvious candidate was the cadical-faithful restructuring: `analyzed` /
 `unit_analyzed` as persistent member vectors (capacity survives across
 conflicts), sort-key scratch as members, and `clear_analyzed_literals`-
 style exact seen-reset instead of the entry memset. Built in full
-(bit-identical trajectories on all 22 corpus files + both anchors — the
+(bit-identical trajectories on all 22 corpus files + both anchors – the
 exact-coverage reset carries a debug-mode full-scan assert replacing the
 silent scrub).
 
@@ -247,15 +247,15 @@ silent scrub).
 * 22-file corpus (`MAXC=40000`): geomean **+0.24 %**, 13 files improved
   (≤ +0.9 %), 9 small files regressed (−0.07 % each);
 * 6s167 full solve −0.87 %, crypto1@40k −0.59 %;
-* **worker_550@30k (550 k vars — the design's target case for the memset
+* **worker_550@30k (550 k vars – the design's target case for the memset
   cut): +0.13 % slower.** The full-width `seen` reset is bandwidth-cheap
   relative to even this file's per-conflict work, and glibc's fast-path
   malloc/free of the spilled SmallVecs costs about what the persistent
   buffers' extra clear bookkeeping does.
 
 With one measured regression and a geomean deep inside the band, the arm
-fails every landing rule (it also adds a real invariant — exact coverage
-of `seen` writers — where the BCP arm added none). Reverted wholesale;
+fails every landing rule (it also adds a real invariant – exact coverage
+of `seen` writers – where the BCP arm added none). Reverted wholesale;
 the instrumentation extension alone lands.
 
 ### Where this leaves the constant-factor program
@@ -267,15 +267,15 @@ persistent analysis scratch (reverted, +0.24 %). Both halves of the run
 have been decomposed to the level of "the remaining delta vs cadical is
 spread across the whole loop body / analysis walk, with no lever above
 ~1 %". Closing the rest of the 1.4–1.6× per-propagation and per-conflict
-instruction gap means *doing less work* — visit counts (blocker quality,
-watch-move policy), miss-visit rates (Gent's saved-position scan — a
+instruction gap means *doing less work* – visit counts (blocker quality,
+watch-move policy), miss-visit rates (Gent's saved-position scan – a
 semantic policy), bump-set reduction (cadical's
-`bumpreasonlimit`-capped reason bumping) — all heuristic-class changes
+`bumpreasonlimit`-capped reason bumping) – all heuristic-class changes
 that require the matched-null machinery of `docs/BENCHMARKING.md`, or the
 kissat-shape single-pass BCP (inline binary watchers), which is gated on
 reworking the BIG's non-BCP consumers (transred, ELS, AND-gate factoring).
 
-## Second addendum: the loop is stall-bound — PGO closes the question
+## Second addendum: the loop is stall-bound – PGO closes the question
 
 After the analysis-side closure, two further engineering arms were built and
 measured (both **negative**, both reverted):
@@ -286,7 +286,7 @@ level; two plain slice loops with a shared body macro replacing the
 `Chain` iterator's per-edge branch). The disassembly showed the index form
 paying two bounds checks + two base reloads per edge; the slice forms
 remove them. Measured (properly rebuilt, md5-verified binaries): best
-variant **−0.36 % on 6s167, +0.29 % on crypto1** — mixed, sub-bar.
+variant **−0.36 % on 6s167, +0.29 % on crypto1** – mixed, sub-bar.
 LLVM's index-loop codegen beats all three hand-restructures; the watch-write
 bounds-check elision (unchecked stores under the documented-invariant
 pattern) never got a clean isolated measurement after the build-fingerprint
@@ -305,8 +305,8 @@ ever exercised):
 | crypto1@40k | instr −7.0 %, **cycles +0.0 %** | |
 
 This is the decisive experiment for the whole campaign's premise. PGO
-removes 7 % of retired instructions — more than every landed source change
-of this campaign combined — and the wall does not move, because **the
+removes 7 % of retired instructions – more than every landed source change
+of this campaign combined – and the wall does not move, because **the
 propagate loop's cycle cost is not instructions: it is the 18.1
 data-dependent branch misses and ~19 L1→L2 loads per propagation**, which
 no inlining, layout or instruction-count change removes. (PGO is therefore
@@ -318,7 +318,7 @@ propagate loads) closes Target 1 at every cache level, not just LLC: the
 long-latency loads are **27 % L1 hits / 13 % L2 hits / 3 % L3 hits /
 0.2 % L2 misses**. They are slow because they sit on dependent
 pointer-chains (watcher → arena header → literals), not because data is
-far — no arena reordering, prefetching or layout change shortens a chain
+far – no arena reordering, prefetching or layout change shortens a chain
 that already hits in L1. The 2026-08-22 studies' conclusion ("density is
 not where the propagate cost lives") is confirmed at the cycle level.
 
@@ -338,23 +338,23 @@ disassembly pass:
 
 * **Rust safety/codegen, ≈ 7–9**: the bounds-check pair on every
   `watches[write]` store; the values-array base reload after each `&mut`
-  arena call (aliasing — C++ caches `vals` in a register across the
+  arena call (aliasing – C++ caches `vals` in a register across the
   loop); `read`/`write` as `usize` indices with `lea` math vs C++
   pointer post-increment; capacity checks on every watch-move push;
   SmallVec inline/heap machinery.
 * **Deliberate structure, ≈ 6–8**: the 12-byte watcher carries BOTH the
   clause id and the arena ref (3 loads + 3 stores per copy vs their
-  2+2 — the 8-byte variant was measured +0.7 % and reverted at the bar);
+  2+2 – the 8-byte variant was measured +0.7 % and reverted at the bar);
   the `write != read` elision branch (our measured win; cadical copies
   unconditionally); the BIG two-pass with phantom-tick accounting and the
   bounded-check branch chain; the LRAT/step-limit branch chain.
 
 **The twist that matters**: the codegen half is real instructions but not
-real wall time. Measured three ways — PGO removed 7 % of instructions
+real wall time. Measured three ways – PGO removed 7 % of instructions
 (exactly the removable codegen class) for **0 % cycles**; the slice
 rewrites removed the bounds checks and base reloads and measured
 neutral-to-negative; and the branch-miss *rates* are the same in both
-solvers (4.7 % vs 5.1 %) — we pay 2× the misses per propagation because
+solvers (4.7 % vs 5.1 %) – we pay 2× the misses per propagation because
 we execute 2× the branches per entry, which is the structural half. The
 IPC term (1.57 vs 1.86) is the same story: their loop holds fewer live
 values (16-byte watcher in two registers, pointers not indices), so each
@@ -367,23 +367,23 @@ with the branch/visit structure.
 | factor | ratio | class |
 |---|---|---|
 | wall | **5.8×** | |
-| = conflicts | 3.74× | heuristic (search quality; corpus-wide standing is 0.88× — this anchor is a tail case) |
+| = conflicts | 3.74× | heuristic (search quality; corpus-wide standing is 0.88× – this anchor is a tail case) |
 | × instructions/prop | ~1.45× | measured floor: restructures ±0.4 %, PGO −7 % (no cycle effect) |
 | × stall efficiency (IPC) | ~1.25× | branch-miss/L1-latency bound; immune to codegen |
 
 Everything that remains above ~1 % is one of:
 
 1. **visit count** (17.4/prop) and **miss-visit structure** (30–55 % miss
-   rate, 48–72 % of misses move the watch, 1.95 replacement-scan steps) —
+   rate, 48–72 % of misses move the watch, 1.95 replacement-scan steps) –
    policies like cadical's Gent saved-position scan (`clause->pos`,
    JAIR'13) or blocker-refresh strategies. *Heuristic class*: they change
    which watch moves and which clauses park where, i.e. the trajectory;
    they require the matched-null machinery of `docs/BENCHMARKING.md`, not
    trajectory identity.
-2. **the conflicts factor itself** — the standing-gap program's territory
+2. **the conflicts factor itself** – the standing-gap program's territory
    (restart/reduce/branching policy deltas vs cadical/kissat).
 3. **kissat-shape single-pass BCP** (inline tagged binary watchers, 4–8
-   byte watch granularity) — the one structural rewrite left; it changes
+   byte watch granularity) – the one structural rewrite left; it changes
    tick accounting and stored watch order, so it is heuristic-class too,
    and it must rework the BIG's non-BCP consumers (transred, ELS, AND-gate
    factoring).
@@ -397,13 +397,13 @@ instruction-parity rewrite would recover at most the IPC term.
 
 Seed-matched diagnostic first (6s167, 5 seeds each): nixie conflicts
 {62.2k, 55.3k, 66.3k, 70.4k, 74.9k} vs cadical
-{16.7k, 26.8k, 25.2k, 16.3k, 26.4k} — **median gap 2.6×, and cadical's
+{16.7k, 26.8k, 25.2k, 16.3k, 26.4k} – **median gap 2.6×, and cadical's
 worst seed beats our best by 2×**. The single-seed 3.74× was partly luck;
 the gap itself is config-systematic. That makes the conflicts program the
 top lever by an order of magnitude over anything left in per-conflict
 cost.
 
-### Tier 1 — the conflicts program (search quality; matched-null class)
+### Tier 1 – the conflicts program (search quality; matched-null class)
 
 The corpus aggregate stands at 0.88× conflicts vs cadical, so this is a
 *class/tail* problem, not a uniform one. Order of attack:
@@ -411,21 +411,21 @@ The corpus aggregate stands at 0.88× conflicts vs cadical, so this is a
 1. **Diagnose the class** (cheap, existing infrastructure): per-file
    conflicts-gap distribution over the standing corpus at ≥5 seeds
    (`benchstore.py` cells exist); tag the tail files by family. 6s167 is
-   crypto — is the gap concentrated there?
+   crypto – is the gap concentrated there?
 2. **Search-shape diffs per tail file** vs cadical: the visible one on
    6s167 is **stable-mode share: ours 56 % vs their 36.5 %** (we
-   stabilize far more); also restarts/conflict (currently ~14 vs ~13.8 —
+   stabilize far more); also restarts/conflict (currently ~14 vs ~13.8 –
    matched), DB size at equal conflicts, learned-LBD distribution,
    decisions/conflict (3.39 vs 3.95).
 3. **Policy ports, each pre-registered with matched null:**
-   - stabilization/restart schedule (EMA-driven stable switching — the
+   - stabilization/restart schedule (EMA-driven stable switching – the
      56 %-vs-36.5 % share is the biggest unexplained shape delta);
    - reduce/retention schedule (the `NIXIE_CADICAL_REDUCE` /
-     `NIXIE_KISSAT_REDUCE` arms already exist behind env gates — evaluate
+     `NIXIE_KISSAT_REDUCE` arms already exist behind env gates – evaluate
      them at seeds on the tail class instead of re-porting);
    - inprocessing mix on the tail class: cadical *substituted 12.5 % of
      all variables* on 6s167 (sweep/equiv), vivified 2.84 % of clauses,
-     and ran OTF clause improvement on 5.3 % of conflicts — compare our
+     and ran OTF clause improvement on 5.3 % of conflicts – compare our
      per-pass yields on the same files;
    - rephase/walk schedule deltas.
 
@@ -445,7 +445,7 @@ current-default median over 5 seeds vs cadical, from stored
 | qwh.50 **4.05×** | | 27k–280k (**10×**) | | | |
 | worker_550 **3.05×** | | 2.5k–55k (**22×**) | | | |
 
-n=25, geomean 0.892 (the standing 0.88×), median 0.985 — the aggregate
+n=25, geomean 0.892 (the standing 0.88×), median 0.985 – the aggregate
 hides **four files that carry the whole gap**, three of them with 10–22×
 seed instability (nixie's search is *unreliable* there; cadical is
 consistent).
@@ -463,7 +463,7 @@ consistent).
 | cadical stable share | 75 % | 48 % | 32 % | 36.5 % |
 
 The restart scheme itself is verified ported correctly (windows 33/1e5,
-glue = levels−1, 10 % focused margin, per-conflict update, mode-swap —
+glue = levels−1, 10 % focused margin, per-conflict update, mode-swap –
 checked against `restart.cpp`/`averages.cpp` line by line). The stall is
 an **equilibrium property**: when the glue stream is uniform-huge
 (worker_550: every learned clause ~LBD 500), the fast EMA never crosses
@@ -471,12 +471,12 @@ an **equilibrium property**: when the glue stream is uniform-huge
 recovery. cadical's glue on worker_550 is also large (~126) but *noisy*
 (conflict depth varies), so their EMAs cross every ~22 conflicts.
 
-**Causal test — CORRECTED (the knob fix invalidated it).** The original
+**Causal test – CORRECTED (the knob fix invalidated it).** The original
 test ran `RESTART=geometric` on the pre-fix `cnf_solve`, where that arm
 was silently inert (`SolverConfig::default()` base, stabilize on,
 strategy never consulted). After the fix, every one of its numbers
 reproduces **exactly as `PRESET=default`** (qwh 63 395, constraints_17
-49 893, worker_550 400 000 — all bit-equal to the arm's original
+49 893, worker_550 400 000 – all bit-equal to the arm's original
 readings): it measured *bare default vs CaDiCaL preset*, not restart
 cadence.
 
@@ -485,28 +485,28 @@ cadence.
 | qwh | 134 113 | **63 395 (−53 %)** | 229 369 (**1.7× worse**) | 24 182 |
 | constraints_17 | 87 007 | **49 893 (−43 %)** | 89 400 (≈ base) | 7 075 |
 | worker_550 | 25 532 | 400 000 (**16× worse**) | TO | 5 113 |
-| 6s167 | 62 241 | >200 000 (3× worse) | — | 16 654 |
+| 6s167 | 62 241 | >200 000 (3× worse) | – | 16 654 |
 
-**Forced-geometric restarts on the preset help no tail file** — the
+**Forced-geometric restarts on the preset help no tail file** – the
 restart-stall causality rests entirely on the env-gated arms
 (stall8 / maxgap1000, measured on the true preset; those stand, with
 maxgap's flat floor far better than geometric's schedule). cadical
 still wins all four *with* frequent restarts: their restarts are
-**productive** — the worker_550 dec/conflict gap (58.5 vs 10.1) says
+**productive** – the worker_550 dec/conflict gap (58.5 vs 10.1) says
 their phases/branching make each restart land on a different productive
 shallow region, while ours thrash.
 
-**New finding the correction exposes — config sensitivity on the tail.**
+**New finding the correction exposes – config sensitivity on the tail.**
 Bare `SolverConfig::default()` beats the CaDiCaL preset **1.7–2.1× on
 qwh/constraints_17** and loses **3–16× on worker_550/6s167**. Some
 preset component (candidates: reduce schedule, inprocessing mix,
 phase/walk schedule, decay rates) is worth ±2× per file on exactly the
 tail class this campaign studies. Named follow-up: **preset ablation on
-the tail** — the 4-file × 5-seed matrix with one preset component
+the tail** – the 4-file × 5-seed matrix with one preset component
 disabled per arm.
 
 **Ablation executed (same session; `PROBING=0|1` knob added to
-`cnf_solve` for it)** — conflicts geomean vs the preset, 5 seeds:
+`cnf_solve` for it)** – conflicts geomean vs the preset, 5 seeds:
 
 | arm | worker_550 | qwh | constraints_17 | 6s167 |
 |---|---|---|---|---|
@@ -519,7 +519,7 @@ disabled per arm.
 per-file bimodality, not a mis-set default: inprocessing carries the
 constraints_17 win and the worker/qwh/6s167 losses (the 2026-09-04
 corpus picture at file resolution), probing carries qwh's, BVE is
-near-neutral — and every removal costs ~2× somewhere else. The preset
+near-neutral – and every removal costs ~2× somewhere else. The preset
 is a defensible corpus-wide compromise; each tail file wants a
 *different* config, which is the same per-file trade-off shape as every
 gating study this campaign ran, and the same conclusion: the conversion
@@ -527,10 +527,10 @@ path is trajectory diversity (seeds/portfolio), not a component flip.
 
 **Pre-registered treatments** (all matched-null class):
 
-* **T1 — stall-aware restart** (`NIXIE_RESTART_STALL=<k>`, landed this
+* **T1 – stall-aware restart** (`NIXIE_RESTART_STALL=<k>`, landed this
   session as an env-gated arm, **default off**): fire a focused restart
   when the gap since the last restart exceeds `k`× the restart-gap EMA
-  (window 8, floor 200 conflicts) — the cadical Glucose condition has no
+  (window 8, floor 200 conflicts) – the cadical Glucose condition has no
   max-gap fallback, so a uniform-huge glue stream silences it. Inert by
   construction on healthy cadence (verified bit-identical default-off on
   6s167/crn_11 full solves and 22-file-equivalent behavior; the trigger
@@ -552,7 +552,7 @@ path is trajectory diversity (seeds/portfolio), not a component flip.
   | tail geomean | **1.46×** | **1.26×** | **1.16×** | |
 
   **The null corrects the attribution.** The first null build was
-  broken (its scrambled-EMA bookkeeping never ran — the arm silently
+  broken (its scrambled-EMA bookkeeping never ran – the arm silently
   degraded to a constant 800-conflict-gap trigger, near-inert on
   healthy-cadence files), and under that weak null the treatment looked
   uniformly null-clean. The proper null (gap-history EMA fed from
@@ -566,7 +566,7 @@ path is trajectory diversity (seeds/portfolio), not a component flip.
 
   **Max-gap follow-up** (`NIXIE_RESTART_MAXGAP=<n>`, landed env-gated):
   the null's generic-cadence finding suggested a flat floor on the restart
-  gap — the MiniSAT-lineage mechanism, no EMA, no semantic signal at all.
+  gap – the MiniSAT-lineage mechanism, no EMA, no semantic signal at all.
   Matrix (10 seeds, same cells):
 
   | arm | tail geomean vs base | worker_550 | qwh | constraints_17 | 6s167 |
@@ -578,13 +578,13 @@ path is trajectory diversity (seeds/portfolio), not a component flip.
   | maxgap 2000 | 1.19× | 0.85× | 1.65× | 1.52× | 0.94× |
 
   maxgap=1000 equals the stall trigger's tail effect **with a better
-  per-file profile** — it *fixes* worker_550 (2.18×, 10/10 solved vs
-  base's 2 TOs) and is neutral on 6s167 (0.99×) — and the response is
+  per-file profile** – it *fixes* worker_550 (2.18×, 10/10 solved vs
+  base's 2 TOs) and is neutral on 6s167 (0.99×) – and the response is
   non-monotone in the constant (2000 collapses worker_550 to 0.85×),
   pinning the operating point at ~1000. At the right constant the
   drought-*alignment* premium is ≈ zero: the flat floor captures
   everything the EMA trigger does. 6s167 remains untouched by restart
-  policy at any setting — its 4.4× is T3's (substitution) territory.
+  policy at any setting – its 4.4× is T3's (substitution) territory.
 
   **Default flip: NO.** Paired differential (54 files × 5 seeds, 60 s,
   fresh base arm vs maxgap=1000): solved-at-cap **157 → 154 (−3)** with
@@ -602,18 +602,18 @@ path is trajectory diversity (seeds/portfolio), not a component flip.
   The enablement rule's "solved count not worse" bar fails by 2 cells:
   **no default flip at k=8.** The arm stays env-gated; the next
   iteration's axes are gentler triggers (k = 16/32, higher floors) or
-  drought-gated variants that keep worker_550/6s167/summle untouched —
+  drought-gated variants that keep worker_550/6s167/summle untouched –
   and the null shows any such variant must be compared against the
   *generic-restart* control, not just base.
-* **T2 — restart productivity** (phase quality): why do cadical's
+* **T2 – restart productivity** (phase quality): why do cadical's
   restarts help them on worker_550/6s167 and ours hurt? dec/conflict is
   the metric; targets are the rephase/walk cadence and target/best phase
   machinery. This is the lever that must land for T1 to be safe on the
   deep-search tail.
-* **T3 — equivalence substitution per-class gating**: ours substitutes
+* **T3 – equivalence substitution per-class gating**: ours substitutes
   **zero variables on every file** (default off since the 2026-09-06
   corpus-negative study) while cadical substituted 12.5 % of all
-  variables on 6s167 — where the disabled feature had measured 0.349×
+  variables on 6s167 – where the disabled feature had measured 0.349×
   conflicts. The ELS=1 arm exists; the study needs a gate rule
   (instance-class or effort-scheduled) rather than a global flip.
 
@@ -622,56 +622,56 @@ path is trajectory diversity (seeds/portfolio), not a component flip.
 Three candidate mechanisms were checked and one confirmed:
 
 * **Port divergences: none.** Rephase mode (1 = always) and interval
-  (base 1000, growth ×(k+1) — cadical's effective ~1110 on 6s167) match;
+  (base 1000, growth ×(k+1) – cadical's effective ~1110 on 6s167) match;
   trail reuse, target/best phases and the walk are ported with matching
   counters.
 * **H-reuse rejected** (`REUSE=0`, 5 seeds): worker_550 geomean 10.5k →
-  **28.4k (2.7× worse)** — the reused trail is load-bearing for deep
+  **28.4k (2.7× worse)** – the reused trail is load-bearing for deep
   search, not the thrash mechanism. `stall8+reuse0` loses to `stall8`
   alone everywhere.
 * **The bimodality is decided early** (worker_550 @ 2 000 conflicts):
   the bad seed's avg LBD is already **1 131** vs **393–473** for the
   good seeds (which then solve at 2.4–21k), and cadical has **154
   restarts** by then against our 6–9. The tail problem is not capability
-  — our best seed beats cadical (2 463 vs 5 113) — it is *reliability*:
+  – our best seed beats cadical (2 463 vs 5 113) – it is *reliability*:
   some seeds learn fat clauses from the start and never recover.
 * **Complete mechanism**: Glucose's slow glue EMA (window 1e5 ≈ the
   run-global mean) fires on *sustained degradation* (fast ≥ 1.10 ×
   slow). Instances whose glue trend is fat-early-then-improving
-  (worker_550/qwh/constraints_17) never cross it — restart starvation
+  (worker_550/qwh/constraints_17) never cross it – restart starvation
   from conflict ~1, self-reinforcing (no restarts → deep fat conflicts
   → flat EMA). cadical never enters the regime because its frequent
   restarts keep the glue stream shallow and noisy from the start.
 
 T2's answer to "why are cadical's restarts productive": they *never
-stop*. The remaining T2 question — why `stall8` regresses worker_550
-(1.57×) when it recovers qwh/constraints_17 — is whether the forced
+stop*. The remaining T2 question – why `stall8` regresses worker_550
+(1.57×) when it recovers qwh/constraints_17 – is whether the forced
 restarts break genuinely productive deep runs there; gentler triggers
 (k = 16/32) or gap-EMA floors are the tuning axes inside the T1 study.
 
-### T3 executed: portfolio conversion — the ELS tail wins land at +8 standing cells
+### T3 executed: portfolio conversion – the ELS tail wins land at +8 standing cells
 
 The static-gate family was falsified four ways in parallel studies
-(online observables, gate density, placement, SCC mass — the last two
+(online observables, gate density, placement, SCC mass – the last two
 *inverted*: every ELS anchor-winner has zero surface structure, the
 biggest losers have the most). What survived is the shape this study's
-max-gap section named: **a portfolio arm** — the ELS one-shot is not a
+max-gap section named: **a portfolio arm** – the ELS one-shot is not a
 default and not a gate, but a *second trajectory* the harness rolls when
 the default arm's budget exhausts.
 
 `cnf_solve` gained an `els` arm token (`SEEDS=default,els
-ARM_CONFLICTS=<n>,<rest>` — `ELS=1` semantics on a fresh solver;
+ARM_CONFLICTS=<n>,<rest>` – `ELS=1` semantics on a fresh solver;
 example-only change, no library code). Screen (54 files × 5 seeds,
 60 s cap, cores 10–19):
 
 | config | solved-at-cap | gained | lost | verdict disagreements |
 |---|---|---|---|---|
-| default | 153 | — | — | — |
+| default | 153 | – | – | – |
 | **portfolio: default@100k → els** | **161 (+8)** | 13 | 5 | **0** |
 | portfolio: default@250k → els | 153 (0) | 10 | 10 | 0 |
 
 The gains are exactly the ELS-anchor class the gates could not isolate:
-**FmlaEquivChain ×5** (base TOs it; the ELS arm solves — the equivalence
+**FmlaEquivChain ×5** (base TOs it; the ELS arm solves – the equivalence
 chain is *invisible* to every static observable but folded by the pass
 itself) and worker_550 ×2. The losses are truncation (circuit_48in64out
 needs >100k conflicts of default; 64_25, summle_X11112 reshuffle). The
@@ -681,7 +681,7 @@ recovers.
 
 ### Correction (same campaign, real-seed rerun): portfolios are dominated by plain seed diversity
 
-The +8 above was measured against a **replica base** — `cnf_solve`
+The +8 above was measured against a **replica base** – `cnf_solve`
 silently ignored the `SEED` env (fixed in this campaign: the arm loop now
 honors `SEED` when the arm token has no seed; `stats_solve` always did),
 so both arms' "5 seeds" were identical deterministic replicas whose only
@@ -699,39 +699,39 @@ invocation each at the 60 s cap, 54 files):
 
 **Every within-cap portfolio loses to plain multi-seed runs.** Seed
 diversity alone converts +23 cells over the replica base (13 files have
-mixed verdicts across real seeds — the single-trajectory base was simply
+mixed verdicts across real seeds – the single-trajectory base was simply
 unlucky on them), and any budget split costs more in truncated arm-0
 runs (mrpp needs 138k conflicts; a 100k budget kills it) than the extra
 trajectories buy. Bigger first budgets are *worse* (S2 < S1): the second
 arm inherits almost no wall budget. The portfolio arms remain available
 (`SEEDS`/`els`/`chrono`/`maxgap` tokens) for cap-free or
 per-invocation-budgeted settings, but **the standing config stays plain
-default at full cap** — which is also the standard methodology, so no
+default at full cap** – which is also the standard methodology, so no
 protocol change is warranted.
 
 Standing numbers on this corpus (60 s cap, 5 seeds, 270 cells,
-deterministic per seed): **nixie default 176, kissat 84, cadical 51** —
+deterministic per seed): **nixie default 176, kissat 84, cadical 51** –
 with the caveat that `sc24f` is the standing-campaign residue corpus
 (selected around nixie's timeouts), not a neutral sample. Zero verdict
 disagreements in every paired comparison.
 
 The earlier T1/max-gap safety screens shared the replica defect (their
 ±2–3 cell counts were 5×-weighted per-file flips); their **rejection**
-verdicts are unaffected — replicas bias toward *confirming* the paired
+verdicts are unaffected – replicas bias toward *confirming* the paired
 difference, and the decisions were conservative anyway.
 
-### Tier 2 — miss-visit and watch-move policies (per-visit × search coupling)
+### Tier 2 – miss-visit and watch-move policies (per-visit × search coupling)
 
 - **Gent saved-position scan** (`clause->pos`, cadical/JAIR'13): starts
   the replacement scan at the last replacement site. Instruction ceiling
   small (1.95 → ~1 scan steps ≈ 1.7 %), but it changes *which* literal
   becomes the new watch → watch distribution → search; pre-register with
   matched null. Needs a header field: the 12-byte header is pinned by
-  the cache-line tests — steal bits (lbd is u16 but saturates far above
+  the cache-line tests – steal bits (lbd is u16 but saturates far above
   every consumer's ≤10 threshold; pos needs ~8 bits for practical
   clauses) or re-price the header.
 - **Blocker-refresh policy**: miss rate is 30 % (6s167) to 55 %
-  (crypto1) — every 10 pp of hit rate removes ~13 M arena visits on
+  (crypto1) – every 10 pp of hit rate removes ~13 M arena visits on
   6s167 (~1–2 % instructions plus their stall exposure). E.g. prefer
   recently-true literals as blockers when parking on satisfied
   replacements. Changes parking → trajectory → matched null.
@@ -740,13 +740,13 @@ difference, and the decisions were conservative anyway.
   metric; the null must hold visit counts fixed while scrambling the
   move choice.
 
-### Tier 3 — the structural rewrite (kissat-shape single-pass BCP)
+### Tier 3 – the structural rewrite (kissat-shape single-pass BCP)
 
 Downgraded by this campaign's anatomy relative to the handover's 15–25 %
 estimate: BIG traffic is 8 % of entry events on 6s167 and 0.4 % on
 crypto1, and merging the passes does not touch the large-clause visit
 cost. The real content is the per-entry *shape*: inline tagged binary
-watchers, 4–8 byte watch granularity, word-indexed arena — attacking the
+watchers, 4–8 byte watch granularity, word-indexed arena – attacking the
 measured 21 branches/entry and the IPC term. Cost: tick accounting (=
 restart schedule = trajectory), the 12-byte-header pin, and reworking the
 BIG's non-BCP consumers (transred, ELS, AND-gate factoring). Only as a
@@ -754,7 +754,7 @@ deliberate kissat-convergence program; per-entry instruction gains of
 30–40 % *if* the shape converges, cycle gains uncertain (stall-bound
 evidence).
 
-### Measured dead — do not retry
+### Measured dead – do not retry
 
 Arena locality (dead at LLC *and* L2/L1 by PEBS), watcher density (8-byte
 +0.7 %, word-split +0.04 %), PGO for wall time (−7 % instructions, 0
@@ -781,7 +781,7 @@ write-elision branch (it is a measured win).
   passes in isolation on both arms. Pre-existing.
 * **`cnf_solve` ignored the `SEED` env** (only `stats_solve` honored it):
   every "5-seed" `cnf_solve` screen in this campaign ran identical
-  replicas, and their only verdict variance was wall-cap jitter — a
+  replicas, and their only verdict variance was wall-cap jitter – a
   replica base measured 153 where the real-seed base is 176, which
   inverted the portfolio conclusion. Fixed (arm seed falls back to
   `SEED`); screens comparing deterministic configs remain valid as
@@ -796,19 +796,19 @@ write-elision branch (it is a measured win).
   drought alignment. The repair: verify the null actually fires (compare
   restart counts across arms at a fixed conflict cap) before trusting
   any treatment/null ratio.
-* **Identity checks are one-directional — say which direction and why.**
+* **Identity checks are one-directional – say which direction and why.**
   "Default-off is bit-identical" verifies only that the gate doesn't
   leak; it is *silent about the gate being wired*. Inert-knob bugs are
-  invisible to it — indeed they *produce* identity (geo22 ≡ geo200 was
+  invisible to it – indeed they *produce* identity (geo22 ≡ geo200 was
   the bug's signature, and the fake-SEED replicas passed every identity
   check for the same reason). Every gated arm needs the second
   direction: ON(a) ≢ ON(b) on a real counter (restart schedule counts,
   not conflicts-at-cap). A single-file counter spot-check labeled
-  "bit-identical" is also an overclaim — the corpus identity sweep
+  "bit-identical" is also an overclaim – the corpus identity sweep
   (verdict + conflicts-to-verdict, files that solve) is the minimum
   honest form, and files that cap out carry no signal (report them as
   such, don't count them).
-* **`cnf_solve`'s RESTART/INTERVAL knob family was silently inert —
+* **`cnf_solve`'s RESTART/INTERVAL knob family was silently inert –
   fixed.** Three stacked defects: the `luby` token was unrecognized
   (silent CaDiCaL fallthrough); the strategy arms replaced the whole
   CaDiCaL preset with bare `SolverConfig::default()` (losing every preset
@@ -819,7 +819,7 @@ write-elision branch (it is a measured win).
   strategy on the preset base, the interval strategies disable stabilize,
   unknown tokens are a hard error (exit 2). Verified with
   `NIXIE_TRACE_DECISIONS=1` restart counts (luby@10k: INTERVAL=50 → 69
-  restarts vs INTERVAL=5000 → 2; geometric: 333 vs 36) — count restarts,
+  restarts vs INTERVAL=5000 → 2; geometric: 333 vs 36) – count restarts,
   not conflicts-at-cap, when checking a restart knob.
 * **Worktree builds go stale silently after RUSTFLAGS/feature flips**: two
   variant measurements this session were of stale binaries (`Finished in

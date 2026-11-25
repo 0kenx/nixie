@@ -339,7 +339,7 @@ fn augment_guard_grounds(
     // Both sides of every boundary (`#P2b-75`): `x > t`, `x < t` and
     // `¬(x = t)` are false at `t` itself, so with `t` alone every instance was
     // vacuous and `(forall ((q Int)) (=> (> q 7) false))` saturated `sat`.
-    // `t ± 1` as terms — a declared `m` in `(> x m)` gets `(+ m 1)`, which
+    // `t ± 1` as terms – a declared `m` in `(> x m)` gets `(+ m 1)`, which
     // stays one point however the model moves `m`, where a value-keyed
     // representative would chase it round after round.
     let neighbours: Vec<TermId> = ground_terms
@@ -391,14 +391,14 @@ fn guard_neighbours(term: TermId, manager: &mut TermManager) -> Vec<TermId> {
 /// Walk a guard (through every connective, `ite` and operator in it) and
 /// collect the ground side of every `bound-variable ⊕ ground` comparison.
 ///
-/// [`eu_walk`] admits such a comparison anywhere in the premise — under an
-/// `=>`, in an `ite` condition, inside an arithmetic `ite` — so the walk
+/// [`eu_walk`] admits such a comparison anywhere in the premise – under an
+/// `=>`, in an `ite` condition, inside an arithmetic `ite` – so the walk
 /// descends everywhere: a comparison it missed would be a boundary without
 /// an instance on its far side.
 ///
 /// Iterative with an explicit heap stack: the guard shape is
 /// caller-controlled input and the results flow through `out` with no error
-/// channel, so a depth cap could only have silently dropped guard bounds —
+/// channel, so a depth cap could only have silently dropped guard bounds –
 /// shrinking the relevant instantiation set, which is exactly the failure
 /// [`augment_guard_grounds`] exists to prevent.  Children are pushed in
 /// reverse so `out` keeps the recursive version's left-to-right emission
@@ -466,7 +466,7 @@ fn bounded_domains(
     manager: &mut TermManager,
     cap: usize,
 ) -> Option<Vec<Vec<TermId>>> {
-    // Exhaustive finite domains — sound with NO model-extension argument:
+    // Exhaustive finite domains – sound with NO model-extension argument:
     //
     // * a BitVec-sorted bound variable ranges over exactly `2^width` values,
     //   so enumerating them instantiates the universal over its ENTIRE
@@ -603,19 +603,19 @@ fn strict_eu(term: TermId, vars: &FxHashSet<Spur>, manager: &TermManager) -> boo
 
 /// Premise position: like [`strict_eu`], but a comparison between two bound
 /// variables using a monotone-preserving relation (`≤`, `≥`, `=`) is allowed
-/// as a guard — **at positive polarity only** (`#P2b-65`).
+/// as a guard – **at positive polarity only** (`#P2b-65`).
 ///
 /// The fragment argument needs the premise to be preserved by the projection
 /// `π` that extends a model of the instances to the whole domain: whenever the
 /// premise holds at `(x, y)` it must hold at `(π x, π y)`.  `x ≤ y` and
 /// `x = y` are (π is monotone and a function), but their negations `y < x`
-/// and `x ≠ y` are not — two unnamed indices can share one representative.
+/// and `x ≠ y` are not – two unnamed indices can share one representative.
 /// So a var-var comparison under an odd number of negations (a `not`, the
 /// left side of an inner `=>`) is rejected, and so is one whose polarity the
 /// walk cannot pin down (an `ite` condition, either side of a Boolean `=` or
 /// `distinct`, anything under an arithmetic or uninterpreted operator).
 /// Before this rule `(=> (not (= i j)) (distinct (select a i) (select a j)))`
-/// — a pigeonhole over 128 indices and two values — was certified `sat`.
+/// – a pigeonhole over 128 indices and two values – was certified `sat`.
 fn premise_safe(term: TermId, vars: &FxHashSet<Spur>, manager: &TermManager) -> bool {
     eu_walk(term, vars, manager, true)
 }
@@ -652,7 +652,7 @@ impl Polarity {
 /// # Iterative machine
 ///
 /// This used to be a three-way native recursion (`eu_walk` ↔ `guard_cmp` ↔
-/// `arg_ok`) returning `bool` — a return type with no error channel, where a
+/// `arg_ok`) returning `bool` – a return type with no error channel, where a
 /// depth cap could only have fabricated a wrong fragment-classification
 /// verdict, and a wrong `true` here would let an incomplete instantiation
 /// set certify a spurious `sat`.  It now runs as a worklist of obligations
@@ -664,8 +664,8 @@ impl Polarity {
 /// outcome: the walk answers `false` the moment any obligation fails, and
 /// `true` only once the worklist drains.  `seen` deduplicates structural
 /// obligations by `TermId` and [`Polarity`] (`allow_guard` is fixed for a
-/// given walk), which preserves the verdict — a repeated subterm at the same
-/// polarity re-adds identical conjuncts — while bounding re-expansion of
+/// given walk), which preserves the verdict – a repeated subterm at the same
+/// polarity re-adds identical conjuncts – while bounding re-expansion of
 /// shared subterms of the hash-consed DAG to linear (three polarities per
 /// term at most).
 fn eu_walk(term: TermId, vars: &FxHashSet<Spur>, manager: &TermManager, allow_guard: bool) -> bool {
@@ -683,13 +683,13 @@ fn eu_walk(term: TermId, vars: &FxHashSet<Spur>, manager: &TermManager, allow_gu
         /// (`allow_guard`) two extra forms are admitted beyond a plain
         /// essentially-uninterpreted comparison:
         ///
-        /// * **bound-variable vs ground** — `x ⊕ t` (or `t ⊕ x`) where `t`
+        /// * **bound-variable vs ground** – `x ⊕ t` (or `t ⊕ x`) where `t`
         ///   mentions no bound variable.  This is the interval/point bound
         ///   of the almost-uninterpreted fragment; its ground constant `t`
         ///   is added to the relevant instantiation set (see
         ///   [`augment_guard_grounds`]) so the region boundary is always
         ///   covered.
-        /// * **bound-variable vs bound-variable** — `x ⊕ y`, but only for
+        /// * **bound-variable vs bound-variable** – `x ⊕ y`, but only for
         ///   the monotone-preserving non-strict relations (the `bool`
         ///   field, the old `allow_var_var`); strict `<` / `>` between two
         ///   variables is *not* preserved by the projection and is
@@ -838,7 +838,7 @@ fn eu_walk(term: TermId, vars: &FxHashSet<Spur>, manager: &TermManager, allow_gu
                         continue;
                     }
                     // Monotone-preserving comparison between two bound
-                    // variables — at positive polarity only (`#P2b-65`).
+                    // variables – at positive polarity only (`#P2b-65`).
                     if allow_var_var && lb && rb && polarity == Polarity::Positive {
                         continue;
                     }

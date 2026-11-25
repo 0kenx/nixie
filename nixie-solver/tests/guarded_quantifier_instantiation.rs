@@ -45,7 +45,7 @@ fn last_status(output: &[String]) -> &str {
 
 /// The Ultimate Automizer shape, minimized: premises force every literal
 /// conjunct, so the negated `and` must be satisfied through the exists
-/// branch — which the premises also make true.  `unsat` (z3 agrees); the
+/// branch – which the premises also make true.  `unsat` (z3 agrees); the
 /// guarded derived universal is what finds it.
 #[test]
 fn negated_and_with_exists_branch_is_unsat() {

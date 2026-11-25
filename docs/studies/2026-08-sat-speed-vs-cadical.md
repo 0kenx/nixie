@@ -17,11 +17,11 @@ Instrumented run of `6s167-opt` (UNSAT, both solvers):
 
 Two independent multipliers: a per-propagation cost gap (~2–5×) *and* a
 search-trajectory gap (10× more conflicts). Props/conflict being roughly equal
-means the propagation machinery is not wasting work — the search just visits
+means the propagation machinery is not wasting work – the search just visits
 far more of it. Any fix that only speeds up BCP scales the whole picture down
 by a small constant; it cannot close a 10× conflict gap.
 
-## Landed this pass (commit `2b55658`) — trajectory-preserving
+## Landed this pass (commit `2b55658`) – trajectory-preserving
 
 All changes verified **bit-identical** conflict/decision/propagation counts
 against clean-HEAD binaries on `6s167-opt`, `constraints_17_0.4_1`,
@@ -35,7 +35,7 @@ against clean-HEAD binaries on `6s167-opt`, `constraints_17_0.4_1`,
 2. Binary-implication edge lists scanned via take/put-back of the owned
    `Vec` (was: two bounds-checked loads per implication). Guarded by an
    `is_empty` probe (most literals have no binary edges). The conflict path
-   restores the list before returning — losing it would silently drop every
+   restores the list before returning – losing it would silently drop every
    implication keyed under that literal. Thread-safety note: the solver is
    thread-local (portfolio workers each own one), so nothing here is shared.
 3. Byte-level DIMACS token scanner replacing `lines()` + `str::parse::<i32>`
@@ -80,7 +80,7 @@ constant factors. Candidate deltas vs CaDiCaL (`src/restart.cpp`,
    fixed tier percentages; CaDiCaL schedules by *ticks*, starts far earlier,
    grows geometrically, and protects glue ≤ 2 / recently-used clauses via
    `used` flags rather than activity sorts.
-2. **Mid-search vivification/OTFS cadence** — CaDiCaL re-vivifies learned
+2. **Mid-search vivification/OTFS cadence** – CaDiCaL re-vivifies learned
    clauses on a tick budget between reductions.
 3. **Tick accounting correction** (above) once its trajectory effect can be
    attributed properly.
@@ -93,7 +93,7 @@ constant factors. Candidate deltas vs CaDiCaL (`src/restart.cpp`,
 Every one of these alters the path the search takes, so per
 `docs/BENCHMARKING.md` each ships with: ≥10 seeds per cell, a matched null
 (same physical perturbation, semantics removed), replay at fresh seeds, and
-tick counters rather than wall-clock — this box is shared and wall-clock
+tick counters rather than wall-clock – this box is shared and wall-clock
 moved >30 % between consecutive runs of identical binaries during this
 study. A pragmatic intermediate: since these changes are all *CaDiCaL-parity*
 ports, differential-vs-CaDiCaL conflict counts on a fixed corpus give a much

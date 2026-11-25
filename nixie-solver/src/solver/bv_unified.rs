@@ -107,7 +107,7 @@ impl Solver {
     pub(super) fn bv_unify_enabled() -> bool {
         // Memoized: this gate is consulted on every assertion (and every
         // watch registration), and `std::env::var` is a linear scan over the
-        // environment — it measured at ~11 % of a graph-corpus solve.
+        // environment – it measured at ~11 % of a graph-corpus solve.
         // Environment variables cannot meaningfully change mid-process.
         static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         *FLAG.get_or_init(|| match std::env::var("NIXIE_BV_UNIFIED") {
@@ -368,7 +368,7 @@ impl Solver {
     /// deferred assertion (the exact work the deferral skipped at assert
     /// time), so the general path proceeds with the circuits it would have
     /// had without the deferral.  Called whenever the eager dispatch
-    /// declines a goal — the only situation where the deferred circuits are
+    /// declines a goal – the only situation where the deferred circuits are
     /// still wanted.
     pub(super) fn bv_restore_deferred_circuits(&mut self, manager: &TermManager) {
         if self.bv_elim_deferred.is_empty() {
@@ -392,7 +392,7 @@ impl Solver {
     ///   handle (`bvadd`/`bvmul`/`bvudiv`/`bvand`/`bvor`/`bvnot`/
     ///   `concat`/`extract`/comparisons/`eq`/`ite`/Bool connectives …).
     /// * **Expensive**: the assertion contains a division/remainder at
-    ///   width ≥ 64 or a non-constant multiply at width ≥ 64 — the node
+    ///   width ≥ 64 or a non-constant multiply at width ≥ 64 – the node
     ///   kinds whose circuits dominate a wide blast.
     ///
     /// Deferral requires both.  A candidate alone is true of most ordinary
@@ -401,7 +401,7 @@ impl Solver {
     /// stays off everything whose blast is cheap.  When the prediction is
     /// wrong at check time (a later assertion re-used the candidate
     /// variable), the elimination recount finds nothing and the general
-    /// path links the deferred atoms lazily — slower than eager, never
+    /// path links the deferred atoms lazily – slower than eager, never
     /// wrong.
     ///
     /// The occurrence counts in [`Solver::bv_elim_var_occurrences`] are
@@ -422,7 +422,7 @@ impl Solver {
         let mut expensive = false;
         let mut candidate = false;
         let mut visited: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
-        // (node, parent application kind) — the parent decides whether a
+        // (node, parent application kind) – the parent decides whether a
         // first-occurrence variable is an elimination candidate.
         let mut stack: Vec<(TermId, Option<&TermKind>)> = vec![(term, None)];
         while let Some((tid, parent)) = stack.pop() {
@@ -430,7 +430,7 @@ impl Solver {
                 .get(tid)
                 .is_some_and(|data| matches!(data.kind, TermKind::Var(_)));
             // Variables are counted on every pop (hash-consing: one pop per
-            // occurrence site — see `collect_unconstrained`); compound terms
+            // occurrence site – see `collect_unconstrained`); compound terms
             // are walked once.
             if is_var {
                 let count = self.bv_elim_var_occurrences.entry(tid).or_insert(0);
@@ -592,14 +592,14 @@ impl Solver {
         bool_leaves: &mut Vec<TermId>,
     ) -> bool {
         let bool_sort = manager.sorts.bool_sort;
-        // Pass 0 — `bvsub` reference census.  A subtractor whose *every*
+        // Pass 0 – `bvsub` reference census.  A subtractor whose *every*
         // reference comes from a miter-specializable atom (`(x − y) = 0`,
-        // `0 <u (x − y)`, `≤u` duality — see [`BvSolver::sub_zero_eq_operands`]
+        // `0 <u (x − y)`, `≤u` duality – see [`BvSolver::sub_zero_eq_operands`]
         // and the atom encoders' specializations) never needs its own
         // circuit: each such atom encodes over the operands x, y directly,
         // so pass 2 skips pushing the sub and its ~210-var subtractor
         // never exists.  Any other consumer (a mask, an add, an extract,
-        // a non-zero comparison) keeps the historical blast — the census
+        // a non-zero comparison) keeps the historical blast – the census
         // is per-reference and any non-specializable reference vetoes.
         let mut sub_total: FxHashMap<TermId, u32> = FxHashMap::default();
         let mut sub_miter: FxHashMap<TermId, u32> = FxHashMap::default();
@@ -696,7 +696,7 @@ impl Solver {
             if is_bv_sort {
                 // Pass 0's verdict: a miter-owned subtractor (every
                 // reference specializable, at least one reference) is not
-                // pushed — its consumers encode over the operands, and any
+                // pushed – its consumers encode over the operands, and any
                 // real consumer in a *later* assertion's walk re-adds it.
                 let miter_owned = matches!(&term.kind, TermKind::BvSub(_, _))
                     && sub_total.get(&tid).is_some_and(|&t| t > 0)
@@ -746,7 +746,7 @@ impl Solver {
         // append-only (a user scope ends the generation), and every
         // per-entry verdict (`is_bv`, `var_to_term`) is immutable, so
         // entries already examined in this generation yield exactly the
-        // same atoms — and their linkage (via the builder's idempotent
+        // same atoms – and their linkage (via the builder's idempotent
         // memos) already happened in the earlier sweep that examined them.
         // Each entry is examined once per generation; the O(all encoded
         // constraints) rescan per assertion and per check-side relink
@@ -1083,7 +1083,7 @@ impl Solver {
         // eliminates variables and *resolves their defining clauses away*.
         // `save_model` reconstructs values that satisfy the rewritten
         // formula, and those values need not satisfy the original circuit
-        // clauses (they were deleted, not violated) — so comparing raw
+        // clauses (they were deleted, not violated) – so comparing raw
         // circuit-var reads against reference semantics is a category
         // error once any elimination ran.  This is the root cause of the
         // false positives recorded in the study's appendix: the
@@ -1092,7 +1092,7 @@ impl Solver {
         if self.sat.stats().substitutions > 0 || self.sat.stats().bve_eliminated > 0 {
             #[cfg(feature = "std")]
             eprintln!(
-                "[bv-net] skipping: destructive preprocessing ran ({} substitutions, {} BVE) — raw circuit reads are not model-truthful",
+                "[bv-net] skipping: destructive preprocessing ran ({} substitutions, {} BVE) – raw circuit reads are not model-truthful",
                 self.sat.stats().substitutions,
                 self.sat.stats().bve_eliminated
             );

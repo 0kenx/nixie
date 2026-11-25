@@ -1,8 +1,8 @@
 //! Locating a PlusCal algorithm in a TLA+ source file.
 //!
 //! A PlusCal algorithm is *TLA+ comment text*: `(* --algorithm … *)`. The
-//! front end's lexer already scans comments — including nested `(* *)` and
-//! `\*` inside them — so extraction is a search over the retained comment
+//! front end's lexer already scans comments – including nested `(* *)` and
+//! `\*` inside them – so extraction is a search over the retained comment
 //! list, not a second scanner. The reference translator searches the raw
 //! file for `--algorithm` first and `--fair` second; the same order is kept
 //! here, restricted to block comments, which is where every corpus algorithm
@@ -19,7 +19,7 @@ use crate::token::Comment;
 pub struct Found {
     /// The algorithm body: everything from just after the `--algorithm` (or
     /// `--fair`) marker to the end of the enclosing comment. Inner `\*` and
-    /// nested `(* *)` comments are still present — the token stream's lexer
+    /// nested `(* *)` comments are still present – the token stream's lexer
     /// treats them exactly as the reference tokenizer does.
     pub body: String,
     /// Whether the marker was `--fair`.

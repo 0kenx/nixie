@@ -358,7 +358,7 @@ impl Solver {
         // reachability semantics as the previous early-break scan;
         // completed negative traversals cache every visited subterm, so
         // sibling assertions sharing a meganode prefix stop re-walking
-        // it — the unmemoized scan was a per-assert cost on every
+        // it – the unmemoized scan was a per-assert cost on every
         // array-free workload).
         let has_arrays = manager.contains_array_sort(term);
         if has_arrays

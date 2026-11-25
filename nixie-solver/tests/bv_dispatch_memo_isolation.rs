@@ -4,8 +4,8 @@
 //! TermIds are manager-relative: two `Context`s on one thread assign the
 //! same ids to unrelated terms.  When the memo was a `thread_local!` set,
 //! solver A (a pure QF_BV script) populated it with ids *it* had proven
-//! blastable; solver B — a fresh manager reusing those ids for a
-//! UF-bearing formula — then read A's entries as positives, the
+//! blastable; solver B – a fresh manager reusing those ids for a
+//! UF-bearing formula – then read A's entries as positives, the
 //! `all_assertions_bv_fragment` flag stayed up, and the pure-BV dispatch
 //! received an unblastable assertion whose UF atoms the blast encoder
 //! cannot represent.  This test is that exact shape: if the memo leaks
@@ -19,7 +19,7 @@ use nixie_solver::Context;
 
 #[test]
 fn blastable_memo_does_not_leak_across_contexts_on_one_thread() {
-    // Solver A: several bit-vector terms — with a thread-local memo this
+    // Solver A: several bit-vector terms – with a thread-local memo this
     // caches ids 0..~6 as proven blastable.
     let mut a = Context::new();
     let a_script = r#"
@@ -43,7 +43,7 @@ fn blastable_memo_does_not_leak_across_contexts_on_one_thread() {
     // `(f #x01)` application would land on an id A proved blastable.  The
     // formula is unsat through the UF equality; a leaked memo routes it to
     // the pure-BV dispatch, the encoder cannot blast `f`, and the atoms
-    // drop — answering `sat`.
+    // drop – answering `sat`.
     let mut b = Context::new();
     let b_script = r#"
         (set-logic QF_UFBV)

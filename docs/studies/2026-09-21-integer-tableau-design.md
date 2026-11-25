@@ -1,8 +1,8 @@
-# Design brief: the integer tableau — lazy canonicalization past the write-back floor
+# Design brief: the integer tableau – lazy canonicalization past the write-back floor
 
 **Date:** 2026-09-21.  **Status:** a design brief for an own-session(s)
-project — nothing built.  **Entry context:** the warm-start negative
-study's profile map — both LIA churn probes are substitution-volume
+project – nothing built.  **Entry context:** the warm-start negative
+study's profile map – both LIA churn probes are substitution-volume
 cells where the fraction-free machinery's CANONICAL WRITE-BACK
 (`checked_ratio_i128`'s per-term gcd + the row chain) plus the integer
 loop are ~78 % of wall.  The Bareiss layer made the arithmetic cheap;
@@ -11,47 +11,47 @@ the remaining cost is paying for OUTPUT nobody reads.
 ## The observation that opens the project
 
 `substitute_row_ff` computes each substituted row TWICE, in effect: once
-as an `IntRow` (integer numerators + shared denominator — what the next
+as an `IntRow` (integer numerators + shared denominator – what the next
 pivot will consume, held in the ptr-coherent cache) and once as a
-canonical `LinExpr` (one `checked_ratio_i128` gcd PER TERM — what the
+canonical `LinExpr` (one `checked_ratio_i128` gcd PER TERM – what the
 tableau's store requires).  During a make-feasible cascade, the
 canonical form of the 45 substituted rows is read by almost nobody:
 
 * the delta-propagation loop reads ONE coefficient per row (the leaving
-  basic's) — available from the `IntRow` as `N_v/D` without reduction;
-* the column-diff maintenance reads only the term VAR SETS — the
+  basic's) – available from the `IntRow` as `N_v/D` without reduction;
+* the column-diff maintenance reads only the term VAR SETS – the
   `IntRow` has them;
 * the entering rule (`find_pivot_col`) reads ONE row per round (the
-  violated basic's) — signs and eligibility are `IntRow`-readable;
+  violated basic's) – signs and eligibility are `IntRow`-readable;
 * `eval_expr` on the entering solved form is once per pivot.
 
-The canonical form is needed by the SLOW consumers only — propagation
+The canonical form is needed by the SLOW consumers only – propagation
 (`propagate_bounds_in`), Gomory cuts, branch bounds, model extraction,
 `row_ids` content-addressing on intern.  Those fire O(violations), not
 O(pivots).
 
 **The project**: make the `IntRow` the tableau's PRIMARY storage, with
-the canonical `LinExpr` a lazily-materialized memo per row — built on
+the canonical `LinExpr` a lazily-materialized memo per row – built on
 first slow-consumer access, invalidated (dropped) on row replacement.
 The write-back then happens once per (row, slow-consumer-touch), not
 once per pivot.
 
 ## The architecture sketch
 
-* `tableau: FxHashMap<VarId, Arc<IntRow>>` — the primary store (the
+* `tableau: FxHashMap<VarId, Arc<IntRow>>` – the primary store (the
   cache and the store merge; the ptr-coherence question dissolves, the
   `IntRow` becomes the identity).
-* `lin_cache: FxHashMap<VarId, (Arc<IntRow>, Arc<LinExpr>)>` — the
+* `lin_cache: FxHashMap<VarId, (Arc<IntRow>, Arc<LinExpr>)>` – the
   materialization memo, validated by `Arc::ptr_eq` on the `IntRow`
   (exactly the current cache's discipline, inverted).
 * `fn lin_form(&mut self, var: VarId, manager-scratch) -> Arc<LinExpr>`
-  — the single materialization choke point.  Every current
+  – the single materialization choke point.  Every current
   `tableau.get(&var)` consumer that needs coefficients routes through
   it (49 internal sites + the accessors `tableau_iter`,
   `tableau_keys`, `tableau_coef_of`, `defining_row`).
 * Hot-path rewrites read the `IntRow` directly:
   * `build_pivot_expr` becomes the zero-gcd re-denomination
-    (numerators negated, denominator := entering numerator — the
+    (numerators negated, denominator := entering numerator – the
     Bareiss study's follow-up, which was negative AS A STANDALONE
     because the entering solve was 1/46th of the mass; as part of THIS
     project it is simply how the solved form is born);
@@ -59,7 +59,7 @@ once per pivot.
     read the integer forms;
   * `find_pivot_col`/`find_violating`/`find_bland_pivot_col` take an
     `IntRow`-read view (sign of `N_v`, magnitude comparisons via
-    cross-multiplication against `D` — no reduction).
+    cross-multiplication against `D` – no reduction).
 * Width discipline unchanged: `INT_ROW_BUDGET` (2^62) admission, the
   exact `BigLinExpr` wide store as the escape, `LinExpr`-only consumers
   unchanged semantically (they see the same canonical rows, later).
@@ -72,12 +72,12 @@ the pivot commit store rows as `IntRow + pending-canonical`, with
 writing canonical forms eagerly.  This isolates the change to the
 pivot's commit + the consumer choke point.  Measured gate: the churn
 probes' write-back share (currently ~40 %) collapses; counters
-BIT-IDENTICAL (same canonical content, produced lazily — the search
+BIT-IDENTICAL (same canonical content, produced lazily – the search
 must not move).
 
 Phase 2: move `find_pivot_col` et al. onto the integer view
 (entering-rule semantics preserved exactly: the same comparisons over
-the same values — the mirror can verify the pivot SEQUENCE is
+the same values – the mirror can verify the pivot SEQUENCE is
 unchanged, pivot-for-pivot).
 
 Phase 3 (optional, only if a profile still shows it): the entering
@@ -85,37 +85,37 @@ solved form as a born-integer row.
 
 ## The soundness rails (what makes this tractable)
 
-* The canonical content is a PURE FUNCTION of the `IntRow` — the
+* The canonical content is a PURE FUNCTION of the `IntRow` – the
   current `substitute_row_ff` write-back already proves it (the
   equivalence grid pins value-identity).  Laziness changes WHEN, never
   WHAT.
 * Row identity for `row_ids` content-addressing: intern-time rows are
   canonical already (they come from parsing); only pivot-derived rows
   lazify, and `row_ids` never addresses those (they are slacks'
-  substituted forms — the intern path content-addresses the REQUESTED
+  substituted forms – the intern path content-addresses the REQUESTED
   form pre-substitution).  Verify this claim in phase 1 with an
   assertion-level test: no `lin_form` call from `intern_row_cached`.
 * The wide-row escape ladder must keep its exact semantics: an
-  `IntRow` that declines budget never becomes primary — the row lives
+  `IntRow` that declines budget never becomes primary – the row lives
   in `wide_rows` as today, canonical `BigLinExpr` and all.  The
   narrow/wide boundary code paths are the highest-risk sites; the
   wide-literal differential pins are the guards.
 * Scope discipline: `pop` never removes rows; row replacement happens
-  at pivot commits and wide migrations only — the memo's invalidation
+  at pivot commits and wide migrations only – the memo's invalidation
   set is the same complete set the `IntRow` cache already maintains.
 
 ## What this does NOT buy
 
-The pivot COUNT (Layer 3 — the internal B&B volume) is untouched: this
+The pivot COUNT (Layer 3 – the internal B&B volume) is untouched: this
 project makes each pivot cheaper, not fewer of them.  If the arithmetic
 arc's branch-channel campaign drains the CAV class by search-shape,
-re-profile before starting this — the write-back floor's absolute share
+re-profile before starting this – the write-back floor's absolute share
 falls with it.
 
 ## Measurement plan (pre-registered)
 
 * Primary: the churn probes' substitution-family self-time share
-  (`pivot` + `checked_ratio_i128` + `gcd_i128`), before/after — expect
+  (`pivot` + `checked_ratio_i128` + `gcd_i128`), before/after – expect
   the write-back component (≈ the latter two) to collapse to <10 %.
 * Identity: perf gate 1.000/1.000 AND the standing table's conflict
   totals bit-identical (phase 1 must not move the search); the mirror's
@@ -127,24 +127,24 @@ falls with it.
 
 ## Execution record: Phase 1 landed (Stages A and B, same day)
 
-**Stage A (`c5e8026a`)** — the bridge, behavior-identical: `TableRow`
+**Stage A (`c5e8026a`)** – the bridge, behavior-identical: `TableRow`
 storage, the memoizing `row_lin` choke point, the `&self` Cow view
 (`row_lin_view`), form-independent `term_vars`; every insert still
 `Lin`.  Verified: theories 1670, solver 1198, probe counter identity.
 
-**Stage B** — the win: `substitute_row_ff` loses its canonical
+**Stage B** – the win: `substitute_row_ff` loses its canonical
 write-back (returns the `IntRow`; the write-back could never decline
 where the 2^62 admission passed, so the path partition is unchanged),
 pivot commits store `TableRow::Int`, the delta-propagation reads its
 one coefficient from the integer form (one `checked_ratio_i128` per
-row — the deferral's only per-pivot residual), and the old
+row – the deferral's only per-pivot residual), and the old
 ptr-validated `int_rows` cache is DELETED (the store holds Int natively;
 a `LinNoInt` negative variant prevents per-pivot rebuilds on the
 over-budget tail; commit-time int-form builds are the same k-gcd cost
 the cache paid).
 
 **Measured (problem__011, the standing churn probe):**
-`checked_ratio_i128` — 21.9 % of wall — VANISHES from the profile
+`checked_ratio_i128` – 21.9 % of wall – VANISHES from the profile
 (the write-back is dead); `materialize_lin` (the lazy path) is 2.3 %;
 `pivot` self drops 39 % → 11.6 %; `gcd_i128` absorbs the residual
 chain reduction (17 % → 22 %).  End-to-end: 17.6 s → 14.9 s (~1.18×),
@@ -153,7 +153,7 @@ never WHAT it is).  Gate PASS 1.000/1.000; parity 176/177 clean; CAV
 40-cell sweep identical (one baseline-leg cap timeout under load).
 
 The remaining arithmetic mass is the substitution's gcd CHAIN plus the
-entering/leaving row materializations — Phase 2/3 territory (the
+entering/leaving row materializations – Phase 2/3 territory (the
 entering-rule trio and `build_pivot_expr` still materialize one
 canonical row per pivot round; the born-integer solved form is
 Phase 3).  The write-back floor itself is CLOSED.
@@ -161,15 +161,15 @@ Phase 3).  The write-back floor itself is CLOSED.
 ## Phase 2 record: the entering rules go sign-native (marginal win, honest attribution)
 
 `find_pivot_col` / `find_bland_pivot_col` / `find_dual_pivot_col` now
-read `(var, sign)` pairs through `row_term_signs` — either stored form,
+read `(var, sign)` pairs through `row_term_signs` – either stored form,
 no materialization, no gcd, and the trio returns to `&self`.  The rules'
 only coefficient input was always the SIGN (eligibility) plus
-`num_nonfree_basic_dependents`/column-length scoring — `sign(N_v)` under
+`num_nonfree_basic_dependents`/column-length scoring – `sign(N_v)` under
 `D > 0` is exactly the canonical coefficient's sign, and both forms
 share the term order, so iteration and tie-breaks are identical.
 Bit-identical (gate 1.000/1.000, probes, CAV identity); full bar green.
 
-**Honest attribution**: the win is smaller than the profile suggested —
+**Honest attribution**: the win is smaller than the profile suggested –
 `row_lin`'s memoization meant the trio's materialization of the
 violated row was SHARED with `pivot`'s own leaving-row fetch one call
 later; Phase 2 saves only the conflict-round materializations (rounds
@@ -179,63 +179,63 @@ at all).
 
 ## Phase 3, refined (the next session's entry)
 
-The born-integer entering row — and the refinement that makes it
+The born-integer entering row – and the refinement that makes it
 cleaner than the original sketch: **an `Int` leaving row's solved form
 is exact-and-narrow BY CONSTRUCTION**.  Re-denomination
 (`e = (D·b − Σ_{i≠e} n_i·v_i − n_c)/n_e`, sign-normalized so the
-denominator is `|n_e|`) only sign-flips budget-bounded numerators — no
+denominator is `|n_e|`) only sign-flips budget-bounded numerators – no
 intermediate can overflow, so `build_pivot_expr`'s exact and wide
 RETRIES ARE UNREACHABLE for Int leaving rows, and the born row is
 admitted by construction (`|N| ≤ 2^62`, `D = |n_e| ≤ 2^62`).
 
 Implementation notes for the owner:
-* `born_entering_row(leaving_int, n_e, basic_var, nonbasic_var)` —
+* `born_entering_row(leaving_int, n_e, basic_var, nonbasic_var)` –
   term order `[basic_var, then leaving order]` matches
   `build_pivot_expr`'s (try_add_term appends), so the commit's content
   addressing and downstream orders are unchanged.
 * `entering_int` IS the born row (kills `int_row_from_lin(new_expr)`'s
   per-pivot lcm build).
-* `entering_big` must become LAZY — it is consumed only by the
+* `entering_big` must become LAZY – it is consumed only by the
   wide-row substitution branch and the exact fallback (the cold tail);
   building it eagerly from the born row would pay per-term `BigRational`
   reductions on every pivot.  Construct at the use sites from whichever
   entering form exists.
 * The entering var's assignment value: `eval` over the born row.  The
   ZERO-GCD FAST PATH: when the assignment values are INTEGRAL (the
-  common tableau state), the value is `(Σ N_i·a_i + N_c)/D` — pure
+  common tableau state), the value is `(Σ N_i·a_i + N_c)/D` – pure
   `i128` accumulation (products ≤ 2^125) with ONE final
   `checked_ratio_i128`.  Fractional `a_i` fall back to per-term
   rational adds (1 gcd/term, the mixed case only).
-* The commit inserts `TableRow::Int(born)` — the entering row's
+* The commit inserts `TableRow::Int(born)` – the entering row's
   canonical form is never built on the hot path at all.
 
-## Phase 3 record: the born-integer entering row — landed, hot path fully integer
+## Phase 3 record: the born-integer entering row – landed, hot path fully integer
 
 `born_entering_row` (re-denomination of an `Int` leaving row:
 `e = (D·b − Σ_{i≠e} nᵢvᵢ − n_c)/n_e`, sign-normalized to denominator
-`|n_e|`) — exact-and-narrow BY CONSTRUCTION, zero gcds, term order
+`|n_e|`) – exact-and-narrow BY CONSTRUCTION, zero gcds, term order
 matching `build_pivot_expr` (pinned: the 2000-case grid's
 `materialize(born) == build_pivot_expr(materialize(leaving))`, order
 included).  The pivot's Int-leaving branch takes it; `entering_int` IS
 the born row (the per-pivot `int_row_from_lin` build dies);
-`entering_big` goes LAZY (a cell the two cold-tail consumers fill —
-the wide-row branch and the exact fallback — no more eager per-term
+`entering_big` goes LAZY (a cell the two cold-tail consumers fill –
+the wide-row branch and the exact fallback – no more eager per-term
 `BigRational` reductions); the entering var's assignment value comes
 from `eval_int_expr` (the ZERO-GCD integral fast path: pure `i128`
 accumulation, one final `checked_ratio_i128`; fractional assignments
 fall back to the canonical evaluation); and the entering commit stores
-`TableRow::Int` — **the hot path never builds a canonical row at all**.
+`TableRow::Int` – **the hot path never builds a canonical row at all**.
 
 A Stage-A cost the profile exposed is also fixed: `try_patch_column`'s
 owner scan had been materializing Int rows per (owner, candidate)
-through the Cow view — it now reads its ONE coefficient from the store
+through the Cow view – it now reads its ONE coefficient from the store
 form (a single `checked_ratio_i128` for Int rows, direct find for Lin).
 
 Measured (problem__011, back-to-back A/B under load): a consistent
 ~6 % wall improvement with BIT-IDENTICAL counters on all four probes
 (026/011/prp-3-18/022-45); gate 1.000/1.000; parity 176/177.  The
 honest end-to-end note: the probe is now dominated by the substitution
-machinery itself (`substitute_row_ff` ~33 % + `gcd_i128` ~30 % — the
+machinery itself (`substitute_row_ff` ~33 % + `gcd_i128` ~30 % – the
 integer mul-sub and the joint-reduction chain), which is this
 architecture's floor; Phase 3's entering-side saving shows as the
 ~2 % pivot-share drop plus the removed eager builds, not as a large

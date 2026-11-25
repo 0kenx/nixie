@@ -3,7 +3,7 @@
 coefficients/constants sit at and beyond the i64 boundary, compared against
 z3. This is the oracle that found the item-32 wrong-`sat` (wide
 coefficients silently dropped as free Booleans) and the f1 false-`unsat`
-(the lying assignment_current) — its fourth generator revision added the
+(the lying assignment_current) – its fourth generator revision added the
 `not/and` nesting over div/mod + wide constants that exposed f1, so shape
 coverage matters more than seed count here.
 
@@ -12,7 +12,7 @@ replaying it through z3 (mixed_fuzz.py's pattern).
 
 Comparator trap: z3's QF_LRA front end ERRORS on `(- 0 2^63)`-shaped
 literals ("logic does not support nonlinear arithmetic") while its
-no-logic mode decides the same formula correctly — error output is
+no-logic mode decides the same formula correctly – error output is
 treated as non-evidence (`z3err`), never read as a verdict.
 """
 import random, subprocess, sys, tempfile, os, collections
@@ -35,7 +35,7 @@ def r64():
 
 # The wall constants (the wide-LP build's exact channels): the i64::MIN
 # corner (whose row needs the constant +2^63), i64::MAX, and the first
-# integers BEYOND the width — the strict bounds at these walls are the
+# integers BEYOND the width – the strict bounds at these walls are the
 # shapes the hand-regressions cover (`i64_min_*`, `boundary_*`); emitting
 # them here lets fresh seeds hunt them continuously.
 WALLS = [
@@ -57,7 +57,7 @@ def wall_atom(nvars):
 
 def neg_corner_atom(nvars):
     """A spelled negation corner: `(- 0 i64::MIN)`-shaped constants under
-    a comparison — z3's QF_LRA front end ERRORS on these literals (the
+    a comparison – z3's QF_LRA front end ERRORS on these literals (the
     comparator trap in the header); the no-logic mode decides them."""
     v = f"v{random.randrange(nvars)}"
     c = random.choice([9223372036854775808, 9223372036854775807, 4611686018427387905])
@@ -84,8 +84,8 @@ def gen():
         L.append(wall_atom(nvars))
     if random.random() < 0.15:
         L.append(neg_corner_atom(nvars))
-    # Nested Boolean structure over div/mod — the f1 shape (fourth
-    # revision; keep it).  WELL-SORTED: `mod`/`div` take Int operands —
+    # Nested Boolean structure over div/mod – the f1 shape (fourth
+    # revision; keep it).  WELL-SORTED: `mod`/`div` take Int operands –
     # on a Real-only problem the same nesting is emitted with real `/`
     # (the pre-existing spelling put `mod` on Real vars, which both
     # solvers reject at parse and every such instance was wasted yield).

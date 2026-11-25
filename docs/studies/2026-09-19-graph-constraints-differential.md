@@ -1,8 +1,8 @@
-# Study: integrated finite-graph constraints — differential parity vs MonoSAT and scale probes
+# Study: integrated finite-graph constraints – differential parity vs MonoSAT and scale probes
 
 **Date:** 2026-09-19
 **Landed in:** `0b1fcb12` (module), `1adb9f4f` (fixes + lifecycle), this commit (campaign)
-**Verdict:** **PASS** — 1 600/1 600 random instances agree with the MonoSAT
+**Verdict:** **PASS** – 1 600/1 600 random instances agree with the MonoSAT
 reference implementation (no disagreement, no skip); scale guidance in
 `docs/GRAPH.md` validated as conservative (random instances to n = 100 /
 6 224 edges solve sub-second in a *debug* build).
@@ -20,7 +20,7 @@ parity against MonoSAT itself** on random instances.
 ## The one deliberate semantics split
 
 MonoSAT's `reach(a,b)` counts the zero-length path (reflexive: `dist[source]
-= 0`, so `reach(a,a)` is trivially true — verified in
+= 0`, so `reach(a,a)` is trivially true – verified in
 `ReachDetector.cpp`/`Dijkstra.h`). Nixie's `reach` requires length ≥ 1, so
 `reach(a,a)` means "a lies on a directed cycle". For `a ≠ b` the two
 conventions **coincide exactly**, so the campaign restricts reach atoms to
@@ -30,12 +30,12 @@ mismatched semantics.
 
 ## Campaign
 
-- Generator: `bench/graph_differential/gen_instance.py` — 1–2 digraphs,
+- Generator: `bench/graph_differential/gen_instance.py` – 1–2 digraphs,
   random edges incl. self-loops, up to `--reach-max` reach atoms on random
   distinct pairs, an optional `acyclic` atom (probability 0.6), and random
   unit + two-literal clauses over the theory variables (polarity mix), so
   the corpus spans both verdicts.
-- Driver: `bench/graph_differential/run_differential.sh` — both solvers see
+- Driver: `bench/graph_differential/run_differential.sh` – both solvers see
   the same file; a verdict mismatch, a Nixie `Unknown`, or a driver-side
   parse rejection is a loud failure (instance preserved under `failures/`).
 
@@ -44,9 +44,9 @@ mismatched semantics.
 | mixed seeds | 1 000 | 2–8 (random) | 1 000 | 0 | 0 | 532 / 468 |
 | `VERTICES=12` | 400 | 12 | 400 | 0 | 0 | 214 / 186 |
 | `VERTICES=20` | 200 | 20 | 200 | 0 | 0 | 114 / 86 |
-| **total** | **1 600** | — | **1 600** | **0** | **0** | 860 / 740 |
+| **total** | **1 600** | – | **1 600** | **0** | **0** | 860 / 740 |
 
-## Scale probes (single-solve wall time, debug build — indicative only)
+## Scale probes (single-solve wall time, debug build – indicative only)
 
 The module docs state the stateless-recompute design "targets tens of
 vertices and hundreds of edges". Probes with `--reach-max 8`:
@@ -58,17 +58,17 @@ vertices and hundreds of edges". Probes with `--reach-max 8`:
 | 100 | 6 224 | 0.282 s | 0.011 s | unsat/unsat |
 
 Atom-count stress at n = 50 (`--reach-max` 4/12/24, 153 edges): 0.010 /
-0.009 / 0.013 s — all agree with MonoSAT. The per-event `O(V·E)`
+0.009 / 0.013 s – all agree with MonoSAT. The per-event `O(V·E)`
 recomputation is not the bottleneck at these sizes; the gap to MonoSAT at
 n = 100 (≈25×) is the documented upgrade path (incremental reachability,
 min-cut explanations, theory-directed decisions). Wall times are
-single-run, load-sharing machine — recorded as scale evidence only, not as
+single-run, load-sharing machine – recorded as scale evidence only, not as
 a policy metric (see `docs/BENCHMARKING.md`).
 
 ## Defects found by the shipped oracles during development (recap)
 
 1. **Empty-cut false-unsat class.** A forward-closure cut for the self-pair
-   case emitted `Consequence(¬reach(u,u), [])` — an unconditional
+   case emitted `Consequence(¬reach(u,u), [])` – an unconditional
    justification that becomes a permanent unit clause and would refute any
    later branch re-enabling the cut edges. Caught by the all-completions
    oracle on a parallel-edges case; fixed by MonoSAT's backward-closure cut

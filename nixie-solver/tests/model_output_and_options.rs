@@ -346,8 +346,8 @@ fn test_get_model_invalidated_by_set_logic() {
     // "second set-logic swaps the engine, invalidating the cached model"
     // scenario can no longer occur: the second call is itself a command
     // error (the logic-contract layer rejects it before any engine state
-    // moves).  `execute_script` reports the command error as `Err` —
-    // which is the observable contract — and no engine swap happens.
+    // moves).  `execute_script` reports the command error as `Err` –
+    // which is the observable contract – and no engine swap happens.
     let mut ctx = Context::new();
     let result = ctx.execute_script(
         "(set-logic QF_LIA)
@@ -631,7 +631,7 @@ fn test_reset_assertions_keeps_logic_selected_theory() {
     #[cfg(feature = "nlsat")]
     assert_eq!(fresh, vec!["sat".to_string()]);
     // Without `nlsat` the NRA backend is compiled out; the goal declines
-    // honestly (the subject of the test — the logic surviving reset — is the
+    // honestly (the subject of the test – the logic surviving reset – is the
     // second check below, which is logic-independent).
     #[cfg(not(feature = "nlsat"))]
     assert_eq!(fresh, vec!["unknown".to_string()]);

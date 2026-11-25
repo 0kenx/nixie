@@ -1,4 +1,4 @@
-# Standing SMT-side performance table — nixie vs z3
+# Standing SMT-side performance table – nixie vs z3
 
 The standing perf reference for the SMT side (QF_LIA / QF_BV slices),
 complementing `bench/perf_gate` (nixie-vs-nixie landing gate) and
@@ -9,12 +9,12 @@ side had no standing perf reference at all.
 ## Protocol
 
 - **Corpus**: deterministic stride samples (60 per family, `LC_ALL=C
-  sort` order) of the in-repo `smt-lib/non-incremental` extracts — the
+  sort` order) of the in-repo `smt-lib/non-incremental` extracts – the
   same files every run; the slices are recorded in the snapshot.
-- **Budget**: a per-instance wall *cap* (10 s default, bounding only —
+- **Budget**: a per-instance wall *cap* (10 s default, bounding only –
   wall is never a metric).  (nixie's `--conflict-limit` is now enforced
-  end to end — it used to bind only theory conflicts, a facade on
-  bit-blasted goals — but the harness keeps wall caps so both solvers
+  end to end – it used to bind only theory conflicts, a facade on
+  bit-blasted goals – but the harness keeps wall caps so both solvers
   run under an identical, comparable budget shape.)
 - **Metric**: each solver's own deterministic conflict counters
   (`--stats` / `-st`).  Counter *levels* are not comparable across
@@ -51,7 +51,7 @@ The scratch `results.json` is gitignored; commit the per-environment
 
 The only cell that moved: `Sage2/bench_11463` timeout -> unsat (the
 Z3-shaped per-firing cut budget hands control back to CDCL, which
-refutes at 9 818 conflicts).  The LIA class is unchanged — the
+refutes at 9 818 conflicts).  The LIA class is unchanged – the
 `docs/studies/2026-09-20-lia-pivot-storm-dissected.md` map owns it
 (CDCL-visible branching + the wide-store arithmetic layer).
 
@@ -67,22 +67,22 @@ snapshot: `counterexample.dump.ia32_Mul_*` timeout -> unsat at **25 ms**
 (the extract-window arithmetic folds the multiplier identities at zero
 conflicts), `Sage2/bench_16217` timeout -> unsat (9.9 s, same rules),
 and `Sage2/bench_3238` timeout -> **sat at 4.1 s where z3 times out**
-(the concurrent SAT-core landings).  The LIA class is unchanged —
+(the concurrent SAT-core landings).  The LIA class is unchanged –
 `docs/studies/2026-09-20-lia-branch-channel-design.md` is the owning
 implementation map.  (The interleaved session's load-contaminated runs
 at load 26-35 were never committed; this snapshot is the honest one.)
 
-The QF_LIA gap (−22) is simplex-side capacity — the arithmetic arc's
+The QF_LIA gap (−22) is simplex-side capacity – the arithmetic arc's
 active territory; QF_BV is within 3.  Re-run at landing-relevant shas
 and compare against this table.
 
-**Every loss is now mechanism-attributed** with repros and fix routes —
+**Every loss is now mechanism-attributed** with repros and fix routes –
 see `docs/studies/2026-09-19-smt-perf-gap-attribution.md`: the LIA gap
 splits into the deep-encoding class (9 instant `unknown`s at paren
-depth 2537 vs `ENCODE_DEPTH_LIMIT` 512 — the iterative-encoder project)
+depth 2537 vs `ENCODE_DEPTH_LIMIT` 512 – the iterative-encoder project)
 and the integer-reasoning/simplex-blowup class (z3 decides via its
 Diophantine solver, `arith-dio-calls 1`, while nixie's branch-and-bound
 grinds BigInt-GCD blowup); the BV gap is the algebraic-identity
 (multiplier/wienand) preprocessing class, z3-at-0-conflicts.  On the
-both-solved set the conflict-ratio median is 1.0 — the gap is
+both-solved set the conflict-ratio median is 1.0 – the gap is
 concentrated, not general slowness.

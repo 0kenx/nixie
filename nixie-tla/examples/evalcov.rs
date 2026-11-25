@@ -34,8 +34,8 @@ fn main() {
             continue;
         };
         // Constants and variables no longer exclude a module. Only *ground*
-        // definitions are probed — one that mentions a constant or a variable
-        // has a free name and is not evaluated here at all — so the
+        // definitions are probed – one that mentions a constant or a variable
+        // has a free name and is not evaluated here at all – so the
         // declarations can be given dummy assignments purely to make TLC run
         // the module. That widens the sample from constant-free modules to
         // essentially all of them.

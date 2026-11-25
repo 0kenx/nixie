@@ -60,7 +60,7 @@ files, net +5/−3 timeouts at 35 s, Z3 parity 169/169 decisive.
 | pure sat n=2000 w=16 | 23.8 s | **11.8 s** |
 | pure sat n=600 w=10 (dense) | 1.85 s | 3.1 s |
 | pure unsat n=2000 w=16 | 1.45 s | 17.8 s |
-| mixed cells (stage-1/2 tables) | — | unchanged |
+| mixed cells (stage-1/2 tables) | – | unchanged |
 
 The dense-cell and explicit-unsat regressions are the known costs of the
 routing (embedded dispatch handled those shapes better); the corpus A/B

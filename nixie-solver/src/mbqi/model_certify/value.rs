@@ -61,7 +61,7 @@ impl CertValue {
     ///
     /// SMT-LIB arithmetic comparisons and equalities admit mixed
     /// `Int`/`Real` operands (`(< xi 3.5)` is well-sorted), and the answer
-    /// is an exact rational comparison — `3` and `3.0` are the same value.
+    /// is an exact rational comparison – `3` and `3.0` are the same value.
     /// `None` when either side is a boolean (a malformed comparison, not a
     /// false one: the caller declines rather than inventing a verdict).
     pub(crate) fn compare_numeric(&self, other: &CertValue) -> Option<Ordering> {

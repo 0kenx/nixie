@@ -1,4 +1,4 @@
-//! Bellman-Ford / SPFA for difference logic — array-based.
+//! Bellman-Ford / SPFA for difference logic – array-based.
 //!
 //! Multi-source shortest paths over the constraint graph with negative-cycle
 //! detection. All per-node state lives in flat `Vec`s indexed by `DiffVar`
@@ -114,7 +114,7 @@ impl BellmanFord {
     }
 }
 
-/// SPFA (Shortest Path Faster Algorithm) — queue-driven Bellman-Ford.
+/// SPFA (Shortest Path Faster Algorithm) – queue-driven Bellman-Ford.
 #[derive(Debug, Default)]
 pub struct Spfa {
     /// Per-node distance (index = node id).
@@ -201,12 +201,12 @@ impl Spfa {
         None
     }
     /// Seeded incremental check: given the cached multi-source `distances`
-    /// (indexed by node id) — a valid potential set for the asserted graph —
+    /// (indexed by node id) – a valid potential set for the asserted graph –
     /// relax from `src` only (the just-added edge's source), updating
     /// `distances` in place to the propagated fixpoint.  Absorption (no
     /// relaxation through the new edge) certifies no cycle through it; see
     /// `DiffLogicSolver::check_incremental_from` for the potential argument.
-    /// Returns `Some(())` when a negative cycle was detected — the caller
+    /// Returns `Some(())` when a negative cycle was detected – the caller
     /// must then re-run the full multi-source SPFA to extract the conflict
     /// (this run's parent forest is partial and cannot explain the cycle).
     pub fn seed_from(
@@ -464,7 +464,7 @@ mod tests {
         // (The former `seed_from` API was removed: relaxing from the new
         // edge's source over cached multi-source distances can be absorbed
         // by a shorter distance from another source and miss a genuinely
-        // new negative cycle — the false-SAT regression covered by
+        // new negative cycle – the false-SAT regression covered by
         // `incremental_check_absorption_still_detects_cycle` in solver.rs.
         // The multi-source closure itself stays covered above.)
         let mut graph = ConstraintGraph::new(true);

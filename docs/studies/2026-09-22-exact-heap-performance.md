@@ -71,11 +71,11 @@ The following medians are descriptive whole-pipeline measurements:
 | permutation-2 | 243.24 (10/10) | 286.36 (10/10) | 279.74 (10/10) | 253.16 (10/10) |
 | permutation-4 | 244.47 (10/10) | 466.32 (10/10) | 300.31 (10/10) | 269.95 (10/10) |
 | permutation-8 | 248.16 (10/10) | 2330.71 (10/10) | 385.19 (10/10) | 547.22 (10/10) |
-| permutation-16 | 261.03 (10/10) | 27219.96 (10/10) | 839.24 (10/10) | — (0/10) |
+| permutation-16 | 261.03 (10/10) | 27219.96 (10/10) | 839.24 (10/10) | – (0/10) |
 | negative-2 | 255.22 (10/10) | 835.90 (10/10) | 283.23 (10/10) | 257.22 (10/10) |
 | negative-4 | 813.85 (10/10) | 5794.11 (10/10) | 296.33 (10/10) | 263.32 (10/10) |
-| negative-8 | — (0/10) | — (0/10) | 322.77 (10/10) | 275.96 (10/10) |
-| negative-16 | — (0/10) | — (0/10) | 375.51 (10/10) | 302.95 (10/10) |
+| negative-8 | – (0/10) | – (0/10) | 322.77 (10/10) | 275.96 (10/10) |
+| negative-16 | – (0/10) | – (0/10) | 375.51 (10/10) | 302.95 (10/10) |
 
 Millions of user-space instructions, median of completed runs; solved/10 in parentheses.
 Min/max distributions and RSS are in the linked aggregate CSV. Unknown partial work is excluded.
@@ -90,14 +90,14 @@ Min/max distributions and RSS are in the linked aggregate CSV. Unknown partial w
 |---|---:|---:|---:|---:|
 | allocate-2 | 0.565 | 1.504 | 2398.000 | 26 |
 | allocate-16 | 6.517 | 183.515 | 21866.000 | 614 |
-| alias-2 | 0.598 | 0.195 | — | 26 |
-| alias-16 | 6.546 | 2.585 | — | 614 |
-| values-2 | 0.790 | 0.250 | — | 32 |
-| values-16 | 9.132 | 3.297 | — | 620 |
-| permutation-2 | 0.965 | 0.318 | — | 34 |
-| permutation-16 | 13.513 | 4.735 | — | 622 |
+| alias-2 | 0.598 | 0.195 | – | 26 |
+| alias-16 | 6.546 | 2.585 | – | 614 |
+| values-2 | 0.790 | 0.250 | – | 32 |
+| values-16 | 9.132 | 3.297 | – | 620 |
+| permutation-2 | 0.965 | 0.318 | – | 34 |
+| permutation-16 | 13.513 | 4.735 | – | 622 |
 | negative-2 | 2.237 | 10.581 | 3813.000 | 146 |
-| negative-16 | — | — | — | — |
+| negative-16 | – | – | – | – |
 
 The paired ratios use **different completion subsets**, so they cannot rank the
 four configurations. In particular, the 0.888 ratio against CVC5 arrays excludes

@@ -574,7 +574,7 @@ fn process_single_file(
     // configures the DIMACS fast path below.  Every other route (SMT-LIB2,
     // TPTP, QDIMACS, and the CNF-with-model-output SMT route) runs the
     // SMT solver stack, where such a preset has nothing to configure.
-    // Reject it as this file's outcome instead of silently ignoring it —
+    // Reject it as this file's outcome instead of silently ignoring it –
     // the batch keeps solving the files the preset *does* apply to.
     if !use_dimacs
         && matches!(
@@ -706,11 +706,11 @@ fn process_single_file(
 
         // Fast-path decision is purely argument-based, so it is hoisted
         // above the parse: the fast path scans the file byte-level into a
-        // FLAT literal stream (`FlatCnf` — no per-clause Vecs, no
+        // FLAT literal stream (`FlatCnf` – no per-clause Vecs, no
         // line-based UTF-8 machinery; those cost ~70 % of whole-run wall
         // on the 544 MB parse anatomy), then runs the identical
         // upfront-var-creation + in-order `add_clause` sequence the
-        // `Vec<Vec<i32>>` path ran — bit-identical trajectories by
+        // `Vec<Vec<i32>>` path ran – bit-identical trajectories by
         // construction (verified on the perf-gate corpus).
         let fast_path_ok = !args.analyze
             && !args.classify
@@ -725,10 +725,10 @@ fn process_single_file(
         if fast_path_ok {
             let flat = {
                 // mmap first: zero-copy scan straight off the page cache
-                // (no 531 MB heap copy on the anatomy class — that copy
+                // (no 531 MB heap copy on the anatomy class – that copy
                 // was ~130k of the 484k anonymous-page faults behind the
-                // sys-time wall).  Any mmap failure — empty file,
-                // non-regular, fs without mapping — falls back to the
+                // sys-time wall).  Any mmap failure – empty file,
+                // non-regular, fs without mapping – falls back to the
                 // buffered reader path; parse semantics and every error
                 // message are identical either way.
                 let parsed = match unsafe { memmap2::Mmap::map(&file_handle) } {
@@ -821,7 +821,7 @@ fn process_single_file(
             );
             // Commit-B slice 6: defer long-clause watcher attach to one
             // counting-sort build after the load (no-op on the default
-            // `Vec` path — bit-identical; kills the per-literal overflow
+            // `Vec` path – bit-identical; kills the per-literal overflow
             // allocation storm in `NIXIE_CSR_B=1` mode).
             sat.begin_deferred_watches();
             // The deferred-BIG pair (validated bit-identical in the CSR
@@ -848,7 +848,7 @@ fn process_single_file(
                 });
             }
             // Walk the flat stream: each run of non-zero literals up to its
-            // `0` terminator is one clause, in file order — the exact
+            // `0` terminator is one clause, in file order – the exact
             // sequence the `Vec<Vec<i32>>` path produced.
             let mut verdict = None;
             let mut clause: Vec<i32> = Vec::new();
@@ -889,8 +889,8 @@ fn process_single_file(
             ctx.absorb_sat_stats(sat.stats());
             let time_ms = start.elapsed().as_millis();
             // Skip the solver's teardown: its drop is millions of small
-            // deallocations (the per-literal watch `Vec`s alone) — measured
-            // 7.45% of the whole run on the 531 MB load anatomy — and the
+            // deallocations (the per-literal watch `Vec`s alone) – measured
+            // 7.45% of the whole run on the 531 MB load anatomy – and the
             // process is past every consumer of the solver's state (stats
             // absorbed above; the arena and lists hold no resources but
             // memory, which the OS reclaims).  `mem::forget` leaks by
@@ -948,7 +948,7 @@ fn process_single_file(
             // six-bug sweep; since then the CaDiCaL preset deliberately
             // ships `enable_bve: true` (landed in `0ed8543`, then
             // accidentally reverted by an SBVA-commit regex and caught by a
-            // differential canary — see `config_presets.rs`).  Preset
+            // differential canary – see `config_presets.rs`).  Preset
             // configs selected via `--preset` are applied verbatim, so
             // `--preset cadical` runs with BVE on, exactly like the
             // `cnf_bench PRESET=cadical` configuration the SATCOMP standing
@@ -958,7 +958,7 @@ fn process_single_file(
             // `--preset <sat-name>` selects the SAT-core configuration
             // (e.g. `--preset cadical`, the configuration the SATCOMP
             // standing table measures through `cnf_bench`).  The preset's
-            // config is used verbatim — selecting a preset is an explicit
+            // config is used verbatim – selecting a preset is an explicit
             // user decision about the search, including its inprocessing
             // schedule.  Without `--preset`, the fast-path default below
             // stays exactly as it was.  SMT-layer preset names (fast/
@@ -984,7 +984,7 @@ fn process_single_file(
                 }
                 Some(Err(e)) => {
                     // `main` validated the name; reaching this means a
-                    // non-CLI caller reused this path — report, never guess.
+                    // non-CLI caller reused this path – report, never guess.
                     return SolverResult {
                         file: Some(file.display().to_string()),
                         result: String::new(),
@@ -994,7 +994,7 @@ fn process_single_file(
                 }
                 // Default = the CaDiCaL preset (folded 2026-09-16 by the
                 // powered experiment: 0.842x conflicts geomean, 190/192 vs
-                // 189/192 solved, bootstrap sign stable 200/200 at k>=10 —
+                // 189/192 solved, bootstrap sign stable 200/200 at k>=10 –
                 // see the study addendum and
                 // precompute/../fold-power/power.tsv).  This is also the
                 // configuration the SATCOMP standing table has always
@@ -1006,7 +1006,7 @@ fn process_single_file(
             // individual heuristic components can be isolated from the CLI
             // exactly like `BVE=`/`RESTART=` isolate them in cnf_bench.
             // (No `cfg(feature = "std")` here: nixie-cli does not declare a
-            // `std` feature, so that gate compiled this block out entirely —
+            // `std` feature, so that gate compiled this block out entirely –
             // the knobs silently did nothing.)
             {
                 if let Ok(v) = std::env::var("NIXIE_SAT_BVE") {

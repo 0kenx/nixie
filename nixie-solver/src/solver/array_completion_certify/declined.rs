@@ -2,15 +2,15 @@
 //! from the candidate model where the universals do not look.
 //!
 //! Decision (40) runs the completion on every quantified array `Sat`, but a
-//! goal it declined kept the candidate model — and that model could falsify
+//! goal it declined kept the candidate model – and that model could falsify
 //! its own universal.  Three decline rules were the reach of `#P2b-51`:
 //!
-//! * **an uninterpreted function anywhere in the goal** — an application
+//! * **an uninterpreted function anywhere in the goal** – an application
 //!   survives into the certificate's validity query, where the sub-solver may
 //!   interpret it any way it likes;
-//! * **more than three array-sorted free variables** — the search is a
+//! * **more than three array-sorted free variables** – the search is a
 //!   product over per-array pools;
-//! * **an `exists`** — certifying one needs a witness.
+//! * **an `exists`** – certifying one needs a witness.
 //!
 //! Each is lifted the same way: whatever no universal reads through a binder
 //! is given the value the candidate model already gives it, and only the rest
@@ -18,7 +18,7 @@
 //!
 //! * A **ground application** `f(k⃗)` (no bound variable in it) whose
 //!   arguments are literals or scalars the candidate pins is replaced by its
-//!   model value.  The published interpretation of `f` is untouched — it is
+//!   model value.  The published interpretation of `f` is untouched – it is
 //!   the candidate's, and the certificate verified the goal at exactly the
 //!   values it prints.  Two applications whose arguments evaluate alike must
 //!   carry one value (a function), or the attempt declines.
@@ -30,7 +30,7 @@
 //! * An `exists` at positive polarity is certified by a **witness**: its body,
 //!   with the bound variables replaced by one of the goal's points (the
 //!   pinned search's points plus one representative they do not name), must
-//!   be valid under the completion — `ψ(w)` entails `∃x. ψ(x)`.  An `exists`
+//!   be valid under the completion – `ψ(w)` entails `∃x. ψ(x)`.  An `exists`
 //!   anywhere else still declines.
 //!
 //! Nothing here weakens the certificate's argument: a replaced term is a
@@ -398,7 +398,7 @@ impl Goal {
         self.existential_witnesses_with(existential, position, &FxHashMap::default(), manager)
     }
 
-    /// [`Self::existential_witnesses`] with `extra` points tried as well —
+    /// [`Self::existential_witnesses`] with `extra` points tried as well –
     /// the store indices of the interpretation being certified, which is
     /// where a candidate's Skolem witness sits (decision (54)(ii)).
     pub(super) fn existential_witnesses_with(

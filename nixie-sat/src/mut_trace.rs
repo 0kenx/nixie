@@ -1,8 +1,8 @@
 //! Per-literal watch mutation trace (`NIXIE_CSR_MUT_TRACE=<code>`).
 //!
 //! The commit-B root-cause instrument (CSR study, fifth attempt): logs
-//! every mutation of one literal's watch list — Vec side, CSR side, and
-//! the dedup-reader asymmetry — with a global operation counter so two
+//! every mutation of one literal's watch list – Vec side, CSR side, and
+//! the dedup-reader asymmetry – with a global operation counter so two
 //! runs (or two representations in one run) diff by op order.
 //!
 //! Zero default cost: the env is read once into a `OnceLock`; every probe
@@ -48,7 +48,7 @@ fn all_mode() -> bool {
 }
 
 /// The global mutation-op counter (strictly increasing per logged event;
-/// unlogged mutations do not consume numbers — the counter orders the
+/// unlogged mutations do not consume numbers – the counter orders the
 /// log, it does not count total work).
 pub(crate) fn next_op() -> u64 {
     static OP: AtomicU64 = AtomicU64::new(0);

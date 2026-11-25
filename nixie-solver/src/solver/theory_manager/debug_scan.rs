@@ -1,7 +1,7 @@
 //! Debug-only theory-model violation scanning (env-gated, debug builds).
 //!
 //! At a `Sat` verdict, walk every assigned theory atom and report the first
-//! one the final theory model violates — the diagnostic used to hunt the
+//! one the final theory model violates – the diagnostic used to hunt the
 //! negated-atom enforcement holes (see
 //! `docs/studies/2026-08-arithmetic-negated-atoms-false-sat.md`). Split into
 //! its own module to keep the parent under the workspace line limit.
@@ -38,7 +38,7 @@ impl TheoryManager<'_> {
 
             match constraint {
                 // Genuine comparisons (NOT `Eq` atoms, whose parsed form is a
-                // `Le` placeholder — see the module doc).
+                // `Le` placeholder – see the module doc).
                 Constraint::Lt(..)
                 | Constraint::Le(..)
                 | Constraint::Gt(..)
@@ -145,7 +145,7 @@ impl TheoryManager<'_> {
 
     /// Congruence-gap probe: find same-function application pairs whose
     /// results are in different EUF classes and report why congruence did not
-    /// merge them —
+    /// merge them –
     /// * args pairwise EUF-**equal** ⇒ a congruence-closure miss (EUF bug);
     /// * args EUF-distinct but pairwise **arith-model-equal** ⇒ the
     ///   arith→EUF equality propagation never merged the args (the
@@ -182,7 +182,7 @@ impl TheoryManager<'_> {
                     .collect();
                 if args_eq.iter().all(|&e| e) {
                     eprintln!(
-                        "[cgap] CONGRUENCE MISS: apps {ta:?}({a}) vs {tb:?}({b}) — args \
+                        "[cgap] CONGRUENCE MISS: apps {ta:?}({a}) vs {tb:?}({b}) – args \
                          EUF-equal, results distinct"
                     );
                     found += 1;
@@ -213,7 +213,7 @@ impl TheoryManager<'_> {
                 }
                 if all_arith_eq && any_value {
                     eprintln!(
-                        "[cgap] PROPAGATION GAP: apps {ta:?}({a}) vs {tb:?}({b}) — args \
+                        "[cgap] PROPAGATION GAP: apps {ta:?}({a}) vs {tb:?}({b}) – args \
                          arith-equal in the model, EUF-distinct (merge never propagated)"
                     );
                     found += 1;

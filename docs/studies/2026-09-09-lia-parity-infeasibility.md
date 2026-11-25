@@ -2,12 +2,12 @@
 
 **Status: MOSTLY CLOSED (2026-09, fifth session).  k7 (two free vars)
 closes via the free-variable sign splits with split-scoped Gomory cuts;
-the k9 *div-driven* shape closes via the combined fix — MBQI-instance
+the k9 *div-driven* shape closes via the combined fix – MBQI-instance
 div terms axiomatized in-round, remainder case enumeration, and the HNF
 Diophantine solver refuting the pinned-remainder parity combination
 (k1/jain_2 now `unsat`; classic LIA/UFLIA/AUFLIA sample agree 169 → 178,
 0 wrong).  Still open: the hand-written four-free-variable shape without
-a div term (below) and the deeper jain unrollings — which **time out
+a div term (below) and the deeper jain unrollings – which **time out
 rather than refuse** (i_4 still searching at 60 s: a performance
 profile, not a capability gap; candidate cause is the per-round
 `instantiate_arith_axioms` re-walk whose idempotence check is
@@ -27,10 +27,10 @@ O(defined-terms) per MBQI round).**
 ```
 
 Substituting the equalities gives `r = 2(S-q)` with `q ≤ S-1`, so
-`r ≥ 2` against `r ≤ 1` — a **global parity conflict**: LP-feasible
+`r ≥ 2` against `r ≤ 1` – a **global parity conflict**: LP-feasible
 (fractional points exist), integer-infeasible in every region, variables
 unbounded.  The substituted single-row form (k8, same constraints with
-`y` eliminated by hand) refutes fine — only the two-equality routing
+`y` eliminated by hand) refutes fine – only the two-equality routing
 through the extra variable fails.
 
 ## Why each existing mechanism misses it
@@ -45,7 +45,7 @@ through the extra variable fails.
   crash-basis defaults where the cut formula does not apply.
 * **`integral_dive`** (the 2026-09 sat-side repair) correctly declines:
   equality probes at floor/ceil are inconclusive when the region has no
-  integral point at all — that is an UNSAT witness, which the dive is not
+  integral point at all – that is an UNSAT witness, which the dive is not
   allowed to conclude.
 * **`cached_int_eq_verdict`** (the Diophantine/GCD elimination) handles
   pure-equality classes; the strict inequality row breaks purity.
@@ -55,7 +55,7 @@ through the extra variable fails.
 Z3's `theory_arith_int` closes this class with its **Gomory mixed-integer
 cut machinery over the free-variable tableau** (cuts derived from rows
 even when nonbasics are not bound-resting, via the mixed cut form) plus
-**branch history-guided cut regeneration** — `mk_gomory_cut` in
+**branch history-guided cut regeneration** – `mk_gomory_cut` in
 `src/smt/theory_arith_int.h` and the `bnb` cut-then-branch loop.  The
 alternative is a Cooper-style parity projection for two-variable rows of
 the shape `r = a·x + b·y` with small bounded `r`.
@@ -71,7 +71,7 @@ the shape `r = a·x + b·y` with small bounded `r`.
 2. its instance `not (2·((y-1) div 2)+1 = y)` IS added with the Euclidean
    axioms interned,
 3. and the ground discharge of that instance reduces **exactly to k7**
-   (with `q := (y-1) div 2`, `r := (y-1) mod 2`) — where the arithmetic
+   (with `q := (y-1) div 2`, `r := (y-1) mod 2`) – where the arithmetic
    layer answers `unknown`.
 
 Fix k7 and the whole jain/Ultimate compound class flips to `unsat` with
@@ -90,13 +90,13 @@ measured on k7:
   integers, depth ≤ free-var count, capped at 8): with the free list
   collected from fractional rows *and* free fractional basics, and with
   each leaf re-entering the full cuts-then-B&B, the split closed **6 of
-  14 branch children with real unsat cores** — the mechanism derives the
+  14 branch children with real unsat cores** – the mechanism derives the
   parity conflicts it exists for.
 * **The remaining 8 children diverge** because the leaf's cut re-entry is
   refused: `gomory_cut` rejects any nonbasic resting at a
   `BRANCH_REASON` bound ("a cut using one is only valid inside that
   branch, never at root where cuts are asserted").  Inside a split scope
-  that rejection is over-strict — the cut would be scoped to the branch —
+  that rejection is over-strict – the cut would be scoped to the branch –
   but allowing it requires auditing how `BRANCH_REASON` sentinel ids flow
   through `bnb_unsat_core` and the exported conflict clauses (a sentinel
   in a SAT-level core would be a soundness hazard).
@@ -109,19 +109,19 @@ The first two resume items are DONE: the sentinel audit passed
 (`note_bnb_conflict_reasons` already filtered `BRANCH_REASON`;
 `bnb_unsat_core` builds only from filtered reasons with a sound
 full-reason fallback), the scoped flag landed as
-`ArithSolver::cuts_in_split_scope`, and k7/k2 now refute — measured with
+`ArithSolver::cuts_in_split_scope`, and k7/k2 now refute – measured with
 no QF differential cost (par2 2177.9 vs 2171-2177 baseline band; the
 split only triggers when a fractional row's cut was refused for free
 nonbasics, which the common path never hits).
 
-**jain per-round perf (twelfth session) — hypothesis rejected, reverted.**
+**jain per-round perf (twelfth session) – hypothesis rejected, reverted.**
 The deep unrollings' timeout was attributed to the O(defined-terms)
 idempotence re-walk in `instantiate_arith_axioms` (called per MBQI round
 since the k9 fix).  An insertion-ordered log + watermark (scan only new
 terms; zero-divisor congruence pairs persisted across batches) was
 implemented and measured: the *solving* variants were already at 0.02 s
 (the re-walk was never material at these sizes), and the timing-out
-variants (i_4+) still time out — the cost lives elsewhere.  A 12 s
+variants (i_4+) still time out – the cost lives elsewhere.  A 12 s
 `perf record` on i_4 shows the time dominated by `memmove`/hash-churn
 in a per-round loop the stripped binary cannot name (~4 % self, ~10 %
 children on anonymous frames; no `instantiate_arith_axioms` frame in
@@ -130,7 +130,7 @@ a symbols release, profile i_4, and look at MBQI round internals.
 
 **Profiled (same session, symbols build): all three MBQI-loop hypotheses
 refuted.**  A `line-tables-only` symbols release under `perf record`
-names the cost — it is **simplex-bound, not MBQI-bound**:
+names the cost – it is **simplex-bound, not MBQI-bound**:
 `Simplex::pivot` 21 % self (22 % children), `column_drop_known` 9 %,
 `checked_mul_r64` 8 %, `make_feasible`/`find_violating` 7 %.  The deep
 unrollings burn their budget inside the arithmetic simplex re-solving
@@ -139,14 +139,14 @@ quadratic in aggregate).  The `memmove` signature was the pivot's row
 shuffling.  Fix directions, in increasing ambition: (1) warm-start the
 per-round re-check from the previous basis instead of re-deriving
 feasibility (the simplex already keeps `assignment_current` incremental
-state for `add_le` — the per-round path may not be using it); (2) batch
+state for `add_le` – the per-round path may not be using it); (2) batch
 instantiations across rounds before re-solving (fewer, larger theory
 checks); (3) scoped incremental rows without full re-pivot.  All are
-arithmetic-layer projects, out of the quantifier campaign's scope —
+arithmetic-layer projects, out of the quantifier campaign's scope –
 recorded here because the jain family is the motivating corpus.
 
 **Remaining (k9, four-plus free vars):** the split leaves close some
-branches with real unsat cores but the rest churn — the leaf cut loops
+branches with real unsat cores but the rest churn – the leaf cut loops
 exhaust `LIA_MAX_CUT_ROUNDS` (24) without closing the four-variable
 parity, then B&B diverges on the still-open sides.  Candidate directions:
 GMI cut *aggregation* across the split scope (sum the defining rows
@@ -156,18 +156,18 @@ instead of through cuts, or Z3's row-local split refinement (split only
 the nonbasics of the *div row*, not every free var, keeping the leaf
 count at 2^|row| not 2^|all|).
 
-**Fourth-session probe — remainder case enumeration (measured neutral,
+**Fourth-session probe – remainder case enumeration (measured neutral,
 reverted):** asserting `(or (= (mod m n) 0) … (= (mod m n) (|n|-1)))`
 alongside the Euclidean axioms (cap |n| ≤ 16) makes the remainder's
-finite domain visible to CDCL.  Sound, cheap — and flips nothing: with
+finite domain visible to CDCL.  Sound, cheap – and flips nothing: with
 `mod (y-1) 2` pinned, the `r = 0` side closes linearly as predicted, but
 the `r = 1` side is precisely the total-parity conflict
 (`2q − 2a − 2b − 2c − 2d + 1 = 0`, all-integer coefficients, odd
 constant), which the enumeration cannot reach.  Classic sample 169 agree
-/ 0 wrong (unchanged), differential 0 disagreements, parity 174/175 —
+/ 0 wrong (unchanged), differential 0 disagreements, parity 174/175 –
 so the enumeration was reverted rather than kept as speculative hot-path
 weight.  **The eventual k9 fix should combine it with the total-parity
 lemma** (emit, at div-axiom time for constant divisor n, the conditional
 `(and (= (mod m n) 0) (= (div m n) m/n))` under the guard `n | m` where
-divisibility is read off the tableau row of `m` — the r = 1 side then
+divisibility is read off the tableau row of `m` – the r = 1 side then
 never arises); the enumeration alone is necessary-but-insufficient.

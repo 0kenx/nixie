@@ -1,4 +1,4 @@
-//! Failed-literal probing over binary-implication-graph roots — a port of
+//! Failed-literal probing over binary-implication-graph roots – a port of
 //! CaDiCaL `probe.cpp`'s scheduling discipline.
 //!
 //! Our previous probing (pre-search only, behind `INPROCESS`) walked every
@@ -30,7 +30,7 @@
 //! `inprobe()` at the root, budgeted in propagations as a fraction of search
 //! ticks (`probe_effort` per-mille), and re-arms when the conflict limit
 //! passes with something new (units fixed, or original clauses
-//! removed/shrunk — the same "new units" re-arm the eliminator uses).
+//! removed/shrunk – the same "new units" re-arm the eliminator uses).
 
 use super::*;
 
@@ -312,7 +312,7 @@ impl Solver {
         // Candidate widening (2026-09-07): cadical/kissat probe BOTH
         // polarities of every unassigned variable, not only the
         // single-polarity binary roots.  The old filter skipped every
-        // variable with binaries in both polarities — on the 6s167 class
+        // variable with binaries in both polarities – on the 6s167 class
         // that emptied the queue (the probe-effort sweep was flat because
         // the schedule, not the budget, was binding).  Probe the polarity
         // with MORE binary occurrences (richer implication cascade),
@@ -339,7 +339,7 @@ impl Solver {
             }
             // Root (cadical `probe = have_neg_bin_occs ? idx : -idx`):
             // the probe literal is the one occurring *negatively* in
-            // binary clauses — `¬probe` heads implications. With both
+            // binary clauses – `¬probe` heads implications. With both
             // polarities present, pick the one with more occurrences.
             let (first, second) = if n_neg >= n_pos {
                 (pos, neg)
@@ -347,7 +347,7 @@ impl Solver {
                 (neg, pos)
             };
             // Both-polarity probing (2026-09-07): probe the richer
-            // polarity first (budget preference), then the other — the
+            // polarity first (budget preference), then the other – the
             // two propagation cones expose different equivalences and
             // hyper-binary resolvents that single-polarity probing
             // misses.  Gated on `NIXIE_PROBE_BOTH` (default on).

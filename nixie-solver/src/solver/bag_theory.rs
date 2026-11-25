@@ -1,7 +1,7 @@
 //! The finite-bag (multiset) theory: an eager count reduction.
 //!
 //! A bag is a finite map from elements to multiplicities, and every bag
-//! constraint is equivalent to arithmetic over `bag.count` terms — that is
+//! constraint is equivalent to arithmetic over `bag.count` terms – that is
 //! the whole decision idea, and it is why the reduction can stay eager:
 //! there is no Venn-region geometry to maintain (as the set theory's
 //! cardinality module must), only pointwise integer identities.
@@ -34,11 +34,11 @@
 //! needs the exchange law `f(e1, f(e2, a)) = f(e2, f(e1, a))` proved by
 //! AC-canonicalization first (CVC5's skolem reduction answers opaque
 //! domains through a bounded quantifier this eager reduction cannot
-//! compile; a fold it cannot pin stays free — sound for `unsat` — and the
+//! compile; a fold it cannot pin stays free – sound for `unsat` – and the
 //! model pass certifies or degrades the `sat` side; see `extract_bag_model`).
 //!
-//! Per (element, bag) pair the reduction mints the count term — an `Int`
-//! the arithmetic solver owns — and states the identity as an equation.
+//! Per (element, bag) pair the reduction mints the count term – an `Int`
+//! the arithmetic solver owns – and states the identity as an equation.
 //! Membership, subbag and extensional equality follow through those `Int`s.
 //! The negated subbag/equality directions need a witness *element* the
 //! formula may not name; like the set theory's `@set_ext_*` witnesses, it
@@ -47,7 +47,7 @@
 //! Honest degradation, the same contract as the set reduction: anything
 //! outside the fragment (an element sort with no mintable witness for the
 //! negated directions, an oversized element list) raises `incomplete`, and
-//! a `Sat` resting on it degrades to `Unknown` — never a guess.
+//! a `Sat` resting on it degrades to `Unknown` – never a guess.
 
 use crate::prelude::*;
 use nixie_core::interner::Spur;
@@ -80,11 +80,11 @@ pub(crate) struct Reduction {
     /// Fold terms this pass could not pin to an unrolled chain, with the
     /// reason. The caller records them: they stay free (sound for `unsat`,
     /// since asserting nothing only weakens the constraints) and the
-    /// *model* pass certifies any `sat` resting on them — synthesizing a
+    /// *model* pass certifies any `sat` resting on them – synthesizing a
     /// domain-declined fold's faithful value from its bag's assembled
     /// cells and degrading on contradiction, while an order-sensitive
     /// fold (no proved exchange law over several element spellings)
-    /// degrades unconditionally — exhibiting one enumeration order would
+    /// degrades unconditionally – exhibiting one enumeration order would
     /// disagree with the reference's fixed order half the time. See
     /// `extract_bag_model`.
     pub declined_folds: Vec<(TermId, FoldDecline)>,
@@ -96,7 +96,7 @@ struct Survey {
     /// Every bag-sorted term (variables and compounds alike), with its
     /// element sort.
     bags: Vec<(TermId, SortId)>,
-    /// `(element, bag)` pairs the formula counts or tests membership of —
+    /// `(element, bag)` pairs the formula counts or tests membership of –
     /// the ground element list grows from these.
     elements: Vec<(TermId, SortId)>,
     /// `bag.count` terms: `(term, element, bag)`.
@@ -193,12 +193,12 @@ fn survey(roots: &[TermId], manager: &TermManager) -> Survey {
 /// Whether a bag term is **closed**: built entirely from `bag.empty`,
 /// `(bag e n)` and the operators over closed operands, with no opaque
 /// node (variable, application, select) anywhere. A closed bag's support
-/// is exactly the union of its `bag.make` elements — all of which the
-/// support walk collected into the known list — so its cardinality is
+/// is exactly the union of its `bag.make` elements – all of which the
+/// support walk collected into the known list – so its cardinality is
 /// the exact sum of the known counts. An opaque bag may hold elements
 /// the formula never names; its cardinality carries a nonnegative slack
 /// for exactly those. Without the distinction, a closed compound could
-/// satisfy `|b| = Σ + slack` past its true size — a false `sat`
+/// satisfy `|b| = Σ + slack` past its true size – a false `sat`
 /// (`|(1:3) ⊎ (2:1)| = 5` answered `sat`; CVC5: `unsat`).
 fn bag_is_closed(b: TermId, manager: &TermManager) -> bool {
     let mut stack = vec![b];
@@ -219,7 +219,7 @@ fn bag_is_closed(b: TermId, manager: &TermManager) -> bool {
             }
             Some(TermKind::BagSetof(a)) => stack.push(a),
             // An ite of closed bags is closed: its support is exactly
-            // the branches' makes (all collected — the support walk has
+            // the branches' makes (all collected – the support walk has
             // the same arm), so its cardinality is the exact sum.
             Some(TermKind::Ite(_, a, c)) => {
                 stack.push(a);
@@ -249,7 +249,7 @@ fn bag_element_of(t: TermId, manager: &TermManager) -> Option<SortId> {
         })
 }
 
-/// Whether a bag term is **opaque**: a variable, application or select —
+/// Whether a bag term is **opaque**: a variable, application or select –
 /// a bag whose value no structural definition pins, so a *derived*
 /// equality onto it (EUF congruence, the array theory) can change its
 /// meaning without any surveyed equality atom. Exactly the terms the
@@ -261,7 +261,7 @@ fn bag_is_opaque(t: TermId, manager: &TermManager) -> bool {
     )
 }
 
-/// Whether a bag term is a **constructor**: `bag.empty` or `bag.make` —
+/// Whether a bag term is a **constructor**: `bag.empty` or `bag.make` –
 /// stable under hash-consing, so pairs over them (like the set theory's
 /// constructor pairs) cannot mint fresh terms across the per-assert
 /// re-runs of the reduction.
@@ -280,7 +280,7 @@ fn count_term(e: TermId, b: TermId, manager: &mut TermManager) -> TermId {
 }
 
 /// The defining identity for `count(e, b)`, computed structurally.
-/// [`CountDef::Unsupported`] marks a construct outside this fragment —
+/// [`CountDef::Unsupported`] marks a construct outside this fragment –
 /// the caller raises the honesty gate rather than letting the counts
 /// float free. A free count on a *determined* bag is a false-`sat` hole:
 /// before the `Ite` arm landed, a bag-shaped `(ite c a b)` fell through
@@ -290,7 +290,7 @@ enum CountDef {
     /// `count(e, b) = t` for the computed right-hand side.
     Defined(TermId),
     /// An opaque bag (variable, application, select): its counts are
-    /// free nonnegative integers — exactly the interface the arithmetic
+    /// free nonnegative integers – exactly the interface the arithmetic
     /// solver needs for a bag whose value nobody has determined yet.
     Opaque,
     /// A shape this reduction does not know: raise `incomplete`, never
@@ -299,9 +299,9 @@ enum CountDef {
 }
 
 /// The function application `f(x)` of a `bag.map`/`bag.filter` operand:
-/// a `define-fun`'s body **inlined** — matching the parser's call-site
+/// a `define-fun`'s body **inlined** – matching the parser's call-site
 /// substitution, so the reduction's images and the user's `(f x)` spellings
-/// are the same terms — folded ground; a `declare-fun` symbol becomes an
+/// are the same terms – folded ground; a `declare-fun` symbol becomes an
 /// ordinary `Apply` the EUF layer owns.
 fn bag_apply_fun(
     func: Spur,
@@ -322,7 +322,7 @@ fn bag_apply_fun(
     manager.mk_apply(&name, [x], ret)
 }
 
-/// The binary application `f(e, acc)` of a `bag.fold` operand — the same
+/// The binary application `f(e, acc)` of a `bag.fold` operand – the same
 /// inlining discipline as [`bag_apply_fun`], with the element bound to the
 /// first parameter and the accumulator to the second (CVC5's argument
 /// order). An arity mismatch (impossible through the parser's checks, but
@@ -353,7 +353,7 @@ fn bag_apply_fun2(
 /// build through (`+`, `*`, `and`, `or`) and sort them by `TermId`;
 /// everything else stays structural. Flattening and permuting AC operands
 /// preserve the value, so **equal canonical forms are a proof of semantic
-/// equality** — the check never asserts the canonical form itself, so a
+/// equality** – the check never asserts the canonical form itself, so a
 /// missed simplification only declines, never a wrong accept. Iterative
 /// post-order with a per-call memo.
 fn ac_canonical(
@@ -416,7 +416,7 @@ fn ac_canonical(
                 // Structural rebuild through the substitution-safe builders
                 // is unnecessary here: a non-AC node's identity is its kind
                 // and children, so re-interning the same kind canon-children
-                // happens via `substitute`-free path — simply return the
+                // happens via `substitute`-free path – simply return the
                 // node when its children are unchanged, else rebuild by
                 // substitution (the memo maps child → canon child).
                 let changed = children.iter().any(|&c| memo.get(&c) != Some(&c));
@@ -444,12 +444,12 @@ fn ac_canonical(
 }
 
 /// Whether a fold's combining function provably satisfies the **exchange
-/// law** `f(e1, f(e2, a)) = f(e2, f(e1, a))` — the exact property that
+/// law** `f(e1, f(e2, a)) = f(e2, f(e1, a))` – the exact property that
 /// makes a fold over a multiset independent of the enumeration order
 /// (adjacent transpositions generate every permutation, and the law holds
 /// for arbitrary `a`, so it applies at every nesting depth). Proved the
 /// only sound way available here: both sides built over fresh variables
-/// and compared after AC-canonicalization — an equality the canonicalizer
+/// and compared after AC-canonicalization – an equality the canonicalizer
 /// proves is a semantic equality (flatten+sort preserve values), so an
 /// accepted fold is order-insensitive for *every* instantiation. A
 /// `declare-fun` symbol has no body and never passes; the caller then
@@ -495,12 +495,12 @@ const MAX_FOLD_APPLICATIONS: u64 = 64;
 
 /// The faithful value of a declined fold in a finished model: fold the
 /// *bag's assembled value* (the `bag.union_disjoint` of `(bag v n)` cells
-/// the model pass installed) exactly as the semantics say — `f(v, ·)`
+/// the model pass installed) exactly as the semantics say – `f(v, ·)`
 /// applied `n` times per cell, cells in the assembled order, starting from
 /// the initial value (itself resolved through the model first). The chain
 /// is built with the same inlining applier as the reduction and folded
 /// ground; the result is a **value term** (no variable or application
-/// anywhere) or `None` — a chain that did not fold (a `declare-fun`
+/// anywhere) or `None` – a chain that did not fold (a `declare-fun`
 //  combinator, an unresolved accumulator) cannot certify a model.
 pub(crate) fn fold_faithful_value(
     func: Spur,
@@ -583,7 +583,7 @@ enum FoldDef {
     /// multiplicity, budget) still admits a faithful model value folded
     /// from the assembled cells, while an **order-sensitive** fold (a
     /// multi-element multiset under a function whose exchange law could
-    /// not be proved) has *no* order-independent value at all — CVC5's
+    /// not be proved) has *no* order-independent value at all – CVC5's
     /// rewriter answers these through one fixed internal order, and
     /// exhibiting any particular order here would disagree with it half
     /// the time. An order-sensitive fold therefore degrades unconditionally.
@@ -605,7 +605,7 @@ pub(crate) enum FoldDecline {
 /// structural left-to-right order. Syntactically equal elements merge by
 /// adding copies (a `⊎` of two `(bag x n)` spellings is `x` taken `n+m`
 /// times); distinct spellings of one value stay separate entries, which
-/// is exactly right for a fold — each *copy* contributes one application,
+/// is exactly right for a fold – each *copy* contributes one application,
 /// whatever its spelling. Multiplicities must be nonnegative numerals
 /// (`(bag y n)` with symbolic `n` cannot be unrolled), and a negative or
 /// zero numeral contributes nothing (matching the count identity's
@@ -646,9 +646,9 @@ fn bag_ground_multiset(
                 stack.push(c);
                 stack.push(a);
             }
-            // Anything else — an opaque node, an operator whose pointwise
+            // Anything else – an opaque node, an operator whose pointwise
             // geometry needs element *values* to merge (union_max, inter,
-            // differences), a map/filter image, a nested ite — is
+            // differences), a map/filter image, a nested ite – is
             // honestly refused.
             _ => return false,
         }
@@ -657,13 +657,13 @@ fn bag_ground_multiset(
 }
 
 /// Define a fold by unrolling. `fold(f, t, ite(c, a, b))` is
-/// `ite(c, fold(f, t, a), fold(f, t, b))` — exact, the same branch-picking
-/// identity the count and cardinality rules take — and a non-ite bag's
+/// `ite(c, fold(f, t, a), fold(f, t, b))` – exact, the same branch-picking
+/// identity the count and cardinality rules take – and a non-ite bag's
 /// ground multiset unrolls into the finite chain
 /// `f(e, f(e, … f(e, t) …))` in structural order. A multiset with two or
 /// more distinct element spellings needs the exchange law proved first
 /// (see [`fold_fun_exchange_law`]); without it the fold's value depends on
-/// the enumeration order, which no eager ground encoding may guess —
+/// the enumeration order, which no eager ground encoding may guess –
 /// CVC5's own rewriter commits to one order for these shapes, but its
 /// reduction semantics leaves the order existential, and the honest
 /// answer here is `Declined`. Iterative bottom-up: the ite tree is walked
@@ -813,15 +813,15 @@ fn count_definition(
             CountDef::Defined(manager.mk_ite(c, x, y))
         }
         // `count(y, map(f, b)) = Σ_x ite(f(x) = y, count(x, b), 0)` over
-        // the *distinct-valued* domain elements — the de-duplication guard
+        // the *distinct-valued* domain elements – the de-duplication guard
         // is the cardinality sum's (two spellings of one value must
         // contribute once). Over a **closed** domain bag this is exact
         // (its support is its makes, all collected); over an opaque one
         // an unknown element may map to `y`, so the identity carries a
-        // nonnegative slack — without it the encoding claimed the unknown
+        // nonnegative slack – without it the encoding claimed the unknown
         // support contributes nothing and `count(5, map(f, b)) = 1` with
         // no known preimage answered `unsat` where the truth is `sat`
-        // — a false *unsat*, the worst class.
+        // – a false *unsat*, the worst class.
         Some(TermKind::BagMap { func, ret, bag: d }) => {
             let Some(des) = bag_element_of(d, manager) else {
                 return CountDef::Unsupported;
@@ -877,7 +877,7 @@ fn count_definition(
                 CountDef::Defined(manager.mk_add([sum, slack]))
             }
         }
-        // `count(x, filter(p, b)) = ite(p(x), count(x, b), 0)` — exact per
+        // `count(x, filter(p, b)) = ite(p(x), count(x, b), 0)` – exact per
         // element: filter only removes, so the known elements' counts are
         // determined regardless of the domain's unknown support (which the
         // cardinality slack absorbs, with `|filter| <= |b|` below).
@@ -887,18 +887,18 @@ fn count_definition(
             CountDef::Defined(manager.mk_ite(px, cd, zero))
         }
         // An opaque bag (variable, application, select): its counts are
-        // free integers — exactly the interface the arithmetic solver
+        // free integers – exactly the interface the arithmetic solver
         // needs. (An application's or select's value may be *determined*
-        // by other axioms — an asserted equality, the array theory's
-        // select-over-store — and then the pair-congruence pass below
+        // by other axioms – an asserted equality, the array theory's
+        // select-over-store – and then the pair-congruence pass below
         // ties the counts across the equal spellings; an equality nobody
         // relates leaves them free, which is sound: the model may pick
         // any bag with those counts.)
         Some(TermKind::Var(_) | TermKind::Apply { .. } | TermKind::Select(_, _)) => {
             CountDef::Opaque
         }
-        // Anything else — a datatype `match` yielding a bag, a future
-        // constructor — is honestly refused: `incomplete`, so a `Sat`
+        // Anything else – a datatype `match` yielding a bag, a future
+        // constructor – is honestly refused: `incomplete`, so a `Sat`
         // resting on it degrades to `Unknown` instead of trusting free
         // counts on a bag whose value the term already determines.
         _ => CountDef::Unsupported,
@@ -908,7 +908,7 @@ fn count_definition(
 /// Budget on the ground element list per sort: the identities are
 /// |elements| × |bags| equations, and the set theory's counting cap
 /// (`MAX_COUNT_ELEMENTS`) bounds the same product for the same reason.
-/// Env-overridable and reported on firing — see [`super::caps`].
+/// Env-overridable and reported on firing – see [`super::caps`].
 fn max_bag_elements() -> usize {
     super::caps::cap("bag_elements", 24)
 }
@@ -921,7 +921,7 @@ fn max_bag_elements() -> usize {
 /// by the next assert's walk (the axioms are conjoined onto the assertion),
 /// and without the distinction it would be treated as a user equality:
 /// an extensionality witness per minted atom, each joining the element
-/// list, until the quadratic passes around it ballooned — three-assert
+/// list, until the quadratic passes around it ballooned – three-assert
 /// fuzz shapes went from instant to unfinishable. Minted atoms get their
 /// congruence from the pair pass that minted them; user atoms get the
 /// full extensionality treatment (forward implications and witness).
@@ -948,7 +948,7 @@ pub(crate) fn reduce(
     // The **support** of every bag term: an equality or subbag between two
     // compounds mentions no `bag.count` term at all, so the element list
     // built from counts alone is empty for
-    // `(bag 1 2) = (bag 1 3)` — and the extensionality axioms then state
+    // `(bag 1 2) = (bag 1 3)` – and the extensionality axioms then state
     // nothing. Every `BagMake` operand inside every surveyed bag is an
     // element the formula cares about; collect them (explicit stack: the
     // compound DAG is user-shaped).
@@ -980,7 +980,7 @@ pub(crate) fn reduce(
                     }
                     // An ite bag's support is the union of its branches'
                     // (the condition is `Bool`-sorted and contributes
-                    // none) — without this arm the branches' makes were
+                    // none) – without this arm the branches' makes were
                     // invisible to the element list and every count
                     // identity over the ite was stated against an
                     // incomplete universe.
@@ -990,7 +990,7 @@ pub(crate) fn reduce(
                     }
                     // A map's/filter's support lives in its domain bag's
                     // (the *images* are collected by the dedicated pass
-                    // below, not by this walk — they are not makes).
+                    // below, not by this walk – they are not makes).
                     TermKind::BagMap { bag, .. } | TermKind::BagFilter { bag, .. } => {
                         stack.push(*bag);
                     }
@@ -1046,13 +1046,13 @@ pub(crate) fn reduce(
         out.axioms.push(manager.mk_implies(positive, consequence));
     }
 
-    // ---- the map images join the codomain element list ----
+    // ======== the map images join the codomain element list ========
     // `count(y, map(f, b))` is stated over the codomain's element list, and
     // the image bag's support is exactly the images of the domain's
-    // elements — `f(x)` for every known `x` (an inlined `define-fun` body
+    // elements – `f(x)` for every known `x` (an inlined `define-fun` body
     // folded ground, or an `Apply` the EUF layer owns). Without this the
     // list for `(Bag T2)` could be empty and the identities stated
-    // nothing — the exact vacuity the support walk exists to prevent.
+    // nothing – the exact vacuity the support walk exists to prevent.
     for &(_, func, ret, d) in &s.maps {
         let Some(des) = bag_element_of(d, manager) else {
             continue;
@@ -1069,7 +1069,7 @@ pub(crate) fn reduce(
         }
     }
 
-    // ---- the witnesses join the element list first ----
+    // ======== the witnesses join the element list first ========
     // The negated subbag/equality directions constrain a skolem element's
     // counts; those count terms need their identities like any other, so
     // the skolems are pushed here, before the identity loop below.
@@ -1128,11 +1128,11 @@ pub(crate) fn reduce(
         }
     }
 
-    // ---- bag.fold ----
+    // ======== bag.fold ========
     // Each fold is pinned to its unrolled application chain when its
     // domain bag is a ground multiset (`∅`/`(bag y n)` with numeral
-    // `n`/`⊎`, under ites) and — when the multiset has two or more
-    // distinct element spellings — the combining function provably
+    // `n`/`⊎`, under ites) and – when the multiset has two or more
+    // distinct element spellings – the combining function provably
     // satisfies the exchange law. Along every surveyed bag-equality
     // atom `(a = b)` the two folds are tied (`atom → fold(a) = fold(b)`),
     // so a fold over an opaque bag pinned to a closed compound by
@@ -1171,7 +1171,7 @@ pub(crate) fn reduce(
             FoldDef::Declined(reason) => {
                 // Not `incomplete`: a free fold keeps every `unsat` sound
                 // (the constraint set only got weaker) and the model pass
-                // certifies the `sat` side — folding each declined bag's
+                // certifies the `sat` side – folding each declined bag's
                 // assembled value and degrading on contradiction, or
                 // degrading an order-sensitive fold outright.
                 out.declined_folds.push((term, reason));
@@ -1179,7 +1179,7 @@ pub(crate) fn reduce(
         }
     }
 
-    // ---- the count identities ----
+    // ======== the count identities ========
     // For every (element, compound-bag) pair: count(e, b) = def. The
     // builder already folds the `BagEmpty`/`BagMake` bases; these arms
     // cover the operators and re-state the bases uniformly (hash-consing
@@ -1217,8 +1217,8 @@ pub(crate) fn reduce(
                 }
                 CountDef::Unsupported => {
                     // A determined-but-unhandled shape: refuse honestly.
-                    // The nonneg axiom stays — multiplicities are always
-                    // nonnegative — but a `Sat` resting on this
+                    // The nonneg axiom stays – multiplicities are always
+                    // nonnegative – but a `Sat` resting on this
                     // reduction degrades to `Unknown`.
                     opaque = true;
                     out.incomplete = true;
@@ -1230,11 +1230,11 @@ pub(crate) fn reduce(
         let _ = opaque;
     }
 
-    // ---- count congruence ----
+    // ======== count congruence ========
     // `bag.count` is a function of the element: two elements the formula
     // (or the arithmetic model) makes equal have equal counts. The
     // purified arithmetic encoding gives each `bag.count` term its own
-    // integer column with no congruence tie — an UF application would
+    // integer column with no congruence tie – an UF application would
     // get this from the theory combination layer (verified: the same
     // shape through `declare-fun` refutes fine), the count term does
     // not, and `¬((1:3) ⊑ b)` beside `count(1,b) ≥ 5` answered `sat`
@@ -1256,22 +1256,22 @@ pub(crate) fn reduce(
         }
     }
 
-    // ---- bag-pair count and cardinality congruence ----
+    // ======== bag-pair count and cardinality congruence ========
     // `bag.count` and `bag.card` are functions of the bag **value**, so
-    // equal bags have equal counts and sizes — across *derived*
+    // equal bags have equal counts and sizes – across *derived*
     // equalities too, not just the `Eq` atoms the formula happens to
     // contain (the extensionality pass below covers only the surveyed
     // atoms). The purified encoding gives each `count`/`card` term its
     // own integer column with no tie, so a congruence the EUF layer
-    // derives — `f x = f 0` from `x = 0`, `select(A, i) = v` from the
-    // array theory's select-over-store — never reached the columns, and
+    // derives – `f x = f 0` from `x = 0`, `select(A, i) = v` from the
+    // array theory's select-over-store – never reached the columns, and
     //     x = 0 ∧ count(1, f x) = 2 ∧ count(1, f 0) = 5
     // answered `sat` (CVC5: `unsat`; differential probe). The axiom is
     // stated over every surveyed bag pair, the same shape as the
     // element-pair congruence above and the set theory's membership
     // congruence: the antecedent is the (hash-consed) equality atom,
     // which EUF commits when a derivation exists. `bag.card` rides the
-    // same pairs — without it, `x = 0 ∧ |f x| = 2 ∧ |f 0| = 5` had the
+    // same pairs – without it, `x = 0 ∧ |f x| = 2 ∧ |f 0| = 5` had the
     // same hole through the slack columns.
     fn max_bag_pairs() -> usize {
         super::caps::cap("bag_pairs", 128)
@@ -1282,12 +1282,12 @@ pub(crate) fn reduce(
             if a == b || esa != esb {
                 continue;
             }
-            // **Opaque-with-opaque or opaque-with-constructor pairs only** —
+            // **Opaque-with-opaque or opaque-with-constructor pairs only** –
             // the set theory's `implicit_pairs` eligibility, for the two
             // reasons it documents there. First, the same measured one:
             // a closed compound's counts are structurally defined from
             // congruent bases, so stating congruence at the compound too is
-            // redundant — and not cheap (the union-rearrangement regression
+            // redundant – and not cheap (the union-rearrangement regression
             // went from a second to an unfinishable search before this
             // filter). Second, the feedback loop: the axiom mints a
             // bag-sorted equality *atom*, the next `assert`'s re-survey
@@ -1295,7 +1295,7 @@ pub(crate) fn reduce(
             // set is re-walked) sees that atom as a user equality and
             // mints an extensionality witness for the pair. Constructors
             // and opaque terms are stable under hash-consing, so the pair
-            // set — and with it the witness growth — is bounded and
+            // set – and with it the witness growth – is bounded and
             // one-shot; compounds would mint fresh pairs every pass.
             // The hole the pass exists to close needs exactly this
             // eligibility: `f x = f 0` (opaque×opaque) and
@@ -1326,11 +1326,11 @@ pub(crate) fn reduce(
         }
     }
 
-    // ---- subbag cardinality propagation ----
+    // ======== subbag cardinality propagation ========
     // `a ⊑ b → |a| ≤ |b|` (pointwise counts order, nonnegative sums).
     // Without it a subbag against a *closed* bag constrained only the
     // known elements, the unknown support kept its slack, and
-    // `b ⊑ (1:-1) ⧵ (x:0)` — which is `b ⊑ ∅`, forcing `b = ∅` — sat
+    // `b ⊑ (1:-1) ⧵ (x:0)` – which is `b ⊑ ∅`, forcing `b = ∅` – sat
     // beside `|b| = 2` (fuzz-found false-`sat`; CVC5: `unsat`). The set
     // theory has always had this rule (`atom → |a| ≤ |b|`).
     for &(atom, a, b) in &s.subbags {
@@ -1340,7 +1340,7 @@ pub(crate) fn reduce(
         out.axioms.push(manager.mk_implies(atom, le));
     }
 
-    // ---- membership ----
+    // ======== membership ========
     for &(atom, e, b) in &s.members {
         let c = count_term(e, b, manager);
         let one = manager.mk_int(1);
@@ -1348,10 +1348,10 @@ pub(crate) fn reduce(
         out.axioms.push(manager.mk_eq(atom, ge));
     }
 
-    // ---- subbag, both directions ----
+    // ======== subbag, both directions ========
     // Forward: every known element's counts order. Negated: a witness
     // element (skolemized per pair, like `@set_ext_*`) whose counts
-    // disagree — the formula may not name it, so it is minted here and
+    // disagree – the formula may not name it, so it is minted here and
     // its count terms join the identities next pass (the same
     // re-derivation discipline as the set witnesses).
     for &(atom, a, b) in &s.subbags {
@@ -1379,7 +1379,7 @@ pub(crate) fn reduce(
         out.axioms.push(manager.mk_implies(neg, gt));
     }
 
-    // ---- extensional equality ----
+    // ======== extensional equality ========
     // Both directions over the known elements: equal counts elementwise,
     // and a differing witness when the equality is false.
     for &(atom, a, b) in &s.bag_equalities {
@@ -1412,7 +1412,7 @@ pub(crate) fn reduce(
         out.axioms.push(manager.mk_implies(neg, differs));
     }
 
-    // ---- choose ----
+    // ======== choose ========
     // CVC5's `BAG_CHOOSE` elimination (`theory_bags.cpp`,
     // `expandChooseOperator`): the skolem `k` carries
     // `A = ∅ ∨ count(k, A) ≥ 1`. Two shapes, by whether the formula
@@ -1420,18 +1420,18 @@ pub(crate) fn reduce(
     //
     // * **with a `bag.card` term present** (surveyed, so its equation
     //   `|b| = Σ + slack` is stated and the model pass verifies it):
-    //   `count(choose(b), b) ≥ 1 ↔ |b| ≥ 1` — the set theory's
+    //   `count(choose(b), b) ≥ 1 ↔ |b| ≥ 1` – the set theory's
     //   `SET_CHOOSE` shape. This is what makes
     //   `|b| ≥ 1 ∧ count(choose(b), b) = 0` refute at the arithmetic
     //   layer, through the card the formula itself owns.
     // * **without one**: CVC5's disjunction over the emptiness
-    //   *equality atom*, never a minted `bag.card` — a card term minted
+    //   *equality atom*, never a minted `bag.card` – a card term minted
     //   here would join the assertion's conjoined axioms, the model
     //   pass would survey it, and its barely-constrained slack column
     //   would roll back perfectly good bag values (found on
     //   `count(3,b) = 2 ∧ choose(b) = 3`, which printed `b = ∅`).
     //   Because the atom is minted *after* the survey, the
-    //   extensionality pass has not seen the pair — so the forward
+    //   extensionality pass has not seen the pair – so the forward
     //   direction is stated here directly: `b = ∅ → count(e, b) = 0`
     //   for every known element (the choose included), which is what
     //   keeps a single-assert script's disjunction from vacuously
@@ -1467,7 +1467,7 @@ pub(crate) fn reduce(
     // would supply this if the choose term were an ordinary application
     // (CVC5's skolem is `uf(A)` for exactly that reason); here the
     // equality atoms are booleanized, so the congruence is stated over
-    // the choose pairs the survey found — the set theory's discipline,
+    // the choose pairs the survey found – the set theory's discipline,
     // budget included. Without it, `a = b ∧ |a| ≥ 1 ∧ choose(a) ≠ choose(b)`
     // answered `Sat` there, and the bag shape is identical.
     {
@@ -1490,7 +1490,7 @@ pub(crate) fn reduce(
             }
         }
         // `choose(ite c a b) = ite c (choose a) (choose b)`: with `c` true
-        // the ite *is* `a`, so the two chooses must agree — but the pair
+        // the ite *is* `a`, so the two chooses must agree – but the pair
         // rule above conditions on an equality atom nobody asserts. The
         // set theory's choose-over-ite rule, same shape. Minting the
         // branch chooses is sound: the choose axiom above is valid for
@@ -1506,7 +1506,7 @@ pub(crate) fn reduce(
         }
     }
 
-    // ---- cardinality ----
+    // ======== cardinality ========
     // A **closed** bag's size is the exact sum of the known counts (its
     // support is the makes inside it, all collected); an opaque bag may
     // hold elements the formula never names, and carries a nonnegative
@@ -1520,11 +1520,11 @@ pub(crate) fn reduce(
             continue;
         };
         // The counting sum runs over the element list, which may hold
-        // two spellings of one value — the extensionality witnesses are
+        // two spellings of one value – the extensionality witnesses are
         // variables that usually *equal* a real element (their consistency
         // axioms force exactly that). Summing every spelling counts one
         // cell twice, and a bag pinned to a closed value then forced its
-        // slack to absorb the duplicate — pinning the witnesses away from
+        // slack to absorb the duplicate – pinning the witnesses away from
         // the elements the disequality directions needed (a fuzz-found
         // false-`unsat`). The fix is the set theory's de-duplication
         // guard: a list entry contributes its count only when no *earlier*
@@ -1570,22 +1570,22 @@ pub(crate) fn reduce(
         out.axioms.push(ge);
     }
 
-    // ---- cardinality propagation ----
+    // ======== cardinality propagation ========
     // The per-element equations constrain the *known* counts; an opaque
     // bag's unknown support is the slack. Two aggregate rules let the
-    // arithmetic solver see through the slack — both are theorems, and
+    // arithmetic solver see through the slack – both are theorems, and
     // without the first, `b = ∅ ∧ |b| = 1` answered `sat` (a fuzz-found
     // false-`sat`; CVC5: `unsat`; the set theory has always had this
     // rule, `equality ⇒ equal cardinality`, which is why the same shape
     // over sets refuted):
     //
-    // * `a = b → |a| = |b|` — equal bags have equal sizes, so a bag
+    // * `a = b → |a| = |b|` – equal bags have equal sizes, so a bag
     //   pinned to `∅` (or to any closed compound, whose size folds) has
     //   its slack forced through its own cardinality equation.
     // * the operator bounds: `|a ⊎ b| = |a| + |b|` exactly (the sum of
     //   the sums), and `|x ⊙ y| ≤ |x| + |y|`-style upper bounds for the
     //   other four operators and `|setof b| ≤ |b|` (squashing removes
-    //   copies, never adds) — every bound is `Σ min(count,1)-shaped`,
+    //   copies, never adds) – every bound is `Σ min(count,1)-shaped`,
     //   i.e. pointwise ≤ the operand sums.
     if std::env::var_os("NIXIE_NO_BAG_EQCARD").is_none() {
         for &(atom, a, b) in &s.bag_equalities {
@@ -1640,7 +1640,7 @@ pub(crate) fn reduce(
                     out.axioms.push(manager.mk_le(cb, cx));
                 }
                 // `|map(f, b)| = |b|` exactly: `f` is total, so every one
-                // of the `|b|` copies maps to exactly one copy — collisions
+                // of the `|b|` copies maps to exactly one copy – collisions
                 // merge multiplicities, the sum is preserved. This is what
                 // ties the per-element image slacks to the domain's.
                 TermKind::BagMap { bag: x, .. } => {
@@ -1655,9 +1655,9 @@ pub(crate) fn reduce(
                 // Cardinality is a function of the bag value, and an ite
                 // picks a value: `|ite(c, a, b)| = ite(c, |a|, |b|)`, exact
                 // for opaque operands too. Without it the ite's own slack
-                // absorbed whatever the branches' cardinalities forbade —
+                // absorbed whatever the branches' cardinalities forbade –
                 // `|A| = 5 ∧ b = ite(c, A, ∅) ∧ c ∧ |b| = 6`-shapes with
-                // the counts otherwise pinned — a false-`sat` family the
+                // the counts otherwise pinned – a false-`sat` family the
                 // count identities alone do not close (they tie the sums,
                 // not the slack, to the branches).
                 TermKind::Ite(c, x, y) => {

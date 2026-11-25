@@ -9,8 +9,8 @@
 ### `--view=V` and view-distinct `--max-error`
 
 - A reported counterexample is now blocked **under the view** when one is
-  set: at each step, the view's *value* — computed by the evaluator over
-  the decoded state, the semantic truth the trace carries — is ruled out
+  set: at each step, the view's *value* – computed by the evaluator over
+  the decoded state, the semantic truth the trace carries – is ruled out
   against the view's own encoded term (`Encoder::encode_at` at that step),
   so the next query must differ where the author looks. A step whose view
   value has no term form falls back to the full-state block, which is
@@ -26,14 +26,14 @@
   a test that three traces of a two-counter walk are pairwise distinct in
   their viewed (`x`) histories however their `y`s scatter.
 
-### `simulate` — sampled behaviours, not a search
+### `simulate` – sampled behaviours, not a search
 
 - `Next`'s top-level disjuncts are decomposed (`disjuncts_of`); at each
   step of a run they are tried in a **seeded** Fisher-Yates order
-  (SplitMix64, `--seed=N`, default 0 — no clock, no OS entropy) and the
+  (SplitMix64, `--seed=N`, default 0 – no clock, no OS entropy) and the
   first *enabled* one (prefix ∧ disjunct satisfiable) is asserted for the
   run. A run with no enabled disjunct dead-ends; a state invariant broken
-  in a reached state is decoded and **replayed** before it is reported —
+  in a reached state is decoded and **replayed** before it is reported –
   a sampled trace that does not replay is `Unknown`, never exit 12.
 - `--output-traces` writes `example<k>.itf.json` per run: the violating
   run's trace, and every completed run's trace read back from the solver
@@ -47,9 +47,9 @@
 
 `y2k_instance.tla` takes `Init`, `Next` and `Safety` from an **unnamed**
 `INSTANCE y2k WITH …`, so the roles name members that are not units of
-the root module. `lower_named` now falls back to open-instance members —
+the root module. `lower_named` now falls back to open-instance members –
 lowered through the instance machinery, substitution and all, via a
-pre-seeded frame stack (`run_frames`) — and both the CLI's and
+pre-seeded frame stack (`run_frames`) – and both the CLI's and
 `lower_one`'s existence checks accept them. The y2k simulate acceptance
 cell (`--out-dir --length=10 --max-run=5 --output-traces --inv=Safety`)
 now produces `example1..5.itf.json`, `NoError`, exit 0, byte-identical

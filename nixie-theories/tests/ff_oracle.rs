@@ -1,6 +1,6 @@
 //! The Phase-3 exit-criterion oracle (`docs/FF_THEORY_DESIGN.md` §10.2):
 //! random conjunctive systems over tiny primes, every verdict compared
-//! against exhaustive enumeration of all `pⁿ` points — a *complete*
+//! against exhaustive enumeration of all `pⁿ` points – a *complete*
 //! oracle. Any disagreement is a wrong answer at n = 1.
 //!
 //! The enumeration here is independent of the solver's own enumeration
@@ -67,7 +67,7 @@ fn random_atom(
             manager.mk_ff_add([a, c]).expect("add")
         }
         2 => {
-            // (a + b) * c — degree-2 mix
+            // (a + b) * c – degree-2 mix
             let (a, b, c) = (pick(rng), pick(rng), pick(rng));
             let sum = manager.mk_ff_add([a, b]).expect("add");
             manager.mk_ff_mul([sum, c]).expect("mul")
@@ -155,7 +155,7 @@ fn one_round(p: u32, n_vars: usize, n_lits: usize, seed: u64) {
             }
             // Minimality spot-check: the core alone must be unsat by the
             // oracle (a core containing satisfiable literals is not
-            // minimal — tolerated for tracing reasons only when the traced
+            // minimal – tolerated for tracing reasons only when the traced
             // cofactors genuinely need them; the checker verifies the
             // algebra separately).
             let core_lits: Vec<TermId> = core.fact_indices.iter().map(|&i| assertions[i]).collect();
@@ -272,7 +272,7 @@ fn exhaustive_oracle_agrees_at_f2() {
 
 #[test]
 fn bitsum_constraints_solve() {
-    // s = bitsum(b0 b1) ∧ b0, b1 constrained to bits by b_i² = b_i —
+    // s = bitsum(b0 b1) ∧ b0, b1 constrained to bits by b_i² = b_i –
     // solved through the GB path (p=17 keeps p^n above the enumeration
     // cap with 3 vars: 17³ = 4913 > 2^12? no, 4913 ≤ 2^22, enumeration
     // would fire; use 5 vars at p=17 → 17^5 > 2^20... still ≤ 2^22.
@@ -316,7 +316,7 @@ fn bitsum_constraints_solve() {
         }
         other => panic!("expected sat, got {other:?}"),
     }
-    // Now the impossible value: s = 2 with (b0,b1) bits — satisfiable by
+    // Now the impossible value: s = 2 with (b0,b1) bits – satisfiable by
     // (0,1)! And s=3∧s=2 is unsat.
     let c2 = manager.mk_ff_const(field, 2i64.into()).expect("c");
     let s_is_2 = manager.mk_eq(s, c2);
@@ -487,7 +487,7 @@ fn corrupted_certificates_are_rejected() {
     use nixie_core::sort::SortKind;
     // Build an UNSAT goal with a linear certificate, then corrupt the
     // recorded cofactors/generators in every way the verifier watches
-    // for; each must fail verification (fail-closed is the property —
+    // for; each must fail verification (fail-closed is the property –
     // a broken certificate may never certify).
     let mut manager = TermManager::new();
     let sort = manager
@@ -557,7 +557,7 @@ fn corrupted_certificates_are_rejected() {
 fn corrupted_case_trees_are_rejected() {
     use nixie_core::sort::SortKind;
     // Mint a genuine two-level case tree (x² = 4 ∧ y² = x + 1 over
-    // p = 2³¹−1 — both children of the x-branch die rootless because 3
+    // p = 2³¹−1 – both children of the x-branch die rootless because 3
     // and −1 are nonresidues), then corrupt it in every way the
     // verifier watches for; each must fail (fail-closed is the
     // property).
@@ -614,7 +614,7 @@ fn corrupted_case_trees_are_rejected() {
     assert!(!bad1.verify(&manager, &assertions));
 
     // 2. A fabricated root on a branch: the polynomial does not vanish
-    //    there (or the division breaks) — either way the completeness
+    //    there (or the division breaks) – either way the completeness
     //    check fails.
     let mut e2 = entries.clone();
     for (_p, entry) in e2.iter_mut() {
@@ -649,7 +649,7 @@ fn corrupted_case_trees_are_rejected() {
 
     // 4. A branch with a HIDDEN root: claiming fewer roots than the
     //    polynomial has leaves an unexplored value (here x² − 4 with
-    //    only one of its two roots — the leftover quotient still holds
+    //    only one of its two roots – the leftover quotient still holds
     //    the other linear factor, so gcd(q, x^p − x) ≠ 1).
     let mut e4 = entries.clone();
     for (_p, entry) in e4.iter_mut() {

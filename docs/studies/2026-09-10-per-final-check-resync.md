@@ -1,4 +1,4 @@
-# The per-final-check theory resync: never fires, 2/3 of UF+arith theory cost — and why removing it does not (yet) land
+# The per-final-check theory resync: never fires, 2/3 of UF+arith theory cost – and why removing it does not (yet) land
 
 Date: 2026-09-10
 Scope: UF+arithmetic combination throughput (the #1 ranked target of the
@@ -7,9 +7,9 @@ Baseline: `7fe833c1` (main, includes the GMI cut sign fix landed the same day).
 
 ## The finding (measurement)
 
-`TheoryManager::final_check` runs `resync_theory_state` — a full
+`TheoryManager::final_check` runs `resync_theory_state` – a full
 reset+replay of EUF + arithmetic + DL (+ embedded BV state) from the
-deduplicated shadow trail — on **every final check of every UF-bearing
+deduplicated shadow trail – on **every final check of every UF-bearing
 problem** ("the incremental EUF state can lose a congruence or
 disequality").  Instrumented counters over the 270-file differential
 sample (z3-solvable, 10 s cap):
@@ -26,28 +26,28 @@ corpus, the incremental checks (DL `check`, `euf.check_conflicts`, array
 axioms, `propagate_euf_equalities_to_arith`, `arith.check`) found every
 conflict first.  The replay volume dominates `process_constraint` calls
 (~2/3) and drives the simplex rebuild cost (`intern_row`, `crash_basis`,
-`make_feasible`) — the top of every UF+arith profile.
+`make_feasible`) – the top of every UF+arith profile.
 
 ## The premise audit (per-layer differential fuzzers)
 
 Three incremental-vs-replay differential fuzzers were built (all landed):
 
-* `euf_incremental_matches_replay_fuzz` — partitions + conflict verdicts,
+* `euf_incremental_matches_replay_fuzz` – partitions + conflict verdicts,
   40 seeds × 3 000 ops.  **No divergence**: the e-graph's push/pop undo
   trails are faithful.
-* `arith_incremental_matches_replay_fuzz` — verdicts, 30 seeds × 2 000
+* `arith_incremental_matches_replay_fuzz` – verdicts, 30 seeds × 2 000
   steps.  **Found a real bug instead**: the GMI cut continuous-branch
-  sign error (`-bar_a / f0` where `bar_a / f0` is required) — a false
+  sign error (`-bar_a / f0` where `bar_a / f0` is required) – a false
   `unsat` on a satisfiable four-constraint system (landed fix
   `7fe833c1`, with a boxed-witness brute-force oracle test
   `arith_verdicts_match_bruteforce_oracle` that now also verifies the
   solver's own `value()`s satisfy every live constraint on `Sat`).
-* `dl_incremental_matches_replay_fuzz` — DL verdicts, 30 × 2 000.  **No
+* `dl_incremental_matches_replay_fuzz` – DL verdicts, 30 × 2 000.  **No
   divergence**.
 
 So the resync's stated premise (incremental divergence) has no supporting
 evidence at any theory layer; what it actually does is rebuild a FRESH
-tableau basis per final check — pure trajectory shaping.
+tableau basis per final check – pure trajectory shaping.
 
 ## The removal experiments (all reverted)
 
@@ -69,12 +69,12 @@ Root cause of the fragility, mapped precisely:
 
 1. **Rows are permanent** (`intern_row_cached`; "a row without bounds
    constrains nothing").  Without the per-final-check reset, Gomory-cut
-   rows and retracted-branch atom rows accumulate for the whole search —
-   measured 430 → 9 300+ live rows over 8 s on xs_8_13 — and every
+   rows and retracted-branch atom rows accumulate for the whole search –
+   measured 430 → 9 300+ live rows over 8 s on xs_8_13 – and every
    `check`/pivot pays for the history (`pivot` 28 %, `make_feasible` 7 %
    of cycles; `find_violating` is O(rows)).
 2. The old **basis snapshot-restore in `Simplex::pop`** accidentally
-   bounded this (in-scope rows died with the restore) — but its cost is
+   bounded this (in-scope rows died with the restore) – but its cost is
    an O(tableau) clone per mutated scope that shares every column `Arc`,
    turning each in-scope column edit into a full column clone
    (`column_drop_known` 12 % + `Arc::make_mut` 5.5 % once the resync no
@@ -82,30 +82,30 @@ Root cause of the fragility, mapped precisely:
 3. Cut rows want to **persist** (content-addressed re-derivation hits the
    cached, already-substituted row) while dead atom rows want to **die**;
    every uniform policy (sweep-all, cap, scope-drop) helped one family
-   and hurt another — the search trajectory is coupled to the basis
+   and hurt another – the search trajectory is coupled to the basis
    history far more strongly than to any of these policies.
 
 The DdM-pop variant (171 solved, PAR-2 2 057 vs 2 117) is the best corpus
-result measured in this session — but it breaks
+result measured in this session – but it breaks
 `int_case_split_determinism_regressions::wisas_xs_8_13_*` (the in-process
 solve exceeds the test budget), so per the verification bar it does not
 land.  A candidate that recovers xs_8_13's speed without the resync needs
 to reproduce not just the *bounded tableau* but the *basis-reset
-trajectory* of the old rebuild — e.g. periodic basis re-canonicalization
+trajectory* of the old rebuild – e.g. periodic basis re-canonicalization
 at restart points, or exporting effective cuts as CDCL lemmas so the
 tableau never carries them.  Both are real designs, not knobs; neither
 was attempted here.
 
 ## What did land
 
-* `7fe833c1` — GMI cut sign fix + EUF/arith fuzzers + oracle
+* `7fe833c1` – GMI cut sign fix + EUF/arith fuzzers + oracle
   (a genuine false-`unsat` soundness fix, found by the premise audit).
-* This commit — the DL fuzzer + the `value()`-consistency half of the
+* This commit – the DL fuzzer + the `value()`-consistency half of the
   arith oracle (test-only).
 
 ## Follow-up (same day): the restart-resync landed
 
-The named design — basis re-canonicalization at restart points — works.
+The named design – basis re-canonicalization at restart points – works.
 `TheoryManager::on_backtrack(0)` now rebuilds from the (root-only, hence
 small) shadow trail once per restart, replacing the per-final-check
 replay; `Simplex::pop` is the pure Dutertre–de Moura bounds-only contract
@@ -123,7 +123,7 @@ Per instance: xs_8_13 (the pinned regression that blocked every removal
 variant) 2.5 s → 0.7 s and *passes its determinism test*; xs_15_15
 5.3 s → 1.3 s; hash_sat_05_06 12.1 s → 5.3 s.  Family deltas: QF_NIA +5,
 QF_UFLIA +2, QF_ANIA +2, QF_AUFLIA +1, QF_UFIDL +0, QF_LIA −1, QF_BV −1
-(inherited from main's own movement — bench_66/app1 shifted on main's BV
+(inherited from main's own movement – bench_66/app1 shifted on main's BV
 commits, verified on both binaries).
 
 Why this variant succeeded where the four earlier ones failed: the
@@ -136,7 +136,7 @@ O(root trail) cost instead of O(full trail) per final check.
 Exposing the solvable families surfaced three PRE-EXISTING
 nonlinear-witness soundness holes (fixed in the companion commit:
 definition-Boolean witness pins, completion-site honesty, ania cyclic/
-Boolean definition parsing — the invalid-model classes the
+Boolean definition parsing – the invalid-model classes the
 `--validate-models` gate then flagged).  The two remaining QF_ANIA/sum10
 invalid models are the next known gap: `try_decide_ground_ania`'s
 `ArrayInterp` cells never reach the printed model (const-0 array default
@@ -155,21 +155,21 @@ The chain, dug with an assignment-invariant checker:
    scopes AFTER accepting a leaf.  Under the DdM pop the scope's pivots
    PERSIST; the popped (wider) bounds + the pivoted basic values can leave
    the raw LP point outside some bound windows.
-2. A consumer that reads values without a fresh `check()` — the dive's
-   root base case snapshots right after a failed sibling's pop — then
+2. A consumer that reads values without a fresh `check()` – the dive's
+   root base case snapshots right after a failed sibling's pop – then
    publishes that stale/infeasible point as the model (`lia_model`).
 3. `value()`'s LP fallback reads the raw vector for variables the
    snapshot does not cover, leaking the same stale values.
 
 Fixes (all landed):
 
-* `Simplex::state_feasible` — re-derive (crash_basis) when stale, then
+* `Simplex::state_feasible` – re-derive (crash_basis) when stale, then
   probe `find_violating`; the dive base case and the B&B leaf gate their
   snapshot on it (an infeasible "leaf" declines/returns Unknown).
-* `ArithSolver::ensure_feasible_or_conflict` at `final_check`'s Sat arm —
+* `ArithSolver::ensure_feasible_or_conflict` at `final_check`'s Sat arm –
   re-establish a feasible current assignment before any value reader; an
   infeasible live bound set becomes an honest conflict.
-* `ArithSolver::rehome_stranded_row_bounds` — a bound whose row a pivot
+* `ArithSolver::rehome_stranded_row_bounds` – a bound whose row a pivot
   consumed (the slack left the basis) constrains a free-floating variable;
   the sweep re-interns the recorded form (`slack_forms`) and copies the
   bounds (same reasons) to the fresh slack, in a bounded fixpoint around

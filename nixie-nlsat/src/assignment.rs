@@ -50,7 +50,7 @@ pub struct TrailEntry {
 /// * [`Assignment::arith_value`] answers only for a rational slot and reports
 ///   an algebraic one as `None`. Every reader that predates algebraic witnesses
 ///   is written as `if let Some(value) = …` or `…?`, so this degrades each of
-///   them to "this variable is not usable here" — the sound direction (a wider
+///   them to "this variable is not usable here" – the sound direction (a wider
 ///   feasible region, a `Lbool::Undef` evaluation), never a wrong value.
 /// * [`Assignment::arith_point`] answers for both, and is what code that can
 ///   handle an algebraic number exactly (`CadPoint::try_sign_of`) must call.
@@ -144,7 +144,7 @@ impl Assignment {
         &self.trail
     }
 
-    // ========== Arithmetic Variable Operations ==========
+    // ======== Arithmetic Variable Operations ========
 
     /// Check if an arithmetic variable is assigned.
     ///
@@ -157,7 +157,7 @@ impl Assignment {
     /// `NlsatSolver::is_complete` (see `solver/conflict.rs`) decides `Sat` on
     /// "this says every variable is assigned". Reading an algebraic slot as
     /// unassigned makes the search hand the same variable back to
-    /// `pick_arith_value` forever — a hang, not a wrong answer, but a hang in
+    /// `pick_arith_value` forever – a hang, not a wrong answer, but a hang in
     /// the one case this whole feature exists to solve.
     pub fn is_arith_assigned(&self, var: Var) -> bool {
         let assigned = self
@@ -175,7 +175,7 @@ impl Assignment {
     /// Get the value of an arithmetic variable, **only if it is rational**.
     ///
     /// A variable holding an algebraic value answers `None` here even though
-    /// [`Self::is_arith_assigned`] is `true` for it — see the type-level docs.
+    /// [`Self::is_arith_assigned`] is `true` for it – see the type-level docs.
     /// Use [`Self::arith_point`] when an algebraic value must be seen.
     pub fn arith_value(&self, var: Var) -> Option<&BigRational> {
         self.arith_values
@@ -268,7 +268,7 @@ impl Assignment {
         self.arith_values.iter().filter(|v| v.is_some()).count()
     }
 
-    // ========== Boolean Variable Operations ==========
+    // ======== Boolean Variable Operations ========
 
     /// Check if a boolean variable is assigned.
     pub fn is_bool_assigned(&self, var: BoolVar) -> bool {
@@ -330,7 +330,7 @@ impl Assignment {
         }
     }
 
-    // ========== Decision Level Operations ==========
+    // ======== Decision Level Operations ========
 
     /// Push a new decision level.
     pub fn push_level(&mut self) {
@@ -405,7 +405,7 @@ impl Assignment {
     /// rational that is `√2`. Rounding to the isolating interval's midpoint
     /// here would silently turn `x² − 2` into a non-zero value at its own root,
     /// which is precisely the unsoundness `CadPoint` exists to prevent. Use
-    /// [`Self::eval_poly_sign`] when only the sign is needed — that one *can*
+    /// [`Self::eval_poly_sign`] when only the sign is needed – that one *can*
     /// answer exactly at an algebraic point.
     pub fn eval_poly(&self, poly: &Polynomial) -> Option<BigRational> {
         // Build assignment map from current values
@@ -430,15 +430,15 @@ impl Assignment {
     ///
     /// Three cases, and the honest answer to everything else is `None`:
     ///
-    /// 1. Every variable of `poly` holds a rational value — the sign of
+    /// 1. Every variable of `poly` holds a rational value – the sign of
     ///    [`Self::eval_poly`].
     /// 2. Every variable of `poly` is assigned and exactly one of them holds
-    ///    an algebraic value — substitute the rationals, leaving a univariate
+    ///    an algebraic value – substitute the rationals, leaving a univariate
     ///    polynomial in that one variable, and ask
     ///    [`CadPoint::try_sign_of`], which decides `p(α) = 0` exactly by a gcd
     ///    test and otherwise refines the isolating interval until the sign is
     ///    constant on it.
-    /// 3. Anything else — an unassigned variable, *two* algebraic variables
+    /// 3. Anything else – an unassigned variable, *two* algebraic variables
     ///    (that is multivariate real-algebraic arithmetic, which this crate
     ///    does not have), or a refinement budget that ran out before the sign
     ///    was proved.

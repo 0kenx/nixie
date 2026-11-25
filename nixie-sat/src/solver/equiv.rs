@@ -94,7 +94,7 @@ impl Solver {
         // Ternary×binary SSR cascade (kissat `extract_binaries`): derive the
         // resolvent binaries BEFORE gate detection so completed AND-gate
         // patterns (`o ↔ a ∧ b` needs `o→a`, `o→b`) enter the closure the
-        // same round — on the bv_ILA class these few binaries unlock the
+        // same round – on the bv_ILA class these few binaries unlock the
         // whole congruence cascade (study 2026-09-18-ssr-binaries).
         let mut big_augmented = false;
         if super::congruence::ssr_binaries_enabled() && self.destructive_preprocessing_safe() {
@@ -210,7 +210,7 @@ impl Solver {
                         // contradictions) that proved satisfiable formulas UNSAT.
                         let scc_members = stack.split_off(scc_start);
                         // Freeze set: a class containing a frozen
-                        // (theory-mapped) variable is left unfolded —
+                        // (theory-mapped) variable is left unfolded –
                         // folding would rewrite the frozen literal's
                         // clauses onto the representative and stop its
                         // atom from ever reaching the theory
@@ -233,7 +233,7 @@ impl Solver {
         }
 
         // Tarjan phase complete: every `sub` write happened inside the SCC
-        // pops above, and the rest of the round only READS the map — so
+        // pops above, and the rest of the round only READS the map – so
         // clone it out, return the scratch (all `&mut` borrows dead), and
         // continue with a plain local exactly like the pre-amortization
         // code.  The clone is one 2·V memcpy, the amortized equivalent of
@@ -305,7 +305,7 @@ impl Solver {
 
         // ======== Gate-modulo forward subsumption (kissat's matching
         // pass, `gate_subsume.rs`) ========
-        // Inside the closure, before the fold writes back — kissat's exact
+        // Inside the closure, before the fold writes back – kissat's exact
         // placement.  Whole-clause retirement only (no strengthening:
         // the post-substitution forward+self-subsumption sequence has the
         // ≈1/15k wrong-model interaction noted at the caller in `mod.rs`;
@@ -335,7 +335,7 @@ impl Solver {
         // Reusable per-clause buffers (perf, 2026-09-11): this loop is one
         // pass over every live clause per substitution round, and the
         // per-iteration `SmallVec` collect plus `Vec::with_capacity` were
-        // two heap allocations per clause — on wide-uniform formulas
+        // two heap allocations per clause – on wide-uniform formulas
         // (si2-b03m: 600k clauses × width 20, the SmallVec also spills its
         // inline 8) that is >1 M malloc/free pairs per round and showed up
         // as the `_int_malloc`/`realloc`/`memmove` cluster under `perf
@@ -411,10 +411,10 @@ impl Solver {
                 self.retire_clause(cid);
                 continue;
             }
-            // Exact-duplicate retire — ONLY when the recorded owner is an
-            // ORIGINAL clause (a learned owner can be purged later — the
+            // Exact-duplicate retire – ONLY when the recorded owner is an
+            // ORIGINAL clause (a learned owner can be purged later – the
             // doomed purge retires learned clauses mentioning eliminated
-            // vars, correctly — and then the constraint is gone with no
+            // vars, correctly – and then the constraint is gone with no
             // obligation: retiring original (¬2990∨¬15955) in favor of the
             // learned twin 213141 was the b21/seed-1 false-sat's exact
             // mechanism).  An original meeting a learned owner takes the
@@ -471,7 +471,7 @@ impl Solver {
             // Variables created since the last round (incremental callers,
             // CDCL(T) refinement encoding new atoms) start at IDENTITY. A
             // uniform fill value here poisoned the grown tail: every new
-            // variable became fake-eliminated into the fill's variable —
+            // variable became fake-eliminated into the fill's variable –
             // `var_eliminated` reported it folded (never branched),
             // `resolve_reintroduced_literal` rewrote later mentions of it
             // into that variable (corrupting the clause), and the compose
@@ -546,7 +546,7 @@ impl Solver {
         // purge, however, is already done: the mid-round
         // `rebuild_watches_and_binary_graph` reconstructs the BIG from the
         // live binary clauses (dropping the unbacked augmented edges), and
-        // nothing between it and here changes the clause set — the units
+        // nothing between it and here changes the clause set – the units
         // loop only assigns trail literals and `propagate` derives
         // consequences without learning or deleting. The trailing rebuild
         // therefore reproduced an identical graph every round and is
@@ -561,7 +561,7 @@ impl Solver {
     /// unbranchable *except* one whose retired clauses were resurrected by
     /// re-introduction ([`Solver::void_elimination_promises`]): its
     /// constraints are live clauses again, so the search must be able to
-    /// decide it — without this, a clause whose satisfaction needs a
+    /// decide it – without this, a clause whose satisfaction needs a
     /// positive decision on such a variable (all its literals unassigned,
     /// no propagation possible) could never be satisfied and the model
     /// would default the variable to `false` in violation of it. The
@@ -650,7 +650,7 @@ impl Solver {
         }
         // The CSR layout is exact by construction; this only drops the
         // flat buffer's `Vec` margin (trajectory-neutral).  The overflow
-        // is empty after a from-clauses rebuild — reset the fold
+        // is empty after a from-clauses rebuild – reset the fold
         // trigger's counter.
         self.binary_graph.shrink();
         self.binary_graph.extra_entries = 0;
@@ -660,9 +660,9 @@ impl Solver {
         let num_vars = self.num_vars;
         // CSR dual-write drifted-state validation (slice 2,
         // `docs/studies/2026-09-13-csr-watches-kickoff.md`): before either
-        // representation resets, the shadow — maintained since the previous
+        // representation resets, the shadow – maintained since the previous
         // rebuild through every BCP scan (keep/remove/move) and every
-        // cold-path mutation (attach, deletion, relocation, rollback) —
+        // cold-path mutation (attach, deletion, relocation, rollback) –
         // must equal the drifted `Vec` lists entry-for-entry, order
         // included.  This is the empirical order-isomorphism proof the
         // dual-write scan exists to produce.
@@ -810,10 +810,10 @@ impl Solver {
                     continue;
                 }
                 // The shadow is detached for the whole rebuild (csr_take
-                // above), so the fill uses the mirror-free push — the CSR
+                // above), so the fill uses the mirror-free push – the CSR
                 // baseline is adopted wholesale from the fresh layout at
                 // the end of this function.  Commit-B: the Vec side is
-                // dead — only the CSR layout below is filled.
+                // dead – only the CSR layout below is filled.
                 if !crate::watched::csr_b_enabled() {
                     watches.push_only(a.negate(), Watcher::new(cid, r, b));
                     watches.push_only(b.negate(), Watcher::new(cid, r, a));

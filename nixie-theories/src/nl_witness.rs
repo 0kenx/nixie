@@ -2,15 +2,15 @@
 //!
 //! # Why this module exists at all
 //!
-//! [`crate::nl_eval::Interpretation`] — the witness carrier every other
-//! nonlinear procedure in this crate uses — pins a term to a
+//! [`crate::nl_eval::Interpretation`] – the witness carrier every other
+//! nonlinear procedure in this crate uses – pins a term to a
 //! `BigRational`. That is the right value language for it: `holds_under`
 //! re-evaluates an interpretation against the original assertions in exact
 //! rational arithmetic, and every consumer downstream of it (the solver's
 //! `Model`, `(get-value ..)`'s ordinary path) stores a rational too.
 //!
 //! A cell decomposition does not always have a rational to offer. The only
-//! value satisfying `x² = 2` is `√2`, which is exactly representable — as a
+//! value satisfying `x² = 2` is `√2`, which is exactly representable – as a
 //! *root of a polynomial*, not as a fraction. Rounding it into one would
 //! report a number that satisfies none of the constraints the real witness
 //! did, so `crate::nlsat`'s real dispatcher has always declined to report
@@ -18,7 +18,7 @@
 //!
 //! This module is the value language that lets it report the witness
 //! honestly instead: `NlWitnessValue` is either an ordinary rational or an
-//! `AlgebraicValue` — a defining integer polynomial plus the index of the
+//! `AlgebraicValue` – a defining integer polynomial plus the index of the
 //! root it denotes, which is precisely what SMT-LIB's `root-obj` notation
 //! spells and what Z3 prints for the same goals.
 //!
@@ -28,7 +28,7 @@
 //! module reaching the `nixie-nlsat` dependency. These types reach nothing:
 //! they are plain data. Keeping them ungated is what lets `nixie-solver` hold
 //! a field of this type, classify it on its scope-restoration checklist and
-//! render it, all without a `cfg` at every one of those sites — only the
+//! render it, all without a `cfg` at every one of those sites – only the
 //! *population* of that field is feature-dependent.
 //!
 //! # This is not a second model
@@ -51,7 +51,7 @@ use num_rational::BigRational;
 /// univariate integer polynomial.
 ///
 /// This is SMT-LIB's `root-obj` in struct form. `(root-obj (+ (^ x 2) (- 2))
-/// 2)` — Z3's answer for `x² = 2 ∧ x > 0` — is `coefficients = [-2, 0, 1]`
+/// 2)` – Z3's answer for `x² = 2 ∧ x > 0` – is `coefficients = [-2, 0, 1]`
 /// (index = degree, so `x² − 2`) with `root_index = 2`.
 ///
 /// # Normal form
@@ -60,7 +60,7 @@ use num_rational::BigRational;
 /// denominators are cleared, the integer content is divided out, and the
 /// polynomial is negated if that leaves the leading coefficient negative.
 /// All three operations preserve the real-root *set* and its left-to-right
-/// order, so `root_index` is invariant under them — which is what makes the
+/// order, so `root_index` is invariant under them – which is what makes the
 /// normalisation safe to apply after the index was determined rather than
 /// before.
 ///
@@ -76,7 +76,7 @@ use num_rational::BigRational;
 /// second real root is the same number). Both denote `√2` correctly; only
 /// the spelling differs. Factoring here would need a univariate integer
 /// factoriser on the model-reporting path, which is a separate piece of work
-/// — recorded rather than faked.
+/// – recorded rather than faked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlgebraicValue {
     /// Integer coefficients of the defining polynomial: `coefficients[i]` is
@@ -84,7 +84,7 @@ pub struct AlgebraicValue {
     /// empty, and always of degree at least 1 (a constant polynomial has no
     /// roots to index).
     pub coefficients: Vec<BigInt>,
-    /// Which real root this value is, counting from the left, **1-based** —
+    /// Which real root this value is, counting from the left, **1-based** –
     /// the same convention as `root-obj` and as
     /// `nixie_nlsat::cad::CadPoint::Algebraic::index`.
     pub root_index: u32,
@@ -100,7 +100,7 @@ pub struct AlgebraicValue {
 }
 
 impl AlgebraicValue {
-    /// The midpoint of the isolating interval — a rational *approximation*,
+    /// The midpoint of the isolating interval – a rational *approximation*,
     /// never the value itself.
     ///
     /// Deliberately not named `value` and deliberately not used for anything
@@ -144,7 +144,7 @@ mod tests {
         assert_eq!(value.approximation(), rat(9, 8));
     }
 
-    /// The two arms are distinguishable and comparable — the map that carries
+    /// The two arms are distinguishable and comparable – the map that carries
     /// them is compared for equality inside `NlDispatchResult`.
     #[test]
     fn witness_values_compare_structurally() {

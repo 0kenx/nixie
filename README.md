@@ -37,18 +37,18 @@ Rust 1.88+, edition 2024.
 Deeper docs: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md),
 [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md),
 [`docs/TRANS.md`](docs/TRANS.md) (the transcendental theory: `exp`, `log`,
-`sin`, `cos`, `atan`, `sqrt` as dReal-style δ-satisfiability — `unsat` is
+`sin`, `cos`, `atan`, `sqrt` as dReal-style δ-satisfiability – `unsat` is
 exact, `delta-sat` never claims an exact model). Differential parity against
 a real Z3 binary: [`bench/z3_parity`](bench/z3_parity).
 
 ## References
 
-- [OxiZ](https://github.com/cool-japan/oxiz) — upstream this fork detached
+- [OxiZ](https://github.com/cool-japan/oxiz) – upstream this fork detached
   from
-- [Z3](https://github.com/Z3Prover/z3) — CDCL(T) architecture, theory
+- [Z3](https://github.com/Z3Prover/z3) – CDCL(T) architecture, theory
   solvers, quantifiers, NLSAT, Spacer, proofs
 - [CaDiCaL](https://github.com/arminbiere/cadical),
-  [Kissat](https://github.com/arminbiere/kissat) — SAT core
+  [Kissat](https://github.com/arminbiere/kissat) – SAT core
 
 These projects are used as specifications and as sources of ported code; no
 third-party binaries or libraries are linked.

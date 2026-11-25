@@ -19,8 +19,8 @@ use nixie_solver::SolverResult;
 
 /// The evaluator's value as an encoder value, so the two can be compared.
 ///
-/// Returns `None` for a value the encoder has no representation for yet —
-/// tuples, records and functions — so those are skipped rather than claimed.
+/// Returns `None` for a value the encoder has no representation for yet –
+/// tuples, records and functions – so those are skipped rather than claimed.
 fn literal_of(
     v: &nixie_tla::Value,
     tm: &mut TermManager,
@@ -57,7 +57,7 @@ fn literal_of(
             EV::Set(SetCell { members })
         }
         // A function is a domain and a graph, built over the same canonical
-        // base array the encoder uses — which is what makes the two
+        // base array the encoder uses – which is what makes the two
         // comparable at all. Every point is known here, so the graph is a
         // plain chain of stores with no guards.
         nixie_tla::Value::Fun(map) => {

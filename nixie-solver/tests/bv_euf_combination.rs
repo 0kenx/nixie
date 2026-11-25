@@ -5,8 +5,8 @@
 //! bit-vector arithmetic under and over the applications, and comparisons
 //! and (dis)equalities as atoms.  At widths 1 and 2 the oracle enumerates
 //! every variable assignment together with every *function table* (a
-//! function on a 2-bit domain has 2^8 tables), so every verdict — `sat`,
-//! `unsat` and `unknown` alike — is checked against the truth.  At widths 3,
+//! function on a 2-bit domain has 2^8 tables), so every verdict – `sat`,
+//! `unsat` and `unknown` alike – is checked against the truth.  At widths 3,
 //! 4 and 8 the oracle samples witnesses, which proves `sat` only, so an
 //! `unsat` against a sampled witness is a failure and a `sat` is checked by
 //! re-running the script with the printed variable values pinned.
@@ -23,9 +23,9 @@ use nixie_solver::Context;
 use std::fmt::Write as _;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // PRNG (splitmix64).
-// ---------------------------------------------------------------------------
+// ========  ========
 
 struct Rng {
     state: u64,
@@ -58,9 +58,9 @@ impl Rng {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Terms.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// A bit-vector term over `num_vars` variables and `num_funcs` unary
 /// functions (`select` on one array is function 0 when `array` is set).
@@ -181,9 +181,9 @@ fn gen_problem(rng: &mut Rng, width: u32) -> Problem {
     p
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Printing.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 fn print_const(value: u128, width: u32, out: &mut String) {
     if width.is_multiple_of(4) {
@@ -327,9 +327,9 @@ fn render(p: &Problem, named: bool, pins: Option<&[u128]>) -> String {
     out
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Reference semantics and the oracle.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 struct Interp<'a> {
     width: u32,
@@ -463,9 +463,9 @@ fn sampled_witness(rng: &mut Rng, p: &Problem, samples: usize) -> bool {
     false
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Running and scoring.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 enum Run {
     Lines(Vec<String>),
@@ -650,7 +650,7 @@ fn run_problem(rng: &mut Rng, p: &Problem, tally: &mut Tally, failures: &mut Vec
                 }
             }
             "unknown" => {
-                // Not a failure — `unknown` is always a legal verdict — but
+                // Not a failure – `unknown` is always a legal verdict – but
                 // lost precision, so every one is written out with the
                 // failures for inspection; on a formula the exhaustive
                 // oracle decided it is counted separately.

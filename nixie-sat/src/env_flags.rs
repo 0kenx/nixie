@@ -6,7 +6,7 @@
 //! site, the *unarmed* common case pays a full `getenv` walk every time:
 //! measured 2026-09-15 on `s38584.cnf` (16 s solve), the round-13 probe
 //! set issued **~108 M `getenv` calls** (`NIXIE_CSR_MUT_TRACE` 66 M,
-//! `NIXIE_HEAD_TRACE` 30 M, `NIXIE_PICK_TRACE` 7.4 M, …) — ~2/3 of the
+//! `NIXIE_HEAD_TRACE` 30 M, `NIXIE_PICK_TRACE` 7.4 M, …) – ~2/3 of the
 //! whole run's cycles (perf: `getenv` 50%, `strncmp` 14%), a ~3× geomean
 //! solving-cost regression on the SATCOMP 2025 30-instance sample.
 //!
@@ -32,50 +32,50 @@ macro_rules! env_flag_fn {
 }
 
 env_flag_fn!(
-    /// `NIXIE_PICK_TRACE` — decision-variable picks (decide/vmtf/search).
+    /// `NIXIE_PICK_TRACE` – decision-variable picks (decide/vmtf/search).
     pick_trace,
     "NIXIE_PICK_TRACE"
 );
 env_flag_fn!(
-    /// `NIXIE_HEAD_TRACE` — propagation-queue dequeue per literal.
+    /// `NIXIE_HEAD_TRACE` – propagation-queue dequeue per literal.
     head_trace,
     "NIXIE_HEAD_TRACE"
 );
 env_flag_fn!(
-    /// `NIXIE_ENQ_TRACE` — propagation-queue enqueue per literal.
+    /// `NIXIE_ENQ_TRACE` – propagation-queue enqueue per literal.
     enq_trace,
     "NIXIE_ENQ_TRACE"
 );
 env_flag_fn!(
-    /// `NIXIE_BUMP_TRACE` — VMTF bump per bump.
+    /// `NIXIE_BUMP_TRACE` – VMTF bump per bump.
     bump_trace,
     "NIXIE_BUMP_TRACE"
 );
 env_flag_fn!(
-    /// `NIXIE_BT_TRACE` — backtracks.
+    /// `NIXIE_BT_TRACE` – backtracks.
     bt_trace,
     "NIXIE_BT_TRACE"
 );
 env_flag_fn!(
-    /// `NIXIE_AWALK_TRACE` — conflict-analysis walks (per conflict and
+    /// `NIXIE_AWALK_TRACE` – conflict-analysis walks (per conflict and
     /// per minimization candidate).
     awalk_trace,
     "NIXIE_AWALK_TRACE"
 );
 env_flag_fn!(
-    /// `NIXIE_CONFLICT_TRACE` — BCP-kernel conflict events (per conflict;
-    /// the env walk dominated long runs before caching — see module doc).
+    /// `NIXIE_CONFLICT_TRACE` – BCP-kernel conflict events (per conflict;
+    /// the env walk dominated long runs before caching – see module doc).
     conflict_trace,
     "NIXIE_CONFLICT_TRACE"
 );
 // Gated to the same configuration as its only caller (the decision-point
 // diagnostic in `solver/search_ext.rs`, `#[cfg(all(feature = "std",
 // debug_assertions))]`): in a release build the call site compiles away and
-// the probe would otherwise be dead code — which fails the `-D warnings`
+// the probe would otherwise be dead code – which fails the `-D warnings`
 // clippy bar on a clean tree.
 #[cfg(all(feature = "std", debug_assertions))]
 env_flag_fn!(
-    /// `NIXIE_CHECK_FIXPOINT` — assignment-fixpoint re-check. The only
+    /// `NIXIE_CHECK_FIXPOINT` – assignment-fixpoint re-check. The only
     /// caller is `debug_assertions`-gated; keep the release build of the
     /// probe link-dead without tripping `-D warnings` (it must stay
     /// reachable for release debugging, and the cfg is exactly the
@@ -86,7 +86,7 @@ env_flag_fn!(
     "NIXIE_CHECK_FIXPOINT"
 );
 
-/// `NIXIE_DB_DIGEST=<step>` — periodic clause-DB digest (numeric value).
+/// `NIXIE_DB_DIGEST=<step>` – periodic clause-DB digest (numeric value).
 pub(crate) fn db_digest_step() -> Option<u64> {
     static FLAG: OnceLock<Option<u64>> = OnceLock::new();
     *FLAG.get_or_init(|| {
@@ -96,7 +96,7 @@ pub(crate) fn db_digest_step() -> Option<u64> {
     })
 }
 
-/// `NIXIE_CWRITE=<var>` — clause-write watch trace for one variable.
+/// `NIXIE_CWRITE=<var>` – clause-write watch trace for one variable.
 pub(crate) fn cwrite_target() -> Option<u32> {
     static FLAG: OnceLock<Option<u32>> = OnceLock::new();
     *FLAG.get_or_init(|| {

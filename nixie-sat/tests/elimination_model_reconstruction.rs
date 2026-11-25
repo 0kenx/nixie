@@ -17,7 +17,7 @@
 //!   representative (`1268 ≡ ¬1267` falsified `(1267 ∨ 1268)`).
 //!
 //! On `summle_X4053` seed 2 the old reconstruction exported a model that
-//! falsified 63 original clauses (the verdict was right — cadical agrees the
+//! falsified 63 original clauses (the verdict was right – cadical agrees the
 //! file is SAT; the *witness* was wrong).  The fix is the Sörensson/IJCAR'12
 //! extension stack (cadical `External::extend`): every clause retired at an
 //! elimination and both implications of every ELS equivalence are pushed
@@ -25,10 +25,10 @@
 //! the witness of falsified entries.
 //!
 //! These tests generate structured random formulas (implication chains over
-//! shared variables — the shape that makes BVE, the sweep and ELS fire and
+//! shared variables – the shape that makes BVE, the sweep and ELS fire and
 //! cross-retire obligations), solve with the inprocessing default path, and
 //! verify the exported model against **all original clauses** with a
-//! **totality** check — the exact property the corpus screens enforce
+//! **totality** check – the exact property the corpus screens enforce
 //! externally.  Small instances are additionally brute-force verdict-checked.
 
 use nixie_sat::{ConfigPreset, Solver, SolverConfig, SolverResult};
@@ -58,7 +58,7 @@ impl Lcg {
 /// satisfiable by construction while still looking like hard structured
 /// SAT to the solver.  The chain shape is what makes eliminations retire
 /// clauses of *other* variables and the sweep/ELS fold equivalences over
-/// unconstrained representatives — the obligation-crossing mechanisms the
+/// unconstrained representatives – the obligation-crossing mechanisms the
 /// old reconstruction mishandled.  Planted instances also make a
 /// `Sat` verdict *checkable* (the plant itself is a witness), so a wrong
 /// `Unsat` can never hide behind "instance was probably unsat".
@@ -147,7 +147,7 @@ fn solve_and_verify(seed: u64, vars: usize, chains: usize, extra: usize) -> (u64
         }
     }
     // The plant is a concrete witness, so anything but `Sat` is a wrong
-    // verdict — a far stronger check than the skipped brute force.
+    // verdict – a far stronger check than the skipped brute force.
     let result = solver.solve();
     assert_eq!(
         result,
@@ -167,7 +167,7 @@ fn solve_and_verify(seed: u64, vars: usize, chains: usize, extra: usize) -> (u64
     match result {
         SolverResult::Sat => {
             // The property under test: the exported model is TOTAL and
-            // satisfies every original clause — including the literals of
+            // satisfies every original clause – including the literals of
             // clauses eliminated away from the live database, which only
             // correct reconstruction can cover.
             for (i, clause) in clauses.iter().enumerate() {

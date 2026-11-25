@@ -1,8 +1,8 @@
 //! Constant-divisor division identities (Z3 `bv_rewriter` parity).
 //!
 //! The term builders collapse `x udiv/urem/sdiv/srem c` for constant `c`:
-//! by 0 and 1 into their total-semantics values, and — the rule that
-//! removes entire divider networks — by powers of two into a shift, an
+//! by 0 and 1 into their total-semantics values, and – the rule that
+//! removes entire divider networks – by powers of two into a shift, an
 //! and-mask, or the signed equivalent.  These identities live at term
 //! construction, so the parser, the preprocessor and every rewriter see
 //! the collapsed form.
@@ -96,7 +96,7 @@ fn urem_by_zero_and_one() {
 
 #[test]
 fn sdiv_by_zero_is_total() {
-    // `x sdiv 0 = ite(x <s 0, 1, all-ones)` — the SMT-LIB total reading,
+    // `x sdiv 0 = ite(x <s 0, 1, all-ones)` – the SMT-LIB total reading,
     // matching the constant folder's case split.
     let (pos, neg) = pair(
         8,
@@ -117,7 +117,7 @@ fn srem_by_zero_and_one() {
 }
 
 /// The top-limb case: a divisor of `2^(w-1)` (the sign bit position) is a
-/// power of two with `k = w-1 < w` — must still rewrite to the shift, not
+/// power of two with `k = w-1 < w` – must still rewrite to the shift, not
 /// fall through to a divider network.
 #[test]
 fn udiv_sign_bit_divisor() {
@@ -141,7 +141,7 @@ fn udiv_non_power_of_two_stays_exact() {
         .find(|t| t.trim().contains("sat"))
         .cloned()
         .unwrap_or_default();
-    // x = 3: 3 udiv 3 = 1 but 3 >>l 1 = 1 — equal; x = 4: 4/3 = 1, 4>>1 = 2 —
+    // x = 3: 3 udiv 3 = 1 but 3 >>l 1 = 1 – equal; x = 4: 4/3 = 1, 4>>1 = 2 –
     // differ.  So the equality is satisfiable (x = 3) but not valid.
     assert!(v.trim() == "sat", "expected sat, got {v}");
 }

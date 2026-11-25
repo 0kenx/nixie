@@ -38,7 +38,7 @@ def analyze(directory, output):
     def cost(name,arm):
         row = next(r for r in rows if r['case'] == name and r['arm'] == arm+'-total')
         value = row['instructions_median']
-        return f"{value/1e6:.2f} ({row['solved']}/10)" if value is not None else '— (0/10)'
+        return f"{value/1e6:.2f} ({row['solved']}/10)" if value is not None else '– (0/10)'
     for family in run.FAMILIES:
         for size in (2,4,8,16):
             name = f'{family}-{size}'
@@ -55,7 +55,7 @@ def analyze(directory, output):
             if any(r['verdict']['answer'] == 'unknown' for r in (nixie,ref)): continue
             ratios.append(nixie['metrics']['primary']['value']/ref['metrics']['primary']['value'])
         ratio = math.exp(statistics.mean(map(math.log,ratios))) if ratios else None
-        lines.append(f'| {arm} | {len(ratios)} | {ratio:.3f} |' if ratio is not None else f'| {arm} | 0 | — |')
+        lines.append(f'| {arm} | {len(ratios)} | {ratio:.3f} |' if ratio is not None else f'| {arm} | 0 | – |')
     lines += ['', '| Case | Encode M instructions | Check M instructions | Extra validation instructions | Backend terms |',
               '|---|---:|---:|---:|---:|']
     for family in run.FAMILIES:
@@ -63,7 +63,7 @@ def analyze(directory, output):
             name = f'{family}-{size}'
             def region(phase,scale):
                 row = next((r for r in rows if r['case'] == name and r['arm'] == 'nixie-'+phase),None)
-                if row is None or row['instructions_median'] is None: return '—'
+                if row is None or row['instructions_median'] is None: return '–'
                 return f"{row['instructions_median']/scale:.3f}"
             row = next(r for r in rows if r['case'] == name and r['arm'] == 'nixie-total')
             lines.append(f"| {name} | {region('encode',1e6)} | {region('solve',1e6)} | {region('validate',1)} | {row['backend_terms']} |")

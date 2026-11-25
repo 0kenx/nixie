@@ -172,7 +172,7 @@ end algorithm; *)
 ",
     ));
     // The `A` step branches; each branch updates pc toward its own next
-    // label — the THEN toward B, the ELSE to Done.
+    // label – the THEN toward B, the ELSE to Done.
     let a = def_of(&text, "A");
     assert!(a.contains("IF x = 0"), "test missing: {a}");
     assert!(a.contains("\"B\""), "then-branch must target B: {a}");
@@ -356,7 +356,7 @@ Stale == TRUE
     );
 }
 
-// ---- declines --------------------------------------------------------------
+// ======== declines ========
 
 #[test]
 fn procedures_are_declined_not_approximated() {

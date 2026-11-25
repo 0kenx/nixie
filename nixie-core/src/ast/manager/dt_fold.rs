@@ -4,7 +4,7 @@
 //! Datatypes are free (SMT-LIB 2.6 §4.2.3): `(hd (cons a b))` is `a` and
 //! `((_ is cons) (cons a b))` is `true` in every model, `((_ is nil) (cons a
 //! b))` is `false`.  Only a selector of the constructor that built the value
-//! is determined; `(hd nil)` is left alone — SMT-LIB leaves it unspecified.
+//! is determined; `(hd nil)` is left alone – SMT-LIB leaves it unspecified.
 //!
 //! Folding in the builder reaches selectors nested inside other applications.
 //! Substitution uses the same entry points; `fold_constructor_accessors` also

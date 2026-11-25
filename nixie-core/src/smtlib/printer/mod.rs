@@ -952,7 +952,7 @@ mod tests {
         );
 
         // One literal operand that is not an identity element: still no fold
-        // for every operation except the const-distance shift — under the
+        // for every operation except the const-distance shift – under the
         // shift-wiring default (`NIXIE_BV_SHIFT_WIRING`, on by default),
         // `x << k` rewrites to `concat(x[w-1-k:0], 0^k)` (Z3's numeral
         // case), so `bvshl x 3` legitimately IS a concat spine; with the

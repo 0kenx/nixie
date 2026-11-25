@@ -142,7 +142,7 @@ impl Solver {
         // This handles cases where a variable is equated to a constant
         //
         // `array_alias_eqs` collects the committed-true array-sorted
-        // equalities whose NEITHER side is a store — `f = g` — for the
+        // equalities whose NEITHER side is a store – `f = g` – for the
         // second pass below the loop; see the deferral note in the alias
         // arm.
         let mut array_alias_eqs: Vec<(TermId, TermId)> = Vec::new();
@@ -160,7 +160,7 @@ impl Solver {
             if let Constraint::Eq(lhs, rhs) = constraint {
                 // An **array-sorted** equality: `x = (store … )`. Neither side
                 // is a constant in the arithmetic sense, so the code below
-                // skips it — and then nothing in the model answers for `x`,
+                // skips it – and then nothing in the model answers for `x`,
                 // and every `select` through it is unreducible. That is what
                 // `docs/studies/2026-09-14-no-model-for-array-variables.md`
                 // recorded: an array-sorted variable had no value at all.
@@ -174,7 +174,7 @@ impl Solver {
                 // A **string** equality, `x = "issued"`. The selection below
                 // recognises arithmetic, bit-vector and uninterpreted-function
                 // terms only, so a string-sorted name fell through and took a
-                // default of `""` later — a model value contradicting the very
+                // default of `""` later – a model value contradicting the very
                 // assertion that pinned it, which is what
                 // `docs/studies/2026-09-14-model-completion-overrides-\
                 // datatype-fields.md` recorded.
@@ -220,11 +220,11 @@ impl Solver {
                             model.set(name, value);
                         }
                     } else {
-                        // Neither side is a store — a pure ALIAS, `f = g`.
+                        // Neither side is a store – a pure ALIAS, `f = g`.
                         // Deferred to a second pass below the loop: the order
                         // this map iterates is arbitrary, and an alias firing
                         // before the name's store equality would record
-                        // `g -> f` and (first-wins) block `g -> store(…)` —
+                        // `g -> f` and (first-wins) block `g -> store(…)` –
                         // strictly less information for every reader.
                         array_alias_eqs.push((*lhs, *rhs));
                     }
@@ -262,14 +262,14 @@ impl Solver {
                     TermKind::IntConst(n) => {
                         if let Some(val) = n.to_i64() {
                             // Sort-honest spelling: a REAL-sorted variable
-                            // pinned by an integer literal (`(= yr 5)` —
+                            // pinned by an integer literal (`(= yr 5)` –
                             // the parser builds `IntConst(5)` for the
                             // numeral) gets `RealConst(5)`, not the
                             // integer spelling.  The arith-value path
                             // below already had this rule (its comment:
                             // a Real term's integer-ratio value must be
                             // `RealConst`); the equality-extraction path
-                            // predated it and echoed `((yr 5))` — valid
+                            // predated it and echoed `((yr 5))` – valid
                             // in a Real position, but not the sort's
                             // canonical spelling and inconsistent with
                             // every other Real entry.
@@ -304,11 +304,11 @@ impl Solver {
         // **Second pass: array aliases** (`f = g`, neither side a store).
         // The equality is committed true in this model, so the two names
         // denote the same array and recording one as the other's value
-        // states exactly what the query forced — the same justification the
+        // states exactly what the query forced – the same justification the
         // store arm runs under, and the one
         // `docs/studies/2026-09-14-no-model-for-array-variables.md` gives for
-        // chains. Without this pass an UNCHANGED-style variable — `x@2 =
-        // x@1`, no store anywhere — has no value at all, every read of it is
+        // chains. Without this pass an UNCHANGED-style variable – `x@2 =
+        // x@1`, no store anywhere – has no value at all, every read of it is
         // unreducible, and a reader completing it (the TLA+ trace decoder)
         // has to invent a point value the taken branch may disagree with.
         //
@@ -353,7 +353,7 @@ impl Solver {
                 // NOT own: both `value` and the exact channel below
                 // already declined any term the tableau has a value for,
                 // and a DL potential for a term outside the DL graph is a
-                // fabrication — observed as a published `0` for a wide
+                // fabrication – observed as a published `0` for a wide
                 // basic resting at `-9.2e18`, which the evaluator refuted
                 // (`Genuine`) and the blocking loop degraded to
                 // `unknown`.
@@ -363,7 +363,7 @@ impl Solver {
                     // Pure-DL routing: the simplex never saw these atoms,
                     // so the dense closure is the value provider (its
                     // negated-row-minimum assignment satisfies every
-                    // asserted edge — see `DenseDlCore::value`).  On the
+                    // asserted edge – see `DenseDlCore::value`).  On the
                     // sparse engine's pure route the multi-source
                     // distances play the same role (a feasible potential
                     // for every asserted difference constraint, refreshed
@@ -398,14 +398,14 @@ impl Solver {
             } else if let Some(exact) = self.arith.value_exact(term) {
                 // Wide-value publication: the term's exact value is known
                 // but does not fit `Rational64` (a wide basic's own
-                // re-derived value — e.g. `xr = -3·(2^63+7)/13` over
+                // re-derived value – e.g. `xr = -3·(2^63+7)/13` over
                 // QF_LRA, whose numerator alone exceeds `i64`).  Publish
                 // it as a TERM the evaluator handles exactly: REAL
                 // division `(/ numer denom)` for Real sorts (an `rdiv`
-                // node evaluates exactly in the certifier — the INTEGER
+                // node evaluates exactly in the certifier – the INTEGER
                 // `div` constructor would evaluate to the FLOOR, a
                 // published witness violating its own assertion), and the
-                // plain numeral for Int sorts (an exact integral value —
+                // plain numeral for Int sorts (an exact integral value –
                 // `value_exact` declines fractional ones).
                 let is_int_sort = manager
                     .get(term)
@@ -430,7 +430,7 @@ impl Solver {
                 // Unconstrained UF ARGUMENTS default pairwise-distinct
                 // (unless EUF-merged): two free arguments both defaulting
                 // to 0 collide the applications' arguments in every
-                // printed model while the core never decided them — the
+                // printed model while the core never decided them – the
                 // UCLID-pred wrong-model class (`fdi0 = emi0 = 0` pinned,
                 // the structurally identical ite chains over
                 // `ifield(fdi0)` / `ifield(emi0)` then demanding opposite
@@ -455,14 +455,14 @@ impl Solver {
         // EUF-class reconciliation for arith-pinned entries: two terms the
         // congruence closure MERGED (e.g. `ifield(fdi0)` and `ifield(emi0)`
         // once `fdi0 = emi0` committed) are one value in any real model,
-        // but the tableau pins each term's OWN value above — printing both
+        // but the tableau pins each term's OWN value above – printing both
         // contradicts the merge itself (found on UCLID-pred `DLX1C0`: the
         // model pinned `fdi0 = emi0 = 0` yet the merged applications read
         // `-1` and `4`).  Overwrite every member's entry with its class
         // representative's value.
         //
         // OCCURS GUARD: the representative's value may *mention* the member
-        // — an array-sorted class whose members hold each other's store
+        // – an array-sorted class whose members hold each other's store
         // chains (`x@1 -> store(x@0,…)` for a merged `x@0 ≈ x@1`) would
         // otherwise install `x@0 -> store(x@0,…)`, a value containing its
         // own name.  `Model::eval` on such an entry ping-pongs through the
@@ -500,7 +500,7 @@ impl Solver {
         }
 
         // **EUF-representative export** (the theory layer's word on
-        // uninterpreted-sorted classes — the mapped route for the
+        // uninterpreted-sorted classes – the mapped route for the
         // pigeonhole completeness gap, see the sixteenth follow-up):
         // every internalized term of an uninterpreted sort whose class
         // carries no pinned value is recorded as its class
@@ -508,7 +508,7 @@ impl Solver {
         // (a declared constant `c0` of sort `S`, a free application
         // `f(c0)`) has *no* value in the readback, the completion's
         // universe collection sees "nothing about this sort", and the
-        // synthetic seeder mints `u!0..u!7` instead — a universe of
+        // synthetic seeder mints `u!0..u!7` instead – a universe of
         // phantoms the problem's own enumeration axiom
         // (`forall x. x = c0 || x = c1 || x = c2`) then falsifies at
         // every point, while the real elements never enter the domain
@@ -522,24 +522,24 @@ impl Solver {
         // Soundness: a merge the e-graph committed is a consequence of
         // the asserted constraints, so `term -> rep` is a fact, and a
         // self-representative assignment (`rep -> rep`) is trivially
-        // true — the export never fabricates a value.
+        // true – the export never fabricates a value.
         //
         // Gate (the sixteenth follow-up's lesson, refined): the export
         // covers only terms **mentioned in the goal's assertions**.
         // The decoded false-`sat` pollution channel ran through the
-        // *search's own* terms — instance-minted compounds whose
+        // *search's own* terms – instance-minted compounds whose
         // exported equality values re-keyed onto minted elements and
         // mutated rows post-mint; those terms appear in no assertion,
         // so a mention gate closes the channel without declining the
         // export on table goals wholesale.  Declining wholesale (the
         // first cut, gated on the static table test) kept the
-        // *assertion-mentioned* compounds value-less too — and those
+        // *assertion-mentioned* compounds value-less too – and those
         // are exactly the terms the refutation side needs: the
         // extensional family's `a = difference(union(a b), b)` never
         // conflicts, because the falsifier mining's `value_to_term`
         // never maps the semantic values back to the literal compounds,
-        // so the instance at the literal tuple `(w, union(a b), b)` —
-        // the one the ground solver refutes through — can never emit
+        // so the instance at the literal tuple `(w, union(a b), b)` –
+        // the one the ground solver refutes through – can never emit
         // (measured: `unknown` on a goal z3 refutes).  With the mention
         // gate, the compounds carry their e-graph values, the mining
         // binds the literal tuple, and the ground conflict lands.
@@ -559,11 +559,11 @@ impl Solver {
                 };
                 // The mention filter is the *mining channel's* gate (a
                 // table goal must only ever bind the goal's own
-                // compounds — instance-minted ones would re-mint the
+                // compounds – instance-minted ones would re-mint the
                 // compound chase the tables exist to kill).  The
                 // non-table export takes every internalized term: the
                 // pigeonhole universe needs the *instantiated* classes
-                // too (`f(c0)` appears in no assertion literally — the
+                // too (`f(c0)` appears in no assertion literally – the
                 // injectivity axiom mentions `f(x)` under a binder).
                 if table_goal && !mentioned.contains(&term) {
                     continue;
@@ -725,8 +725,8 @@ impl Solver {
         // literals and the field values the passes above have already recorded.
         // Field hints for the datatype repair: when a committed-false
         // equality names two selectors of the SAME field (`(fst p)` vs
-        // `(fst q)`), separating that field — not whichever the repair
-        // happens to pick first — is what retires the collision (and each
+        // `(fst q)`), separating that field – not whichever the repair
+        // happens to pick first – is what retires the collision (and each
         // blocked round otherwise re-picks a different field and the loop
         // never converges).
         let mut dt_field_hints: FxHashMap<TermId, Vec<String>> = FxHashMap::default();
@@ -831,19 +831,19 @@ impl Solver {
     /// decided it. `Context::declare_const` asserts a closure axiom
     /// `(or (= m RNE) (= m RNA) (= m RTP) (= m RTN) (= m RTZ))` for every
     /// declared rounding-mode constant, so *any* satisfying assignment sets at
-    /// least one of those five equality atoms true — and the atom that is true
+    /// least one of those five equality atoms true – and the atom that is true
     /// names the mode the solve chose.  Reading it back is therefore exact and
     /// jointly consistent across several rounding-mode constants for free:
     /// the assignment came from one model, not from five independent guesses.
     ///
     /// Getting this right matters concretely. Without it a constant the model
     /// pinned would fall through to `Context::default_value`, which reports the
-    /// sort's default `roundNearestTiesToEven` — so
+    /// sort's default `roundNearestTiesToEven` – so
     /// `(assert (not (= m RNE)))` would answer `sat` and then print a "model"
     /// that falsifies its own assertion.
     fn extract_rounding_mode_model(&self, model: &mut Model, manager: &mut TermManager) {
-        // Nothing to extract, and — the reason this guard is first rather than
-        // a mere optimization — nothing to *build*: `mk_rounding_mode` below
+        // Nothing to extract, and – the reason this guard is first rather than
+        // a mere optimization – nothing to *build*: `mk_rounding_mode` below
         // would otherwise set the manager's `rounding_mode_used` flag on every
         // solve, and `Context::check_sat_core` reads that flag to decide
         // whether the five-modes distinctness axiom is needed. A script with
@@ -1011,13 +1011,13 @@ impl Solver {
     /// `size(C(fields)) = 1 + Σ size(datatype fields)`.
     ///
     /// The measure is only ever *constrained* by the axioms (non-negative,
-    /// `outer > inner`, congruence), never defined — so the model's entry is
+    /// `outer > inner`, congruence), never defined – so the model's entry is
     /// whatever the tableau defaulted it to, and a committed-false size
     /// equality reported by the collision gate could not be trusted OR
     /// repaired.  Deriving from the reconstruction satisfies every constraint
     /// (strictly greater than each datatype child, ≥ 0, equal for equal
     /// values) and makes equal derived sizes on a committed-false equality a
-    /// genuine "the search must separate the trees" signal — which the
+    /// genuine "the search must separate the trees" signal – which the
     /// blocking loop can act on.
     fn rederive_size_measures(&mut self, model: &mut Model, manager: &mut TermManager) {
         const DT_SIZE_PREFIX: &str = super::dt_axioms::DT_SIZE_MEASURE;
@@ -1123,11 +1123,11 @@ impl Solver {
             }
         }
 
-        // ===== Size-splitting repair =====
+        // ======== Size-splitting repair ========
         // A committed-false size equality whose two sides derived EQUAL
         // canonical sizes is not necessarily a refutation: distinct values
         // may carry distinct sizes (the congruence axiom forces equal sizes
-        // only for EQUAL terms), so the model is free to split them — which
+        // only for EQUAL terms), so the model is free to split them – which
         // is also what the search's committed atom asks for.  Override one
         // side by +1 and re-derive everything through the override: ancestor
         // sizes recompute with the bumped child, which re-establishes
@@ -1135,7 +1135,7 @@ impl Solver {
         //
         // Soundness guard: only bump a side whose measured term's
         // reconstructed VALUE is distinct from every other measured term's
-        // value — a shared value means some committed-true term equality
+        // value – a shared value means some committed-true term equality
         // may hold between the two sides' terms, and congruence would then
         // require the sizes to stay equal.
         if std::env::var("NIXIE_NO_SIZE_SPLIT").is_err() {
@@ -1225,7 +1225,7 @@ impl Solver {
     /// Re-derive every `DtSelector` term's model entry from its argument's
     /// current constructor value (`sel(C(a…)) = a_i`), iterating to a
     /// fixpoint so selector chains settle.  This is what makes a separated
-    /// datatype value propagate to the whole derived selector graph — the
+    /// datatype value propagate to the whole derived selector graph – the
     /// missing piece that left recognisor/congruence selector terms colliding
     /// after `separate_disequal_dt_values` had already separated the
     /// constructors themselves.
@@ -1272,11 +1272,11 @@ impl Solver {
                     continue;
                 };
                 // Fold order: (1) the argument term is ITSELF a literal
-                // constructor application — `sel(C(a…))` is `a_i`
+                // constructor application – `sel(C(a…))` is `a_i`
                 // syntactically, no model entry needed (the pure-equality
                 // path never reconstructs axiom-internal constructor terms,
                 // so their selectors have nothing else to read); (2) the
-                // argument's model VALUE is a constructor — read the field
+                // argument's model VALUE is a constructor – read the field
                 // from it.
                 let (constructor, args): (nixie_core::interner::Spur, Vec<TermId>) =
                     match manager.get(arg).map(|n| n.kind.clone()) {
@@ -1331,18 +1331,18 @@ impl Solver {
     }
 
     /// Pull apart the model entries of any committed-false equality whose two
-    /// sides rendered identically — the scalar/array analogue of
+    /// sides rendered identically – the scalar/array analogue of
     /// [`Self::separate_disequal_dt_values`].
     ///
     /// Found while landing the gate's collision half (2026-08-28): a
-    /// committed-false `(= (select a k) (select b k))` — the array
-    /// extensionality witness — collided in the printed model because the
+    /// committed-false `(= (select a k) (select b k))` – the array
+    /// extensionality witness – collided in the printed model because the
     /// reads' entries came from the unconstrained-array defaulting, and the
     /// numeric trichotomy could not help: the Select terms have no arithmetic
     /// presence, so a strict bound over them constrains nothing the model
     /// builder reads.  The honest repair is at the value level and only
     /// there: when the core committed `x != y` and the model prints them
-    /// equal, re-value ONE side — provided that side is pinned by nothing
+    /// equal, re-value ONE side – provided that side is pinned by nothing
     /// (it occurs in no assertion subterm, and in no committed-TRUE equality
     /// atom whose partner would then disagree with it).  A side anything
     /// constrains is left alone and the pair is skipped; the gate's collision
@@ -1350,7 +1350,7 @@ impl Solver {
     /// never wrongly as `Sat`.
     fn separate_committed_disequalities(&self, model: &mut Model, manager: &mut TermManager) {
         // Committed-true atoms' FULL SUBTERM CLOSURE: re-valuing any of them
-        // would break a live equality — not only the atom's own sides, but
+        // would break a live equality – not only the atom's own sides, but
         // anything under them (a datatype recognisor commits
         // `p = mk-pair(fst p, snd p)`; its `fst p` subterm is as pinned as
         // the sides are, and bumping it would leave the model disagreeing
@@ -1398,7 +1398,7 @@ impl Solver {
             // Datatype-sorted sides are the datatype repair's province: their
             // model entries form a derived value graph (constructor entries,
             // selector-of-constructor entries, recognisor chains) that a bare
-            // bump desynchronises — the committed-true re-verification below
+            // bump desynchronises – the committed-true re-verification below
             // would revert it anyway.  Extending this pass to re-derive that
             // graph is the tracked next step (see the study).
             let dt_sorted = |t: TermId| {
@@ -1423,7 +1423,7 @@ impl Solver {
                 continue; // already separated
             }
             // Pick the side to re-value: one no ASSERTION pins.  The
-            // committed-true atoms no longer block outright — the bump's
+            // committed-true atoms no longer block outright – the bump's
             // rebuild propagation keeps constructor-valued ones true, and the
             // post-bump re-verification below reverts anything that would
             // actually flip one to false.
@@ -1623,7 +1623,7 @@ impl Solver {
             // rooting the wrong-datatype-witness bug to the bottom,
             // 2026-08-28):
             //
-            // * DISEQUALITY comes from the SAT core's committed polarity —
+            // * DISEQUALITY comes from the SAT core's committed polarity –
             //   the core committing `(= a b)` to false IS the fact "the
             //   search decided these distinct", and it is knowable even
             //   when EUF never interned the terms (the first-round shape of
@@ -1993,8 +1993,8 @@ impl Solver {
         let mut informed = false;
         for (index, name) in names.iter().enumerate() {
             let tester = manager.mk_dt_tester(name, term);
-            // Tester polarity comes from the SAT core's final assignment —
-            // the trail — with the atom's model entry as a fallback, the same
+            // Tester polarity comes from the SAT core's final assignment –
+            // the trail – with the atom's model entry as a fallback, the same
             // source-of-truth rule `decided_dt_equalities` follows: whether
             // `build_model` happened to record a Boolean entry for the atom
             // is an artifact of the search trajectory (one the numeric
@@ -2522,7 +2522,7 @@ fn dt_fragment_value(term: TermId, model: &Model, manager: &TermManager) -> Opti
                         .is_some_and(|node| manager.sorts.is_datatype(node.sort)) =>
                 {
                     let (left, right) = (*left, *right);
-                    // Only when the datatype is *pure* — every constructor
+                    // Only when the datatype is *pure* – every constructor
                     // field itself datatype-sorted. A tuple over Int/Bool
                     // (the `(_ Tuple ...)` sort) has components this
                     // fragment does not own: its entries are constructor
@@ -2840,8 +2840,8 @@ fn is_array_sorted(manager: &TermManager, t: TermId) -> bool {
 
 /// Whether `needle` appears in the array structure of `haystack`.
 ///
-/// Belt and braces. `Model::eval` reads an assignment and stops — it does not
-/// descend into it — so a self-referential value cannot make it recurse, and
+/// Belt and braces. `Model::eval` reads an assignment and stops – it does not
+/// descend into it – so a self-referential value cannot make it recurse, and
 /// `select_in`'s walk is bounded anyway. This refuses to record one regardless,
 /// because a model entry that says a term is built from itself is not a value.
 ///
@@ -2852,11 +2852,11 @@ fn is_array_sorted(manager: &TermManager, t: TermId) -> bool {
 /// The alias-recording arm of the equality loop can only record what it sees
 /// at the time: if `f = g` is visited before `g = (store …)`, `f` gets the raw
 /// name `g`, and a consumer that prints the entry verbatim (`get-model`,
-/// `get-value`) shows `f = ?` while `g` shows its chain — two different values
+/// `get-value`) shows `f = ?` while `g` shows its chain – two different values
 /// for names one committed-true equality pins as the same array. One bounded
 /// fixpoint over the table resolves every such entry to the first non-name
-/// value on its path (a cycle — a malformed model, since recording refuses
-/// self-occurrence — leaves the entry untouched rather than spinning).
+/// value on its path (a cycle – a malformed model, since recording refuses
+/// self-occurrence – leaves the entry untouched rather than spinning).
 ///
 /// Scoped to ARRAY-sorted keys and values deliberately: uninterpreted-sort
 /// entries map terms to class representatives whose *names* are the intended
@@ -2899,7 +2899,7 @@ fn dereference_array_aliases(model: &mut Model, manager: &TermManager) {
             // The dereferenced value may mention the entry's own key (the
             // self-referential alias shape): installing it would recreate
             // exactly the self-mention the recording pass declined, so the
-            // raw name entry stands (its point readings still resolve —
+            // raw name entry stands (its point readings still resolve –
             // `select_in` follows it one hop).
             && !occurs_in(manager, term, value)
         {

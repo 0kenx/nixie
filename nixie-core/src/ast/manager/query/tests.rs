@@ -840,14 +840,14 @@ mod pattern_free_var_tests {
 // ======== let-sharing for printing (2026-09-19, the nec-smt printer fix) ========
 
 /// `share_for_printing` must lift the DAG's multiply-referenced compound
-/// subtrees into `let` bindings so the printed form is linear in the DAG —
+/// subtrees into `let` bindings so the printed form is linear in the DAG –
 /// a doubling chain (`t_{k+1} = (+ t_k t_k)`) unfolds to 2^n tree nodes,
 /// and printing it unshared never finishes (the nec-smt residual's shape:
 /// a 662-DAG-node goal whose tree unfolding is ~10^16 nodes).
 ///
 /// The first version of this pass had a post-order bug worth pinning
 /// against: sizes were combined over a REVERSED PRE-ORDER (parents before
-/// children), undercounting every subtree — the candidate set was then
+/// children), undercounting every subtree – the candidate set was then
 /// mis-ordered and the bindings' RHS kept un-cut shared subtrees, so a
 /// 407-DAG-node binding printed gigabytes.  The true sizes are
 /// exponential; the shared print is kilobytes.
@@ -858,7 +858,7 @@ fn share_for_printing_bounds_a_doubling_chain() {
     let p = m.mk_var("p", m.sorts.bool_sort);
     let zero = m.mk_int(0);
     let big = m.mk_int(65536);
-    // t_0 = (ite p 0 65536); t_{k+1} = (+ t_k t_k) — 26 levels: the DAG
+    // t_0 = (ite p 0 65536); t_{k+1} = (+ t_k t_k) – 26 levels: the DAG
     // holds ~80 nodes, the tree unfolding holds ~2^27.
     let mut t = m.mk_ite(p, zero, big);
     for _ in 0..26 {
@@ -889,7 +889,7 @@ fn share_for_printing_bounds_a_doubling_chain() {
     assert!(!bindings.is_empty(), "the shared compounds must bind");
     // The body is the chain's top with its shared children replaced by
     // binding variables: an Add over two Var leaves (the same binding
-    // name twice — the sharing made visible).
+    // name twice – the sharing made visible).
     match m.get(body).map(|d| d.kind.clone()) {
         Some(TermKind::Add(args)) => {
             let all_named = args
@@ -923,7 +923,7 @@ fn share_for_printing_bounds_a_doubling_chain() {
 
 // ======== ctx_simplify (2026-09-19, the context-dependent pass) ========
 
-/// Every rule of the context pass, verified in isolation — the shapes the
+/// Every rule of the context pass, verified in isolation – the shapes the
 /// perf-gap route's parameter sweep named (`push_ite`'s equality half +
 /// `ite_extra_rules`' connections) under a literal context.
 #[test]
@@ -973,7 +973,7 @@ fn ctx_simplify_rules_in_isolation() {
     assert!(is_const(&m, out5, TermKind::False));
 
     // The complementary direction: under p the ite selects 3, and
-    // 5 ≠ 3 refutes — the cascade closes on the THEN side too (the
+    // 5 ≠ 3 refutes – the cascade closes on the THEN side too (the
     // pass decides in BOTH directions, never strengthens).
     let goal6 = m.mk_and([p, eq]);
     let out6 = m.ctx_simplify(goal6);
@@ -982,7 +982,7 @@ fn ctx_simplify_rules_in_isolation() {
         "p forces the ite to 3, and 5 ≠ 3 refutes the conjunction"
     );
     // The honest undecided shape with a free p: `(= 5 (ite p 5 7))`
-    // decides per branch (true / false) — the connection collapses it
+    // decides per branch (true / false) – the connection collapses it
     // to exactly `p`, not to a constant.
     let eq7 = m.mk_ite(p, i5, i7);
     let eq7 = m.mk_eq(i5, eq7);
@@ -1210,7 +1210,7 @@ fn solve_eq_rules_preserve_equivalence() {
 // harness (see `eq_ite_rules`): every test below pins a rule (or a bug
 // this port actually had) in isolation.
 
-/// R2 — the then-branch cannot produce `v`: the equality moves down the
+/// R2 – the then-branch cannot produce `v`: the equality moves down the
 /// chain accumulating `¬c`, and the extracted guard meets the default's
 /// equality inside the SAME conjunction: `(= 5 (ite (= x 5) 3 x))` is
 /// refuted by pure value reasoning (x=5 selects 3; x≠5 selects x≠5).
@@ -1254,7 +1254,7 @@ fn solve_eq_r2_descends_nested_selects() {
     );
 }
 
-/// R3 — the then-branch EQUALS `v`: `(= 5 (ite (= x 5) 5 7))` connects
+/// R3 – the then-branch EQUALS `v`: `(= 5 (ite (= x 5) 5 7))` connects
 /// to exactly the guard `(= x 5)` (z3's `(or (= e v) c)` with the
 /// constant branch decided).
 #[test]
@@ -1272,7 +1272,7 @@ fn solve_eq_r3_connects_to_the_guard() {
 }
 
 /// R6's frame carried the wrong else-side in the first port (the t-side
-/// was solved twice and the else-branch silently dropped — `(= 0 (ite c
+/// was solved twice and the else-branch silently dropped – `(= 0 (ite c
 /// x (ite p 4 -3)))` under c=false, p=true must NOT fold to `(= 0 x)`).
 /// Pinned as an equivalence at the exposing assignment.
 #[test]
@@ -1285,7 +1285,7 @@ fn solve_eq_r6_keeps_the_else_side() {
     let four = m.mk_int(4);
     let minus3 = m.mk_int(-3);
     // c = (<= y x); at y=1, x=0: c is false, so the select takes the
-    // else (ite p 4 -3) = 4 at p=true: (= 0 4) is FALSE — the original
+    // else (ite p 4 -3) = 4 at p=true: (= 0 4) is FALSE – the original
     // term is (not ... (= 0 sel)) = true there.  A fold to (= 0 x)
     // gives (not (= 0 0)) = false: the wrong answer.
     let c = m.mk_le(y, x);
@@ -1318,7 +1318,7 @@ fn solve_eq_r6_keeps_the_else_side() {
     assert!(eval(&mut m, goal));
 }
 
-/// R7 — every leaf of the ite is a value distinct from `v`: the
+/// R7 – every leaf of the ite is a value distinct from `v`: the
 /// equality is false outright.
 #[test]
 fn solve_eq_r7_all_leaves_distinct_refutes() {
@@ -1364,7 +1364,7 @@ fn cmp_ite_rule_distributes_over_the_guard() {
 /// The pre-existing ctx leak this port exposed (a live false-simplify
 /// on main): `ctx_and`'s unwind restored overwritten entries but never
 /// REMOVED fresh ones, so the Or arm's second disjunct walked under the
-/// first disjunct's interior context — `(or (and p q) p)` became
+/// first disjunct's interior context – `(or (and p q) p)` became
 /// `true` (with p false the goal is false).
 #[test]
 fn ctx_and_unwind_removes_fresh_entries() {
@@ -1394,7 +1394,7 @@ fn solve_rules_do_not_refute_satisfiable_selects() {
     let mut m = TermManager::new();
     let x = m.mk_var("x", m.sorts.int_sort);
     let five = m.mk_int(5);
-    // (= 5 (ite (= x 5) 5 x)): x=5 selects 5 — satisfiable, and in
+    // (= 5 (ite (= x 5) 5 x)): x=5 selects 5 – satisfiable, and in
     // fact equivalent to (= x 5).
     let c = m.mk_eq(five, x);
     let sel = m.mk_ite(c, five, x);
@@ -1407,7 +1407,7 @@ fn solve_rules_do_not_refute_satisfiable_selects() {
 
 /// The share-for-printing TOPOLOGICAL tie-break: saturating tree sizes
 /// TIE at `usize::MAX` for every huge compound, and a size-only sort can
-/// then place a parent BEFORE its saturated child — the child is not yet
+/// then place a parent BEFORE its saturated child – the child is not yet
 /// named when the parent's RHS is rebuilt, so it inlines (and its whole
 /// subtree with it).  On the nec-smt large members that inflated the
 /// printed mass to 376 M nodes; the post-order tie-break keeps the
@@ -1422,7 +1422,7 @@ fn share_for_printing_tie_break_keeps_children_first() {
     // The doubling chain (the shape of the existing bound test): every
     // level is referenced twice (refs = 2) and every subtree size
     // DOUBLES, so past ~64 levels all sizes saturate and parent and
-    // child tie at `usize::MAX` — only the post-order index keeps the
+    // child tie at `usize::MAX` – only the post-order index keeps the
     // candidate order children-first.
     let mut t = m.mk_ite(p, zero, one);
     for _ in 0..70 {
@@ -1436,13 +1436,13 @@ fn share_for_printing_tie_break_keeps_children_first() {
     );
     // The linearity pin: each binding's RHS may inline at most its own
     // non-shared children (constants), so the longest RHS text stays in
-    // the tens of characters — never an inlined subtree.
+    // the tens of characters – never an inlined subtree.
     let printer = crate::smtlib::Printer::new(&m);
     for (name, rhs) in bindings.iter() {
         let text = printer.print_term(*rhs);
         assert!(
             text.len() < 256,
-            "binding {name} inlines a subtree ({} chars) — the tie-break failed",
+            "binding {name} inlines a subtree ({} chars) – the tie-break failed",
             text.len()
         );
     }
@@ -1452,7 +1452,7 @@ fn share_for_printing_tie_break_keeps_children_first() {
 /// term depth (the Eq arm's solve expands a shallow chain into a deep
 /// and/or form and re-enters on it), so a ≤512-deep input can recurse
 /// thousands of levels.  Past the budget the walk returns nodes
-/// unchanged — never an overflow.  Pinned on a 1 MiB stack, which the
+/// unchanged – never an overflow.  Pinned on a 1 MiB stack, which the
 /// unbudgeted walk would overflow well before the budget itself trips
 /// on the main stack.
 #[test]
@@ -1461,7 +1461,7 @@ fn ctx_simplify_recursion_budget_returns_instead_of_overflowing() {
         let mut m = TermManager::new();
         let x = m.mk_var("x", m.sorts.int_sort);
         let five = m.mk_int(5);
-        // 400 nested selects — under the 512 entry gate, but the solve
+        // 400 nested selects – under the 512 entry gate, but the solve
         // of the outer equality expands into a 400-deep and/or chain
         // that the walk re-enters level by level.
         let mut sel = x;
@@ -1472,14 +1472,14 @@ fn ctx_simplify_recursion_budget_returns_instead_of_overflowing() {
         }
         let goal = m.mk_eq(sel, five);
         let bottom = m.simplify(goal);
-        // Must RETURN (any result) — the regression is the overflow.
+        // Must RETURN (any result) – the regression is the overflow.
         let _out = m.ctx_simplify(bottom);
     };
     let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         crate::ast::manager::query::tests::run_on_1mib_stack(build_and_walk)
     }))
     .is_ok();
-    // An overflow aborts the process (not a panic) — this assertion
+    // An overflow aborts the process (not a panic) – this assertion
     // only ever runs if the walk returned; its value is that the test
     // EXISTS on the small stack where the regression reproduced.
     assert!(ok);

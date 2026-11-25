@@ -8,7 +8,7 @@
 //! constructors).
 //!
 //! This is `nixie-core`'s self-contained layer, not the datatype solver that
-//! `nixie-solver` runs — that is `nixie_theories::datatype`. It is incomplete:
+//! `nixie-solver` runs – that is `nixie_theories::datatype`. It is incomplete:
 //! finding no conflict here says nothing about satisfiability.
 //!
 //! Reference: Z3's `src/smt/theory_datatype.cpp`
@@ -369,22 +369,22 @@ impl DatatypeTheory {
     ///
     /// Every axiom is emitted as a real term over `manager`:
     ///
-    /// * `ConstructorDistinctness` — a ground instance
+    /// * `ConstructorDistinctness` – a ground instance
     ///   `not (C(v_1, …, v_n) = D(w_1, …, w_m))`, where the `v_i` and `w_j`
     ///   are fresh variables named after the constructor and field position.
     ///   It is one instance, not the universally quantified axiom: assert it
     ///   for the variables you care about, or instantiate it yourself.
-    /// * `SelectorAxiom` — `sel(C(x_1, …, x_n)) = x_i`.
-    /// * `TesterAxiom` — `is_C(C(…)) = true`.
-    /// * `NegativeTesterAxiom` — `not is_C(D(…))`.
-    /// * `Acyclicity` — the conjunction of `t ≠ s` over the proper
+    /// * `SelectorAxiom` – `sel(C(x_1, …, x_n)) = x_i`.
+    /// * `TesterAxiom` – `is_C(C(…)) = true`.
+    /// * `NegativeTesterAxiom` – `not is_C(D(…))`.
+    /// * `Acyclicity` – the conjunction of `t ≠ s` over the proper
     ///   sub-terms `s` of `t` that have the same datatype sort and are
     ///   reachable through registered constructor applications. This is the
     ///   ground part of acyclicity, not the full axiom.
-    /// * `Injectivity` — `C(x⃗) = C(y⃗) ⟹ x_1 = y_1 ∧ … ∧ x_n = y_n`.
+    /// * `Injectivity` – `C(x⃗) = C(y⃗) ⟹ x_1 = y_1 ∧ … ∧ x_n = y_n`.
     ///
     /// Returns `None` when the axiom cannot be built, or when it does not fit
-    /// the terms it names — the emitted formula has to be true, so an axiom
+    /// the terms it names – the emitted formula has to be true, so an axiom
     /// that does not describe its own terms produces nothing rather than a
     /// false one. That covers: a term that is not in `manager` or is not the
     /// constructor application the axiom claims; a datatype that has not been
@@ -558,11 +558,11 @@ impl DatatypeTheory {
     ///
     /// Three rules are applied to a fixpoint over the current classes:
     ///
-    /// * *injectivity* — two applications of the same constructor that are in
+    /// * *injectivity* – two applications of the same constructor that are in
     ///   one class have pairwise equal arguments;
-    /// * *selector application* — `sel(t)` where `t` is known equal to
+    /// * *selector application* – `sel(t)` where `t` is known equal to
     ///   `C(x_1, …, x_n)` and `sel` is `C`'s i-th selector equals `x_i`;
-    /// * *tester application* — `is_C(t)` where `t` is known equal to a
+    /// * *tester application* – `is_C(t)` where `t` is known equal to a
     ///   constructor application is `true` if that constructor is `C`, and
     ///   `false` otherwise.
     ///

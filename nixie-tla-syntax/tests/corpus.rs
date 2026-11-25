@@ -2,7 +2,7 @@
 //!
 //! The seed of the parser differential suite in `docs/TLA_FRONTEND_DESIGN.md`
 //! §5. `tests/corpus/` holds specifications in the style real TLA+ users
-//! write — `DieHard` and `EWD998` are standard examples, `Paxos` exercises the
+//! write – `DieHard` and `EWD998` are standard examples, `Paxos` exercises the
 //! record-set and message-type idiom that protocol specs are built from, and
 //! `Torture` collects the constructs most likely to break a parser.
 //!
@@ -81,7 +81,7 @@ fn set_operators_still_may_not_be_mixed_unparenthesised() {
 /// ```
 ///
 /// Together those are ~900 `.tla` files and are the real acceptance gate from
-/// `docs/TLA_FRONTEND_DESIGN.md` §5 — every construct the parser now handles
+/// `docs/TLA_FRONTEND_DESIGN.md` §5 – every construct the parser now handles
 /// beyond the basics was found by running them. The test **skips** when the
 /// checkouts are absent, so it never fails a clean clone of this repo.
 ///

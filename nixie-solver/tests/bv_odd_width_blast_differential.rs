@@ -7,12 +7,12 @@
 //!
 //! * `(assert (not (= lhs rhs)))` → must be **unsat** (the identity holds);
 //! * `(assert (= lhs rhs))` → must be **sat** (the same identity,
-//!   positively — a blaster that refutes both has a false `unsat`, one
+//!   positively – a blaster that refutes both has a false `unsat`, one
 //!   that satisfies both has a false `sat`).
 //!
 //! Because the inputs are free, the ground constant folder cannot decide
 //! the case: the *bit-blaster* has to build the circuits and the SAT core
-//! has to prove/refute the equality — this is the layer where the
+//! has to prove/refute the equality – this is the layer where the
 //! historical wide-width bugs lived (`bv_wide_soundness.rs`) and where the
 //! reverted structural-rewriting study left a latent, un-root-caused
 //! width-126 interaction (`docs/studies/2026-09-10-bv-structural-rewriting-screen.md`,
@@ -26,7 +26,7 @@ use nixie_solver::{Context, SolverResult};
 
 // ======== deterministic RNG ========
 
-/// xorshift64* — small, seedable, no dependencies.
+/// xorshift64* – small, seedable, no dependencies.
 struct Rng(u64);
 
 impl Rng {
@@ -152,7 +152,7 @@ impl Term {
 /// Build a random term of exactly `width` bits, depth-bounded, over `vars`.
 ///
 /// Concat/extract steps deliberately create *mixed* widths underneath a
-/// target width — extract-of-concat and concat-of-extract at odd offsets
+/// target width – extract-of-concat and concat-of-extract at odd offsets
 /// are the shapes the width-126 bug class lived in.
 fn gen_term(
     rng: &mut Rng,
@@ -291,7 +291,7 @@ fn gen_case(seed: u64) -> IdentityCase {
             what = "concat/extract split";
         }
         // 3. Extract-of-concat at an odd split: the top `aw` bits of
-        // `concat(A, B)` (`A` high, `B` low) are exactly `A` —
+        // `concat(A, B)` (`A` high, `B` low) are exactly `A` –
         // `((_ extract w-1 bw) (concat A B)) ≡ A` for every split.
         2 if width >= 2 => {
             let aw = (rng.below(u64::from(width - 1)) as u32) + 1;
@@ -350,7 +350,7 @@ fn gen_case(seed: u64) -> IdentityCase {
         }
         // 8. Signed division reconstruction: `a = (a sdiv c)·c + (a srem c)`
         //    for a nonzero constant divisor (truncation toward zero keeps
-        //    the equation exact — this is the template aimed at the
+        //    the equation exact – this is the template aimed at the
         //    historical `(bvsdiv s 0)` encoding bug class).
         7 if width <= 33 => {
             let c = rng.below(15) * 2 + 1;
@@ -382,7 +382,7 @@ fn gen_case(seed: u64) -> IdentityCase {
             lhs = format!("(ite (bvult {a} {b}) {rhs} {rhs})");
             what = "ite same branch";
         }
-        // 11. `ite(¬c, X, Y) ≡ ite(c, Y, X)` — selector negation commutes
+        // 11. `ite(¬c, X, Y) ≡ ite(c, Y, X)` – selector negation commutes
         //     the branches.
         10 => {
             let cmp_w = *rng.pick(&[1u32, 3, 9, 33]);
@@ -404,7 +404,7 @@ fn gen_case(seed: u64) -> IdentityCase {
         }
         // 12. Sign extension identity:
         //     `sign_extend(k, T) ≡ ite(msb(T), zero_ext(T) | HIGHMASK, zero_ext(T))`
-        //     — the extension encoders at limb-crossing widths.
+        //     – the extension encoders at limb-crossing widths.
         11 if width <= 96 => {
             let k = (rng.below(8) as u32) + 1;
             let wide = width + k;
@@ -426,7 +426,7 @@ fn gen_case(seed: u64) -> IdentityCase {
             ze.clear();
             what = "sign extension";
         }
-        // 13. Concat associativity: `(A ++ B) ++ C ≡ A ++ (B ++ C)` — the
+        // 13. Concat associativity: `(A ++ B) ++ C ≡ A ++ (B ++ C)` – the
         //     seam-splitting encoders.
         12 => {
             let wa = (rng.below(u64::from(width.saturating_sub(2))) as u32).max(1);
@@ -462,7 +462,7 @@ fn gen_case(seed: u64) -> IdentityCase {
             what = "add associativity";
         }
         // 15. Wide-constant XOR: `xor(xor(T, HUGE), HUGE) ≡ T` with HUGE
-        //     spanning the top limb (≥ 2^64) — the bignum constant paths.
+        //     spanning the top limb (≥ 2^64) – the bignum constant paths.
         14 if width >= 65 => {
             let mut huge = num_bigint::BigUint::from(1u8) << (width - 1);
             huge += num_bigint::BigUint::from(7u8) << 32;
@@ -530,14 +530,14 @@ fn odd_width_identity_pairs_hold() {
         assert_eq!(
             neg,
             SolverResult::Unsat,
-            "case {seed} ({}): (not (= lhs rhs)) must be unsat — a sat/unknown here is a false model or missing proof\n{}",
+            "case {seed} ({}): (not (= lhs rhs)) must be unsat – a sat/unknown here is a false model or missing proof\n{}",
             case.what,
             script(&case, true)
         );
         assert_eq!(
             pos,
             SolverResult::Sat,
-            "case {seed} ({}): (= lhs rhs) must be sat — an unsat here is a FALSE UNSAT\n{}",
+            "case {seed} ({}): (= lhs rhs) must be sat – an unsat here is a FALSE UNSAT\n{}",
             case.what,
             script(&case, false)
         );
@@ -549,7 +549,7 @@ fn odd_width_identity_pairs_hold() {
 /// Found by `odd_width_identity_pairs_hold` (case 51): the live parser path
 /// for `(_ bvN W)` interned the raw value, so `(_ bv4 1)` and `(_ bv0 1)`
 /// were distinct terms and every value-comparing fold answered `(= 4 0)`
-/// false — a **false `sat`** on the negated equality.  The fix normalizes
+/// false – a **false `sat`** on the negated equality.  The fix normalizes
 /// constants to their canonical residue at construction (`mk_bitvec`);
 /// these pins hold it in place at the limb-boundary widths.
 #[test]

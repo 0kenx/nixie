@@ -1,4 +1,4 @@
-//! Type inference for the kernel — Nixie's answer to Apalache's Snowcat.
+//! Type inference for the kernel – Nixie's answer to Apalache's Snowcat.
 //!
 //! # Why a type system at all
 //!
@@ -111,7 +111,7 @@ pub enum Ty {
         tail: Option<TyId>,
     },
     /// A variant row (issue #17): `Tag(a) | b`. The tags are the row's
-    /// fields and the tail is the rest of the disjunction — the record row
+    /// fields and the tail is the rest of the disjunction – the record row
     /// machinery serves unchanged, because the algebra is the same.
     Variant {
         /// The tags known to be present, each with its payload type.
@@ -121,7 +121,7 @@ pub enum Ty {
     },
 }
 
-/// Which row algebra a row belongs to — records or variants. The unification
+/// Which row algebra a row belongs to – records or variants. The unification
 /// is shared; the constructor it rebuilds merged rows with is not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RowKind {
@@ -169,7 +169,7 @@ pub enum Type {
         open: bool,
     },
     /// A variant row (issue #17): one payload type per tag, and a tail when
-    /// the row is still open — the same row discipline a record uses.
+    /// the row is still open – the same row discipline a record uses.
     Variant {
         /// The known tags and their payload types.
         tags: BTreeMap<String, Type>,
@@ -330,7 +330,7 @@ pub struct Inference {
     /// Types of names: bound variables (uniquely renamed by lowering) and the
     /// free constants and state variables of the specification.
     env: HashMap<Name, TyId>,
-    /// Which names were never bound by a binder — the specification's own
+    /// Which names were never bound by a binder – the specification's own
     /// `CONSTANT`s and `VARIABLE`s.
     free: HashMap<String, TyId>,
     /// Types already computed, keyed by pointer identity so that a shared
@@ -386,7 +386,7 @@ impl Inference {
     ///
     /// Keyed by pointer identity, like the inference memo itself, so a shared
     /// subterm answers once. Needed by consumers that must know a node's type
-    /// where the node itself does not carry one — the empty set literal `{}`
+    /// where the node itself does not carry one – the empty set literal `{}`
     /// being the motivating case: its element type comes from context.
     #[must_use]
     pub fn node_ty(&self, node: &KeraRef) -> Option<TyId> {
@@ -421,7 +421,7 @@ impl Inference {
         }
     }
 
-    // ---- arena ----
+    // ======== arena ========
 
     /// The next free slot id, or an error if the arena is exhausted.
     fn next_id(&self) -> Result<TyId> {
@@ -533,7 +533,7 @@ impl Inference {
         Ok(())
     }
 
-    // ---- unification ----
+    // ======== unification ========
 
     /// Require two types to be equal.
     ///
@@ -608,8 +608,8 @@ impl Inference {
                     return Ok(());
                 }
                 // Different arities are not automatically an error. TLA+ has
-                // no separate sequence syntax — `<<3, 5, 7, 8>>` is written
-                // exactly like a 4-tuple — so a set of traces such as
+                // no separate sequence syntax – `<<3, 5, 7, 8>>` is written
+                // exactly like a 4-tuple – so a set of traces such as
                 // `{<<3, 5, 7, 8>>, <<2, 4, 6, 7, 8>>}` is a perfectly ordinary
                 // set of *sequences*. Two tuples of different length can only
                 // share a type by being sequences, so that is what they become,
@@ -707,9 +707,9 @@ impl Inference {
                 },
             ) => self.unify_rows(rx, f1, *t1, ry, f2, *t2, work),
 
-            // ---- variants (issue #17) ----
-            // Two variant rows unify exactly as two record rows do — the
-            // tags are the fields and the tails are the rows — so the union
+            // ======== variants (issue #17) ========
+            // Two variant rows unify exactly as two record rows do – the
+            // tags are the fields and the tails are the rows – so the union
             // of `Tag(A) | r` and `Tag(B) | r'` merges to
             // `Tag(A) | Tag(B) | r''`, which is the point of the construct.
             (Ty::Variant { tags: g1, tail: t1 }, Ty::Variant { tags: g2, tail: t2 }) => {
@@ -719,7 +719,7 @@ impl Inference {
             // a sequence: the issue's soundness note. The record↔function
             // meeting above is TLA+'s own identification of records with
             // functions; variants are *not* functions on their tags (the
-            // tags are not a domain — `DOMAIN` of a variant is undefined),
+            // tags are not a domain – `DOMAIN` of a variant is undefined),
             // and guessing the merge would equate `[tag |-> ..]` with
             // `Tag(..)`, which differ on every field access.
             (Ty::Variant { .. }, _) | (_, Ty::Variant { .. }) => Err(TypeError::Mismatch {
@@ -743,8 +743,8 @@ impl Inference {
     ///
     /// **The record survives, not the function**, and that choice is not
     /// arbitrary. Keeping the function would impose homogeneity on every field
-    /// the record has or may later gain, so a heterogeneous record — which is
-    /// the ordinary kind — would then fail on its *second* field access with a
+    /// the record has or may later gain, so a heterogeneous record – which is
+    /// the ordinary kind – would then fail on its *second* field access with a
     /// mismatch that the specification does not contain. Keeping the record
     /// imposes nothing, and the one fact the function contributed, that the
     /// domain is `Str`, is recorded on `d` before the function is dropped.
@@ -794,7 +794,7 @@ impl Inference {
         self.unify_rows_as(rx, f1, t1, ry, f2, t2, work, RowKind::Rec)
     }
 
-    /// [`Self::unify_rows`] for one row kind — records or variants (issue
+    /// [`Self::unify_rows`] for one row kind – records or variants (issue
     /// #17), whose algebra is the same and whose merged rows must stay the
     /// kind they came in as: a merged variant row that came back as a record
     /// would unify with records, which is exactly what the issue's
@@ -921,7 +921,7 @@ impl Inference {
         Ok(())
     }
 
-    // ---- materialisation ----
+    // ======== materialisation ========
 
     /// Materialise a type as a tree.
     ///
@@ -1057,9 +1057,9 @@ fn rebuild(t: &Ty, kids: Vec<Type>) -> Type {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Constraint generation
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// A frame of the inference walk.
 enum Step<'a> {
@@ -1405,7 +1405,7 @@ impl Inference {
                 }
                 Ok(self.mk(Ty::Rec { fields, tail: None })?)
             }
-            // `Variant("Tag", v)` — one tag, and an **open** row: the value
+            // `Variant("Tag", v)` – one tag, and an **open** row: the value
             // can flow into a bigger union, exactly as Apalache's
             // `(Str, a) => Tag(a) | b` signature says.
             Kera::Variant { tag, value } => {
@@ -1418,7 +1418,7 @@ impl Inference {
                     tail: Some(tail),
                 })?)
             }
-            // `VariantTag(v)`: the variant can be any row — a fresh one —
+            // `VariantTag(v)`: the variant can be any row – a fresh one –
             // and the result is the tag string.
             Kera::VariantTag(v) => {
                 let got = self.child(v)?;
@@ -1516,8 +1516,8 @@ impl Inference {
     ///
     /// Three cases, because TLA+ overloads application:
     ///
-    /// * a **string literal** index means a record field — lowering turns
-    ///   `r.foo` into exactly this — so it yields an *open* row saying only
+    /// * a **string literal** index means a record field – lowering turns
+    ///   `r.foo` into exactly this – so it yields an *open* row saying only
     ///   that the field is present;
     /// * an **integer literal** index could be a tuple, a sequence or a
     ///   function, and the three differ, so it is deferred until the subject's
@@ -1528,9 +1528,9 @@ impl Inference {
     fn apply(&mut self, tf: TyId, index: &KeraRef, out: TyId, node: &KeraRef) -> Result<()> {
         match index.as_ref() {
             Kera::Str(field) => {
-                // A subject already **settled as a function** — by an
+                // A subject already **settled as a function** – by an
                 // `@type:` annotation, or by an earlier application with a
-                // non-literal index — applies functionally, and the
+                // non-literal index – applies functionally, and the
                 // annotation stays authoritative: binding it to an open
                 // record here is exactly the merge the issue names, and it
                 // produced an unsortable hybrid where the settled function
@@ -1611,7 +1611,7 @@ impl Inference {
             arg_tys.push(self.child(a)?);
         }
         // `CASE` with no matching arm is TLA+-undefined. It is the bottom of
-        // the type lattice — the Elixir gradual-typing work calls this `none` —
+        // the type lattice – the Elixir gradual-typing work calls this `none` –
         // so a fresh variable per occurrence is exactly right: it fits
         // wherever it lands and constrains nothing.
         if name.as_str() == "$CaseNoMatch" {
@@ -1645,7 +1645,7 @@ impl Inference {
         let arity = args.len();
         let a = |s: &mut Self| s.fresh();
         let out = match (name, arity) {
-            // ---- Bags ----
+            // ======== Bags ========
             // (the nullary constant first; the rest of the vocabulary lives
             // with the sequences/sets rules above)
             ("EmptyBag", 0) => {
@@ -1653,7 +1653,7 @@ impl Inference {
                 let int = self.int_ty()?;
                 self.mk(Ty::Fun(e, int))?
             }
-            // `BagOfAll : ((a) => b, a -> Int) => b -> Int` — the rewire's
+            // `BagOfAll : ((a) => b, a -> Int) => b -> Int` – the rewire's
             // annotation. This covers the fallback path where the operator is
             // not rewired to a fold (a shadowing definition or an
             // unresolvable operator argument); the fold itself types
@@ -1683,7 +1683,7 @@ impl Inference {
             // The operators that change a sequence's **length** give their
             // result a Seq of its own, sharing only the element type. Reusing
             // one `Seq` for an argument and the result reads as "these have
-            // the same type", which is true — until a tuple is involved.
+            // the same type", which is true – until a tuple is involved.
             //
             // `<<a, b, c>>` is a tuple *and* a sequence, and unifying the two
             // keeps the tuple, because a 3-tuple is the more precise shape of
@@ -1744,11 +1744,11 @@ impl Inference {
                 self.unify(args[0], s)?;
                 self.int_ty()?
             }
-            // ---- Bags ----
+            // ======== Bags ========
             // The surface type of a bag is the function the standard module
             // defines it as (`Fun(τ, Int)`), so a bag flows anywhere a
             // Nat-valued function can and `b[e]` typechecks. The encoder
-            // may represent bag-typed terms differently — that is its
+            // may represent bag-typed terms differently – that is its
             // business, not the spec checker's.
             ("SetToBag", 1) => {
                 let e = a(self)?;
@@ -1764,7 +1764,7 @@ impl Inference {
                 self.unify(args[0], f)?;
                 self.set_of(e)?
             }
-            // ---- Apalache's standard library (issue #16) ----
+            // ======== Apalache's standard library (issue #16) ========
             // `:>`/`:=`/`@@`: function constructors and merge, per
             // `ToEtcExpr.scala`'s signatures.
             (":>", 2) | (":=", 2) => self.mk(Ty::Fun(args[0], args[1]))?,
@@ -1778,7 +1778,7 @@ impl Inference {
             }
             ("Skolem", 1) | ("Expand", 1) | ("ConstCardinality", 1) => args[0],
             // `FunAsSeq(f, len, capacity)`: `((Int -> a), Int, Int) =>
-            // Seq(a)` — the function's `1..len` prefix as a sequence, per
+            // Seq(a)` – the function's `1..len` prefix as a sequence, per
             // `Apalache.tla`'s annotation. The two-argument form (TLC's)
             // reads `capacity = len`.
             ("FunAsSeq", 3) | ("FunAsSeq", 2) => {
@@ -1891,7 +1891,7 @@ impl Inference {
     /// Discharge the index constraints that had to wait for a shape.
     ///
     /// Runs to a fixed point: resolving one can resolve another. Anything
-    /// still unresolved is *reported*, not guessed — see [`TypeError::Ambiguous`].
+    /// still unresolved is *reported*, not guessed – see [`TypeError::Ambiguous`].
     fn solve_deferred(&mut self) -> Result<()> {
         loop {
             let mut progress = false;

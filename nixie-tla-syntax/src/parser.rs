@@ -10,7 +10,7 @@
 //! A `/\` opens a bulleted list only when it appears where an *expression* is
 //! expected. In `x == a /\ b` the same token is an ordinary infix operator, and
 //! a lexical pass cannot tell the two apart without reconstructing
-//! expression-position — the same problem as regex-vs-division in a JavaScript
+//! expression-position – the same problem as regex-vs-division in a JavaScript
 //! lexer, and equally prone to misfiring. The parser already knows, exactly, so
 //! layout is decided here: `parse_prefix` treats `/\` in prefix
 //! position as a list, and `at_layout_boundary` stops the Pratt loop
@@ -88,7 +88,7 @@ impl Parser {
         self
     }
 
-    // ---- token plumbing -----------------------------------------------------
+    // ======== token plumbing ========
 
     /// The token at `self.pos + n`, saturating at the trailing `Eof`.
     fn peek_at(&self, n: usize) -> &Token {
@@ -227,7 +227,7 @@ impl Parser {
         }
     }
 
-    // ---- modules and units --------------------------------------------------
+    // ======== modules and units ========
 
     /// Parse a whole file: one top-level module.
     ///
@@ -500,7 +500,7 @@ impl Parser {
             return None;
         };
 
-        // `op _` — a prefix operator.
+        // `op _` – a prefix operator.
         if op::prefix_info(&spelling).is_none() && spelling != "-." {
             return None;
         }
@@ -595,7 +595,7 @@ impl Parser {
     ///
     /// Apalache does not check proofs, so parity needs the proof *found and
     /// skipped with the right extent*, not understood. What it must never do
-    /// is guess the extent and swallow a following unit — so the skip is
+    /// is guess the extent and swallow a following unit – so the skip is
     /// driven by the proof's own structure rather than by indentation alone:
     ///
     /// * a terminal proof is `OBVIOUS`, `OMITTED`, or `BY …`;
@@ -741,7 +741,7 @@ impl Parser {
 
     /// A definition. Six shapes, distinguished by bounded lookahead:
     /// `Op == e`, `Op(a, b) == e`, `f[x \in S] == e`, `a \oplus b == e`,
-    /// `-. x == e`, `x ^+ == e` — plus the `INSTANCE` variants of the first two.
+    /// `-. x == e`, `x ^+ == e` – plus the `INSTANCE` variants of the first two.
     fn parse_definition(&mut self, local: bool, start: Span) -> Result<Unit> {
         let tok = self.peek().clone();
 
@@ -960,7 +960,7 @@ impl Parser {
         self.parse_op_decl()
     }
 
-    // ---- layout -------------------------------------------------------------
+    // ======== layout ========
 
     /// Would `tok` close an enclosing junction list, or start a new unit?
     ///
@@ -1063,7 +1063,7 @@ impl Parser {
         })
     }
 
-    // ---- expressions --------------------------------------------------------
+    // ======== expressions ========
 
     /// Parse an expression with the given minimum binding power.
     ///
@@ -1640,7 +1640,7 @@ impl Parser {
         }
     }
 
-    /// `ASSUME a, NEW CONSTANT x \in S, b PROVE g` — the sequent form of a
+    /// `ASSUME a, NEW CONSTANT x \in S, b PROVE g` – the sequent form of a
     /// theorem statement. Only valid where an expression is expected; a
     /// top-level `ASSUME` unit is handled by [`Parser::parse_unit`].
     fn parse_assume_prove(&mut self, start: Span) -> Result<Expr> {
@@ -1706,7 +1706,7 @@ impl Parser {
                 arms.push(CaseArm { guard, value });
             }
             // Arms are separated by `[]`, which the lexer produces as one
-            // token — the same token as temporal `[]`, distinguished here by
+            // token – the same token as temporal `[]`, distinguished here by
             // position rather than by a lexer hack.
             if !self.peek().is_sym("[]") {
                 break;
@@ -1973,7 +1973,7 @@ impl Parser {
         self.expect_sym(">>")?;
         let close = self.prev_span();
 
-        // `<<A>>_v` — an angle action rather than a tuple.
+        // `<<A>>_v` – an angle action rather than a tuple.
         if self.peek().is_sym("_") {
             self.advance();
             let subscript = self.parse_subscript()?;
@@ -2013,7 +2013,7 @@ impl Parser {
     ///
     /// `{a, b}` has no top-level `:`; `{x \in S : P}` has a `\in` before its
     /// `:`; `{e : x \in S}` does not. This is the arbitrary lookahead that
-    /// `docs/TLA_FRONTEND_DESIGN.md` §1.0 names as an obstacle to LR(1) — a
+    /// `docs/TLA_FRONTEND_DESIGN.md` §1.0 names as an obstacle to LR(1) – a
     /// Pratt parser can simply look.
     fn parse_brace(&mut self, start: Span) -> Result<Expr> {
         self.expect_sym("{")?;
@@ -2256,7 +2256,7 @@ impl Parser {
     ///   `[\A i \in Proc : P]_vars` the `\in` belongs to the quantifier and
     ///   the form is an action.
     /// * `|->` and `:` mean a record literal / record set only if preceded by
-    ///   exactly one identifier — the field name.
+    ///   exactly one identifier – the field name.
     /// * `->` means a function set unless a `CASE` is open, whose arms use the
     ///   same token.
     fn scan_bracket_shape(&self) -> BracketShape {

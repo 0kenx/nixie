@@ -10,8 +10,8 @@ The format-alias study left three scoped rungs.  This lands the big one and
 finds two more soundness bugs on the way:
 
 1. **`=` on floats had no semantics** (false-`sat` class): `(assert (= c1 c2))`
-   over two distinct fp literals — including `(_ +zero e s)` vs `(_ -zero e s)`
-   — was a free Boolean; nixie answered `sat`, z3 `unsat` (verified on four
+   over two distinct fp literals – including `(_ +zero e s)` vs `(_ -zero e s)`
+   – was a free Boolean; nixie answered `sat`, z3 `unsat` (verified on four
    shapes: direct literals, spelled bits, and variable-mediated).
 2. **The unsat direction through variables** (the rung as scoped):
    `x = c ∧ y = (fp.add RNE x x) ∧ y = c2` with `fold(c,c) ≠ c2` answered
@@ -22,17 +22,17 @@ finds two more soundness bugs on the way:
 
 ## Design (three layers, all landing)
 
-### Layer 1 — bit-pattern value marks on FP literals
+### Layer 1 – bit-pattern value marks on FP literals
 
 `EufSolver` gains a persistent `fp_value_ids` map from
 `(eb, sb, sign, biased exp, significand)` to a shared distinguished-value id
 (symbol-level like `value_consts`; collision-safe because ids issue from the
 monotone counter that never rewinds).  The constant-interning leaf path
 declares every FP literal before its first intern, so two *different* bit
-patterns can never share an e-graph class — the merge raises a value conflict
+patterns can never share an e-graph class – the merge raises a value conflict
 with a complete proof-forest core (the same machinery the BV constants use).
 
-Datum semantics (every pin z3-verified on *exact-width* literals — the probes
+Datum semantics (every pin z3-verified on *exact-width* literals – the probes
 must pad the exponent to its exact bit width or z3 silently errors):
 
 | shapes | `=` |
@@ -45,15 +45,15 @@ must pad the exponent to its exact bit width or z3 silently errors):
 The NaN collapse is implemented as a canonicalization in the literal decode
 (`fp_const_value`); everything else keys on raw bits.
 
-### Layer 2 — constant folding through EUF pins (`solver/fp_fold.rs`)
+### Layer 2 – constant folding through EUF pins (`solver/fp_fold.rs`)
 
 One `check_core`-entry pass per check.  It harvests the ground `fp.*`
 operations of the assertions (quantifier bodies opaque), pins operands from
-three sources — **definitional assertions** (`(= t lit)` conjuncts at positive
-polarity — the crucial one, because the early instantiation phase runs before
+three sources – **definitional assertions** (`(= t lit)` conjuncts at positive
+polarity – the crucial one, because the early instantiation phase runs before
 any propagation, so the e-graph holds no level-0 merges yet), pins recorded
 in this pass (chains, including EUF-equal aliases), and the e-graph class
-constant on re-checks — evaluates exactly via `Ieee754Engine`, and asserts
+constant on re-checks – evaluates exactly via `Ieee754Engine`, and asserts
 each fold as a **guarded valid clause**:
 
 ```text
@@ -61,7 +61,7 @@ each fold as a **guarded valid clause**:
 (a = lit1) → fp.pred(a)                                            (predicates)
 ```
 
-Every clause is valid *standalone* — the guard set is the union of the
+Every clause is valid *standalone* – the guard set is the union of the
 operand pins' justification atoms (pins carry `{value, witness literal term,
 guards}` through define links and fold chains), never a reference to another
 fold clause being present.  Literal operands contribute no guard.  Value ops
@@ -78,10 +78,10 @@ collide in one class.
 honesty gate still answers `Unknown` before the search (unchanged).  With
 fold clauses asserted, the gate now falls through to the CDCL(T) search (the
 refutation needs EUF transitivity, which is not SAT-level UP), and any
-`Sat` the search returns must first survive `try_fp_model_sat` — the same
+`Sat` the search returns must first survive `try_fp_model_sat` – the same
 bit-exact witness the early path uses (`fp_fold_verify`).
 
-### Layer 3 — engine semantics (found by the differential battery)
+### Layer 3 – engine semantics (found by the differential battery)
 
 * **Directed-mode gradual underflow** (`Ieee754Engine::pack`): rounding for a
   result at/below the smallest normal now happens on the **subnormal grid**
@@ -89,7 +89,7 @@ bit-exact witness the early path uses (`fp_fold_verify`).
   reused, carry into the smallest normal handled).  The old path truncated
   with the dropped bits never consulted and returned ±0 unconditionally:
   `fp.mul RTN (-min_subnormal) (+min_subnormal)` produced `-0` where IEEE
-  requires `-min_subnormal` — a false-`sat` on its `= -0` refutation.
+  requires `-min_subnormal` – a false-`sat` on its `= -0` refutation.
 * **SMT-LIB `fp.min`/`fp.max`** (not IEEE `minNum`): a NaN operand yields
   the *other* operand, and a tie prefers the negative zero for `min` / the
   positive zero for `max` (`fp.min(+0,-0) = -0`).  The engine returned the
@@ -102,7 +102,7 @@ ulp-adjacent normals), 1–3 variables, pin/define chains over
 `add/sub/mul/div/rem/min/max` under all five rounding modes, closing
 equalities/disequalities/predicates in both polarities; plus targeted
 batteries (specials identity, directed-underflow corners, halfway ties per
-mode, fma, rem) — **every expectation z3-verified**:
+mode, fma, rem) – **every expectation z3-verified**:
 
 | battery | result |
 |---|---|
@@ -112,9 +112,9 @@ mode, fma, rem) — **every expectation z3-verified**:
 | targeted probes (e-series, m/z-series, mediated forms) | all agree |
 
 Two probe-construction traps are now pinned in the study record: bare hex
-literals take their width from the digits (`#x7ff` is **12** bits — a
+literals take their width from the digits (`#x7ff` is **12** bits – a
 Float64 exponent must be `#b11111111111`), and a z3 parse error leaves the
-instance *vacuously sat* — the mismatch direction to distrust.  The z3 NaN
+instance *vacuously sat* – the mismatch direction to distrust.  The z3 NaN
 semantics were derived three times before the exact-width probes settled
 them; the well-formed answer is the one in the table above.
 
@@ -127,7 +127,7 @@ unchanged); obligation fuzzer medium **58/58** and small+stress-heavy
 **58/58**, zero FAIL/CRASH/GENFAIL.  Tests landed: engine pins for the
 underflow corners and min/max semantics (`ieee754_full/tests.rs`, plus the
 pre-existing IEEE-minNum NaN expectation in `fp_comprehensive.rs` updated to
-the SMT-LIB definition), and `nixie-solver/tests/fp_const_folding.rs` — the
+the SMT-LIB definition), and `nixie-solver/tests/fp_const_folding.rs` – the
 false-`sat` shapes, fold refutations (variable-pinned, literal-operands,
 chains, predicates), the NaN datum collapse, `fp.min` ties, and scope
 retraction (`push`/`check`/`pop`/`check`).
@@ -148,7 +148,7 @@ retraction (`push`/`check`/`pop`/`check`).
    the model builder.
 4. **The `fpboundary` obligation family** (the roadmap productions that
    motivated the whole arc): the differential generator in this study is its
-   prototype — promoting it into `bench/obligation` with manifest + fuzzer
+   prototype – promoting it into `bench/obligation` with manifest + fuzzer
    wiring is mechanical from here.
 
 ## Reproducers

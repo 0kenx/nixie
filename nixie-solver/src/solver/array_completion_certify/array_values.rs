@@ -1,9 +1,9 @@
 //! Equalities between two literal array **values**, decided exactly before
 //! the certificate evaluates or queries anything.
 //!
-//! An interpretation the certificate checks is a literal array value — a
+//! An interpretation the certificate checks is a literal array value – a
 //! constant array over a literal default with `store`s of literal indices and
-//! values on top — so an assertion `a = (store b k v)` becomes, once the
+//! values on top – so an assertion `a = (store b k v)` becomes, once the
 //! interpretation is substituted, an equality between two such values.  The
 //! model evaluator does not decide array equality, so every such assertion
 //! used to cost a quantifier-free query, and over an `Int` index that query is
@@ -14,8 +14,8 @@
 //! Two literal values are equal exactly when their reads agree everywhere,
 //! and a read is known in closed form: the stored value at a stored index, the
 //! default elsewhere.  So they are equal iff they read alike at every index
-//! either one stores to and — unless those indices exhaust a finite index
-//! sort — their defaults are equal.  Nothing here is a heuristic: a pair this
+//! either one stores to and – unless those indices exhaust a finite index
+//! sort – their defaults are equal.  Nothing here is a heuristic: a pair this
 //! module cannot read (a non-literal leaf, an index sort whose size it does
 //! not know) is left for the evaluator and the query exactly as before.
 

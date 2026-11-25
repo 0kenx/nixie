@@ -1,4 +1,4 @@
-//! Control-flow explosion — the pass that turns labeled clusters into flat
+//! Control-flow explosion – the pass that turns labeled clusters into flat
 //! next-state actions (`PcalTranslate.Explode`).
 //!
 //! `while`, a labeled `if`/`either`, and `goto` are all control flow the
@@ -6,7 +6,7 @@
 //! them from the tree:
 //!
 //! * a `while` becomes a guard `pc = "L"` and an `IF` whose branches update
-//!   `pc` — back to the loop head, into the body's first label, or out of
+//!   `pc` – back to the loop head, into the body's first label, or out of
 //!   the loop;
 //! * a labeled `if` becomes an `IF` whose branches each end in a `pc` update
 //!   toward their own first labels, with the labeled clusters lifted out as
@@ -15,7 +15,7 @@
 //!
 //! When `pc` is elided (`while TRUE` bodies with no labels inside), the
 //! guards and updates disappear and the cluster's action is simply its body
-//! — which is why the elision decision is made before this pass runs.
+//! – which is why the elision decision is made before this pass runs.
 
 use super::ast::*;
 use crate::ast::{Expr, ExprKind};

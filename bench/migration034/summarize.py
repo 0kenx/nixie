@@ -99,7 +99,7 @@ def main():
         sample = [r for r in rows if r['instance']['kind'] == kind and r['instance']['family'] == family]
         counts = {a: sum(r['consistent_decisive'] for r in sample if r['arm'] == a) for a in ['before', 'after', 'z3', 'kissat', 'cadical']}
         n = sum(r['arm'] == 'after' for r in sample)
-        cells = [str(counts[a]) if any(r['arm'] == a for r in sample) else '—' for a in counts]
+        cells = [str(counts[a]) if any(r['arm'] == a for r in sample) else '–' for a in counts]
         lines.append(f'| {kind} / {family} | {n} | ' + ' | '.join(cells) + ' |')
     lines += ['', 'Migration gains and losses at the cap:', '', '| Instance | Before | After | Z3 |', '|---|---|---|---|']
     changes = 0
@@ -112,7 +112,7 @@ def main():
         summary['gained' if a['consistent_decisive'] else 'lost'].append(name)
         lines.append(f"| `{name}` | {b['outcome']} | {a['outcome']} | {group['z3']['outcome']} |")
     if not changes:
-        lines.append('| None | — | — | — |')
+        lines.append('| None | – | – | – |')
     pairs = [(g['after'], g['before']) for g in by_instance.values()
              if g['after']['instance']['kind'] == 'SMT'
              and all(g[a]['consistent_decisive'] for a in ['before', 'after'])

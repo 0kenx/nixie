@@ -1,8 +1,8 @@
-# Study: graph-constraint throughput vs MonoSAT — profiling, inert optimizations, and the honest remaining gap
+# Study: graph-constraint throughput vs MonoSAT – profiling, inert optimizations, and the honest remaining gap
 
 **Date:** 2026-09-19/20
 **Base:** `1b974b80` (graph module + differential campaign)
-**Verdict:** **LANDED** — 1.94× geomean on the graph corpus (2.65× vs MonoSAT,
+**Verdict:** **LANDED** – 1.94× geomean on the graph corpus (2.65× vs MonoSAT,
 down from 5.1×; worst instance 8.45 s → 2.76 s), with **bit-identical
 conflicts/decisions/propagations counters** on the whole corpus, 1 600/1 600
 MonoSAT differential agreement, full workspace suite green, Z3 4.16.0 parity
@@ -15,7 +15,7 @@ digraph, n ∈ {25, 50, 100, 150}, reach atoms ∈ {4, 8, 16, 32}, 5 seeds per
 cell, unit + two-literal constraint mix (sat/unsat split ≈ 40/60). Both
 solvers as release builds (`--release`; MonoSAT rebuilt out-of-tree per the
 recipe in the differential study). Wall times are medians of 3 on a
-load-sharing machine — recorded as throughput evidence for a
+load-sharing machine – recorded as throughput evidence for a
 **semantics-inert** change (counters bit-identical), which is the one
 setting where wall time is the thing that changed; per `docs/BENCHMARKING.md`
 it is never a policy metric.
@@ -37,49 +37,49 @@ hotspots were, four of them shared solver machinery:
 1. **~50 % of samples in `HashMap<TermId, ()>` insert/rehash.**
    `UserPropagatorManager::push` deep-cloned `watched_terms`/`fixed_terms`
    (7.5 k entries) on **every SAT decision level**, and `pop` restored the
-   clone — thousands of levels ⇒ millions of hash inserts. Graph models
+   clone – thousands of levels ⇒ millions of hash inserts. Graph models
    were simply the first to register thousands of watches; CP models never
    exposed it.
 2. **`UserCallback::truth` scanned the whole watch list** per justification
    literal of every consequence (O(watches) per lookup).
-3. **`register_user_propagator` deduplicated watches with a linear scan** —
+3. **`register_user_propagator` deduplicated watches with a linear scan** –
    O(watches²), ≈28 M comparisons at 7.5 k watches.
 4. **`Solver::assert` re-surveyed the entire assertion stack per assertion**
    for the set/bag eager reductions (`set_theory::reduce`,
    `bag_theory::reduce`, `bag_user_eq_atoms` walking
-   `self.assertions.clone()` + `certificate_assertions.clone()`) — quadratic
+   `self.assertions.clone()` + `certificate_assertions.clone()`) – quadratic
    in assertions, and provably a no-op for goals with no set/bag-sorted
    term. This affects **every** theory mix with many assertions, not just
    graphs. The BV unified constraint sweep had the same shape
    (`collect_unified_constraint_atoms` over all constraints per assert).
 5. Only then the propagator: 130 k forced BFS for 7.5 k events (≈17 per
-   event — one per reach atom per event, each O(V+E)), `Vec<Vec<…>>`
+   event – one per reach atom per event, each O(V+E)), `Vec<Vec<…>>`
    adjacency reallocation per event, and full re-reads of all edge values.
 
 ## Changes (each semantics-inert by construction)
 
 | # | Change | Inertness argument |
 |---|---|---|
-| 1 | Manager scopes: snapshot clones → **exact undo journals** (fixed values with their previous value, equality/watch insertions, consequence-queue push/drain replay) | Restores precisely the state a snapshot would — including overwritten fixations; the dedicated manager regression and the CP rollback suites cover the semantics |
+| 1 | Manager scopes: snapshot clones → **exact undo journals** (fixed values with their previous value, equality/watch insertions, consequence-queue push/drain replay) | Restores precisely the state a snapshot would – including overwritten fixations; the dedicated manager regression and the CP rollback suites cover the semantics |
 | 2 | `truth` via a `Var → (term, lit)` index | One entry per SAT variable decodes both polarities; identical answers to the scan |
 | 3 | Watch dedup through a hash set | Produces the identical watch list |
-| 4 | Set/bag survey gated on a monotonic `has_set_or_bag_terms` flag (set by the encoder's sort dispatch and by scanning the current assertion) | With no set/bag-sorted subterm in any root, both reductions early-return empty (no axioms, no honesty gates, no minted atoms, `term` unchanged) — the block is a provable no-op; the flag is monotone so a `pop` can only keep the slow exact path |
+| 4 | Set/bag survey gated on a monotonic `has_set_or_bag_terms` flag (set by the encoder's sort dispatch and by scanning the current assertion) | With no set/bag-sorted subterm in any root, both reductions early-return empty (no axioms, no honesty gates, no minted atoms, `term` unchanged) – the block is a provable no-op; the flag is monotone so a `pop` can only keep the slow exact path |
 | 5 | BV unified sweep skipped when `bv_terms.is_empty()` | The sweep matches only BV-operand atoms; no BV-sorted term exists ⇒ provably empty |
-| 6 | Graph propagator: **content-addressed `ViewCache`** — packed true-edge / non-false-edge bits per graph; per-source forced BFS, per-target backward BFS and cycle checks memoized under a bit-exact key; flat CSR adjacency rebuilt into reused buffers | Memoization, not incremental state: the key is re-compared against the *full* current assignment every run, so a key hit means "same function, same inputs"; rows preserve declaration order so paths/cuts/reasons are byte-identical |
+| 6 | Graph propagator: **content-addressed `ViewCache`** – packed true-edge / non-false-edge bits per graph; per-source forced BFS, per-target backward BFS and cycle checks memoized under a bit-exact key; flat CSR adjacency rebuilt into reused buffers | Memoization, not incremental state: the key is re-compared against the *full* current assignment every run, so a key hit means "same function, same inputs"; rows preserve declaration order so paths/cuts/reasons are byte-identical |
 
 ## Verification
 
 - **Bit-identity:** old vs new binaries, 40/40 corpus instances identical
   `conflicts/decisions/propagations` (via the example's `STATS=1` output) and
   identical verdicts.
-- **Differential:** the 1 600-instance MonoSAT campaign re-run — 1 600/1 600
+- **Differential:** the 1 600-instance MonoSAT campaign re-run – 1 600/1 600
   agree, 0 skips.
 - **Suites:** full workspace 12 053/12 053 (the manager and encode changes
   are exercised by the CP rollback, set/bag, and graph suites).
 - **Z3 parity (4.16.0):** 176/176 decisive, 0 disagreements, 1 inconclusive
   (Z3 `Unknown`).
 - **Perf gate:** PASS. The gate shows 1.013/1.010 vs the pinned `1710e125`
-  baseline — **attributed to intermediate main commits, not this diff**:
+  baseline – **attributed to intermediate main commits, not this diff**:
   building HEAD *without* this diff reproduces the identical 1.013 geomean
   and the identical 2.23× worst instance. This diff is exactly neutral on
   the gate corpus (as expected: no set/bag terms, no user propagators there).
@@ -92,11 +92,11 @@ hotspots were, four of them shared solver machinery:
 | geomean | 0.0153 s | 0.0786 s | **0.0406 s** | 1.94× |
 | total (40 inst.) | 1.35 s | 30.5 s | **12.5 s** | 2.4× |
 | worst instance | 0.22 s | 8.45 s | **2.76 s** | 3.1× |
-| gap vs MonoSAT (geomean) | — | 5.1× | **2.65×** | |
+| gap vs MonoSAT (geomean) | – | 5.1× | **2.65×** | |
 
 Propagator-internal: forced BFS on the worst instance 130 467 → 57 766
 (content-addressed memo survives the ~half of events that do not change the
-relevant view's bits — false assignments keep the forced view, true
+relevant view's bits – false assignments keep the forced view, true
 assignments keep the possible view, backjumps often return to a seen key).
 
 ## The honest remaining gap and where it lives
@@ -108,7 +108,7 @@ difference is structural, in decreasing order:
    amortized over Ramalingam–Reps dynamic reachability, dynamic max-flow
    min-cuts, and PK topological order; our propagator recomputes
    reachability per (event × source) with a memo that only survives
-   unchanged views. Closing this means real incremental state with trails —
+   unchanged views. Closing this means real incremental state with trails –
    the documented upgrade path in `docs/GRAPH.md`, deliberately not taken
    here: it would trade the stateless design's obvious correctness for
    speed, and the current gap is already dominated by (2).
@@ -116,7 +116,7 @@ difference is structural, in decreasing order:
    `assert` pays interning, preprocessing dispatch and encoding through the
    full CDCL(T) stack; MonoSAT's GNF loader is a lean DIMACS parser. This is
    the cost of being an SMT solver, borne by every theory.
-3. **Theory-directed decisions** (MonoSAT's `-decide-theories`) — a search
+3. **Theory-directed decisions** (MonoSAT's `-decide-theories`) – a search
    heuristic; changing it here would alter trajectories and would need the
    full matched-null machinery of `docs/BENCHMARKING.md`, which is out of
    scope for an inert-optimization landing.
@@ -130,28 +130,28 @@ difference is structural, in decreasing order:
 - The manager journals (change 1) make per-level push/pop O(changes); CP
   models with many domain indicators benefit silently.
 - The stale `bench/perf_gate/BASELINE` pin (several SAT-core landings old)
-  shows 1.013 drift attributable to intermediate commits — re-pinning is a
+  shows 1.013 drift attributable to intermediate commits – re-pinning is a
   deliberate act for whoever lands the next SAT-core change.
 
-## Addendum (2026-09-20): the per-assertion audit continued — one more shared quadratic
+## Addendum (2026-09-20): the per-assertion audit continued – one more shared quadratic
 
 Following this study's own follow-up note, a scaling probe through the real
 SMT-LIB path (N declarations + N assertions, `set-logic QF_LIA`) found the
-next superlinearity — not in the assertion pipeline but in the theory check:
+next superlinearity – not in the assertion pipeline but in the theory check:
 
 `TheoryManager::propagate_euf_equalities_to_arith` built its arith-term list
-with a `Vec::contains` membership scan — **O(terms²) per call, once per
-theory check** — which profiled at 16 % of a 4 000-term run (the rest of
+with a `Vec::contains` membership scan – **O(terms²) per call, once per
+theory check** – which profiled at 16 % of a 4 000-term run (the rest of
 that run is genuine simplex work on the disequalities). Replaced with an
 order-preserving `FxHashSet` membership (identical insertion order ⇒
 identical class representatives ⇒ bit-identical behavior by construction).
 Measured on the `distinct`-heavy probe under a loaded machine: 111 s →
 57–77 s for 4 000 terms; the *residual* superlinear cost is the simplex
-disequality case-split procedure itself (z3: 0.19 s) — a theory-solver
+disequality case-split procedure itself (z3: 0.19 s) – a theory-solver
 algorithm change, explicitly out of scope for inert landings.
 
 Verification: verdicts match z3 on the probes (sat/unsat); full workspace
-suite green (timeouts re-verified in isolation — load artifacts); Z3 4.16.0
+suite green (timeouts re-verified in isolation – load artifacts); Z3 4.16.0
 parity 176/176 decisive, 0 disagreements; perf gate **1.000** against the
 freshly re-pinned baseline (`a48d8464` re-pinned to `6853ba29`); graph
 differential spot-check 300/300 agree.
@@ -170,31 +170,31 @@ upgrade path would pay:
   allocator/libc (`memmove` 14 %, `realloc` 12 %, `malloc`/`reserve_rehash`
   ~12 %) driven by hash-consing ~22 k minted terms
   (`encode_depth_memoized` 7.7 %, `TermManager::intern` 5.4 %) and the
-  Tseitin/var maps — the cost of the general SMT API and CDCL(T) stack that
+  Tseitin/var maps – the cost of the general SMT API and CDCL(T) stack that
   every theory pays, versus MonoSAT's integer-only GNF loader that parses
   variables straight into solver slots.
 
 **Re-scope of the upgrade path:** incremental reachability
-(Ramalingam–Reps et al.) would buy ≈nothing on this corpus — the recomputed
+(Ramalingam–Reps et al.) would buy ≈nothing on this corpus – the recomputed
 BFS it would amortize is already <2 % of runtime. It becomes the right tool
 only for much larger graphs (hundreds of vertices and beyond), where
 per-event O(V·E) recompute dominates again; at today's scales the honest
 remaining gap is the SMT assertion pipeline itself, shared by all theories.
 
 Fresh corpus re-run on the final build: geomean ratio **2.67×**
-(monosat 0.0150 s vs nixie 0.0400 s), matching the recorded result —
+(monosat 0.0150 s vs nixie 0.0400 s), matching the recorded result –
 measurement reproducible end-to-end after the MonoSAT rebuild.
 
-## Addendum (2026-09-20, evening): the "term-management" gap decomposed — two shared-path fixes, gap 2.67× → 2.33×
+## Addendum (2026-09-20, evening): the "term-management" gap decomposed – two shared-path fixes, gap 2.67× → 2.33×
 
 Challenged the closing attribution above with allocation-level measurement
 (an `LD_PRELOAD` counter plus a phase-sentinel, ~zero overhead) instead of
 perf alone. The "~40 % allocator/libc" blob decomposed into two *specific*
-shared-path defects — neither of them term management:
+shared-path defects – neither of them term management:
 
 1. **SipHash in the propagator-manager maps** (~12 % of a corpus solve).
    `UserPropagatorManager`'s `fixed_terms`/`equalities`/`watched_terms` were
-   plain `std::collections` maps — SipHash with a random seed — while every
+   plain `std::collections` maps – SipHash with a random seed – while every
    other hot map in the codebase is Fx. Every watched atom of every event is
    looked up there (`run_graph` reads all edge values per event: 6 k edges ×
    3.3 k events ≈ 20 M SipHashed lookups on one corpus instance). Switched
@@ -202,7 +202,7 @@ shared-path defects — neither of them term management:
    results are unchanged.
 2. **`std::env::var` per assertion** (~11 %). The BV routing gates
    (`bv_unify_enabled`, `bv_dispatch_unified`, `bv_defer_blast_enabled`,
-   `freeze_collapse_enabled`) re-read the environment on every call — and
+   `freeze_collapse_enabled`) re-read the environment on every call – and
    `getenv` is a linear scan over `environ` (visible as `__strncmp_avx2`).
    Consulted per assertion/registration/check. Memoized in `OnceLock`s;
    environment variables cannot meaningfully change mid-process.
@@ -223,11 +223,11 @@ corpus instances** (old vs new binaries); full workspace suite 12 070/12 070;
 Z3 4.16.0 parity 176/176 decisive, 0 disagreements; perf gate **1.000**
 against the current pin; graph differential 500/500; clippy/fmt clean.
 
-## Addendum (2026-09-21): the radical one — event-driven incremental state, gap 2.33× → 1.65×
+## Addendum (2026-09-21): the radical one – event-driven incremental state, gap 2.33× → 1.65×
 
 With the shared paths fixed, re-profiling put the graph propagator back on
 top (`bfs` 24 %, `Csr::rebuild` 12 %, per-edge manager lookups 6 %). The
-content-addressed memo only survived *unchanged* views — every true-edge
+content-addressed memo only survived *unchanged* views – every true-edge
 assignment changed the forced key, resetting all per-source BFS trees, and
 every event re-read every edge from the manager.
 
@@ -246,7 +246,7 @@ with a full-re-read fallback:
   fixations without events, so the next run re-reads the manager from
   scratch (the stateless design's safety, paid only after backtracking).
 - The possible side (backward BFS, cycle checks) rebuilds lazily on its own
-  dirty flag — only false assignments shrink it; true assignments leave it
+  dirty flag – only false assignments shrink it; true assignments leave it
   untouched.
 
 **This is the first graph landing that is verdict-preserving but not
@@ -255,7 +255,7 @@ parents than a fresh BFS, so learned clauses differ while every consequence
 stays a valid implication. The validation burden therefore shifted to the
 soundness gates and passed in full:
 
-- the exhaustive **all-completions oracles** (27/27) — every emitted
+- the exhaustive **all-completions oracles** (27/27) – every emitted
   justification checked against every concrete graph, the exact validator
   for merged-tree paths;
 - **MonoSAT differential 1 600/1 600** re-run (0 disagreements, 0 skips);
@@ -263,7 +263,7 @@ soundness gates and passed in full:
 - **perf gate 1.000** (the module remains inert unless registered);
 - theories+solver suites show an *identical* failure set with and without
   the change (14 pre-existing failures from another agent's concurrent
-  arithmetic work at that HEAD — not attributable to this diff).
+  arithmetic work at that HEAD – not attributable to this diff).
 
 Measured (release, medians of 3, full 40-instance corpus):
 geomean ratio **2.33× → 1.65×**, totals 8.05 s → 3.35 s, worst per-instance
@@ -271,7 +271,7 @@ geomean ratio **2.33× → 1.65×**, totals 8.05 s → 3.35 s, worst per-instanc
 `v100_r32_s3` 0.42 s → 0.053 s (8×). Cumulative from the original landing:
 **5.1× → 1.65×**.
 
-Residual: term interning + Tseitin + the SAT/CDCL(T) stack — MonoSAT's
+Residual: term interning + Tseitin + the SAT/CDCL(T) stack – MonoSAT's
 integer-only loader territory. The next real lever would be incremental
 *decremental* handling for the possible view (currently a lazy rebuild on
 false-assignment batches); nothing in the corpus profile says it is due.
@@ -279,7 +279,7 @@ false-assignment batches); nothing in the corpus profile says it is due.
 ## Addendum (2026-09-21, hard-instance stress): the incremental design under backtracking
 
 The standard corpus is propagation-dominated (conflicts ≤ 1), so it never
-exercises the incremental design's worst case — the post-backtrack
+exercises the incremental design's worst case – the post-backtrack
 full re-read. Two additions close that gap:
 
 - The generator gained `--clause-size/--coupling/--unit-prob` for
@@ -287,22 +287,22 @@ full re-read. Two additions close that gap:
 - A crafted set couples a phase-transition random 3-SAT over n²/2 edge
   variables with reachability/acyclicity demands (n ∈ {30, 60, 90});
   the solved instances run ~25 k conflicts / 33 k decisions / 1.46 M
-  propagations — backtracking essentially every conflict.
+  propagations – backtracking essentially every conflict.
 
 Results: every instance both solvers finish agrees (3× UNS, 9× both-TMO at
 120 s). On finished instances Nixie tracks MonoSAT within **1.0–1.4×**
 (1.75 s vs 1.75 s; 1.35 s vs 0.96 s; 2.32 s vs 1.63 s) with the
-invalidation re-read firing continuously — the design's ceiling (≤ the old
+invalidation re-read firing continuously – the design's ceiling (≤ the old
 per-event O(E) cost, which is the pre-incremental behavior) is never
 approached as a regression; the two easy-corpus wins (1.65× geomean) carry
 over. Fixed process overhead measured at 3.0 ms (Nixie) vs 2.3 ms
-(MonoSAT) on a trivial instance — ~0.7 ms of the residual gap, not its
+(MonoSAT) on a trivial instance – ~0.7 ms of the residual gap, not its
 story.
 
 ## Addendum (2026-09-21, generated-oracle campaign): adversarial event scripts against the incremental state
 
 The exhaustive small-graph oracles enumerate states but at tiny sizes, and
-the differential drives only linear notify sequences — neither reaches the
+the differential drives only linear notify sequences – neither reaches the
 incremental propagator's risk surface: long event sequences with **nested
 push/pop rollback** and re-fixation after backtrack. A generated campaign
 (now in-tree, `graph::tests::generated_oracle_random_event_scripts_with_
@@ -315,13 +315,13 @@ nested_rollback`, landed in 0387eb02) closes that:
   final-checks) via the propagator manager directly.
 - Validation per check: verdict agreement with an independent violation
   analysis over the driver's shadow state; every justification literal
-  currently true **by fixation** (not closure semantics — the distinction
+  currently true **by fixation** (not closure semantics – the distinction
   that matters for conflict atom literals); every consequence a valid
   implication over all concrete completions (≤ 12 unfixed edges) or a
   64-sample.
 
-Result: **200/200 clean**. The campaign found one bug — in the harness
+Result: **200/200 clean**. The campaign found one bug – in the harness
 itself (current-truth initially evaluated atom literals by closure
-semantics, exactly the conflation the small oracle avoids) — and zero in
+semantics, exactly the conflation the small oracle avoids) – and zero in
 the propagator: post-backtrack re-reads, repeated invalidation, and
 re-fixation all maintain state identical to a from-scratch read.

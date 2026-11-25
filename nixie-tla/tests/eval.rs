@@ -84,7 +84,7 @@ fn arithmetic_and_comparison() {
 fn division_and_modulus_follow_tla_not_rust() {
     // TLA+ requires `a % b \in 0..b-1`, so `\div` rounds towards minus
     // infinity. Rust's `/` and `%` truncate towards zero and would give
-    // `-3` and `-1` here — quietly wrong.
+    // `-3` and `-1` here – quietly wrong.
     assert_eq!(eval("A == (-7) \\div 2"), "-4");
     assert_eq!(eval("A == (-7) % 2"), "1");
     // The defining identity, which is what makes those the right answers.
@@ -158,11 +158,11 @@ fn definitions_are_inlined_before_evaluation() {
 
 #[test]
 fn choose_evaluates_deterministically() {
-    // TLA+ says only that `CHOOSE` picks *some* satisfying element — but the
+    // TLA+ says only that `CHOOSE` picks *some* satisfying element – but the
     // evaluator is now the **replay oracle** for a checker whose encoder
     // answers `CHOOSE`, so it must commit to one: the smallest filter member
     // in `Value`'s order. The choice may differ from TLC's without either
-    // being wrong; what matters, and what this pins, is that it is stable —
+    // being wrong; what matters, and what this pins, is that it is stable –
     // an oracle whose answer moved between runs would make every replay a
     // coin flip. An *empty filter* is still refused: there is no element to
     // commit to.
@@ -207,7 +207,7 @@ fn runaway_sets_are_bounded() {
     assert!(matches!(e, EvalErrorKind::SetTooLarge { .. }), "got {e:?}");
 }
 
-// ---- regressions found by the TLC differential ----------------------------
+// ======== regressions found by the TLC differential ========
 
 #[test]
 fn cartesian_product_is_n_ary() {
@@ -307,11 +307,11 @@ fn boolean_literals_are_built_in_not_free_names() {
     assert_eq!(eval("A == TRUE \\in BOOLEAN"), "TRUE");
 }
 
-// ---- `@` in a multi-update EXCEPT ----
+// ======== `@` in a multi-update EXCEPT ========
 //
 // `[f EXCEPT !p1 = v1, !p2 = v2]` abbreviates `[[f EXCEPT !p1 = v1] EXCEPT
 // !p2 = v2]`, so the `@` in `v2` denotes the **partially updated** function at
-// `p2` — not the original `f`, and certainly not `v1`.
+// `p2` – not the original `f`, and certainly not `v1`.
 //
 // The expected values below are TLC's, on `tlaplus 1.7.4`. They are the
 // oracle: the two readings of `@` differ only when two updates touch the same
@@ -337,7 +337,7 @@ fn at_sees_what_an_earlier_update_wrote() {
 }
 
 /// The regression proper. The `@` used to be lowered against the *previous
-/// update's value* — `1[\"b\"]` here — because the function was assumed to sit
+/// update's value* – `1[\"b\"]` here – because the function was assumed to sit
 /// a fixed distance below the top of the value stack, which holds only for the
 /// first update. Silent, and a wrong value rather than a refusal.
 #[test]
@@ -375,7 +375,7 @@ fn at_in_a_multi_update_over_a_function() {
     );
 }
 
-// ---- a tuple IS a function on `1..n` ----
+// ======== a tuple IS a function on `1..n` ========
 //
 // TLA+ has no separate sequence type: `<<3, 4, 5>>` *is* the function with
 // domain `1..3`, so the two spellings denote one value and must compare equal.
@@ -413,7 +413,7 @@ fn a_function_on_another_domain_is_not_a_tuple() {
     assert_eq!(eval("A == [i \\in {\"a\"} |-> 1] = <<1>>"), "FALSE");
 }
 
-// ---- folds ----
+// ======== folds ========
 //
 // `ApaFoldSet` and `ApaFoldSeqLeft` are the only standard operators that take
 // an *operator* as an argument. The kernel stays first-order: lowering keeps
@@ -453,7 +453,7 @@ fn fold_set_takes_a_lambda() {
 
 /// The evaluator's fold order over a set is **ascending** (the members come
 /// out of a `BTreeSet`), and this test pins it out loud. The order is not a
-/// property of the specification — TLA+ specifies none — which is exactly why
+/// property of the specification – TLA+ specifies none – which is exactly why
 /// the *encoder* refuses a non-order-independent operator (see the
 /// `ApaFoldSet` audit in `nixie-tla-check`). For `(a + 1) * (b + 1)` the two
 /// orders genuinely differ (`{2, 3}` folds to `16`, `{3, 2}` to `15`), so the
@@ -535,7 +535,7 @@ fn a_local_definition_of_a_fold_name_wins() {
     );
 }
 
-// ---- multi-variable function definitions ----
+// ======== multi-variable function definitions ========
 //
 // `f[x \in S, y \in T] == e` is a function of *one* variable ranging over
 // `S \X T`, exactly as `[x \in S, y \in T |-> e]` is. The two differ only in
@@ -596,10 +596,10 @@ fn a_tuple_pattern_in_a_multi_variable_definition() {
     );
 }
 
-// ---- a multi-argument EXCEPT selector ----
+// ======== a multi-argument EXCEPT selector ========
 //
 // `[f EXCEPT ![i, j] = v]` is **one** application of a function of two
-// arguments, which in TLA+ is a function of the pair — so it updates `f` at
+// arguments, which in TLA+ is a function of the pair – so it updates `f` at
 // `<<i, j>>`. Flattening the selector into two path steps reads it as
 // `f[i][j]`: a different function and a different value. TLC settles it.
 //
@@ -618,7 +618,7 @@ fn a_multi_argument_except_selector_updates_one_point() {
     );
 }
 
-/// And leaves every other point alone — in particular `<<2, 1>>`, which a
+/// And leaves every other point alone – in particular `<<2, 1>>`, which a
 /// reading of `![1,2]` as `f[1][2]` would have had no way to touch either, and
 /// `<<1, 1>>`, which such a reading would have destroyed.
 #[test]
@@ -680,10 +680,10 @@ fn a_multi_argument_selector_then_a_field() {
     );
 }
 
-// ---- actions: `x'` ----
+// ======== actions: `x'` ========
 //
 // `'` is not a different variable. `e'` is the *same* expression evaluated in
-// the successor state, so priming distributes through everything inside it —
+// the successor state, so priming distributes through everything inside it –
 // which is why the evaluator carries a mode rather than looking up a name
 // spelled `x'`.
 
@@ -757,7 +757,7 @@ fn a_binder_under_a_prime_is_not_a_state_variable() {
 }
 
 /// A constant is unchanged by the step, so it falls through to the ordinary
-/// environment even under a prime — which is what a constant is.
+/// environment even under a prime – which is what a constant is.
 #[test]
 fn an_unprimed_name_in_an_action_reads_the_current_state() {
     assert_eq!(
@@ -786,7 +786,7 @@ fn a_double_prime_is_an_error() {
 }
 
 /// And outside an action there is no next state to read, so `'` stays the
-/// honest refusal it was — a ground definition that mentions it has no value.
+/// honest refusal it was – a ground definition that mentions it has no value.
 #[test]
 fn a_prime_outside_an_action_is_still_refused() {
     let k = lower_action("A == x' = 1");
@@ -799,11 +799,11 @@ fn a_prime_outside_an_action_is_still_refused() {
     );
 }
 
-// ---- the standard infinite sets ----
+// ======== the standard infinite sets ========
 //
 // `Nat`, `Int`, `Real` and `STRING` have no finite extension, so they are not
-// values this evaluator can build. Membership in one is still decidable — by
-// the *kind* of the value — and that is the only thing a state predicate ever
+// values this evaluator can build. Membership in one is still decidable – by
+// the *kind* of the value – and that is the only thing a state predicate ever
 // asks of them.
 
 #[test]
@@ -822,7 +822,7 @@ fn membership_in_int() {
 }
 
 /// TLA+'s `Real` contains every integer, and a genuine real is not a value
-/// this evaluator has — so the answer is exact for everything it can be asked.
+/// this evaluator has – so the answer is exact for everything it can be asked.
 #[test]
 fn membership_in_real() {
     assert_eq!(eval("A == 3 \\in Real"), "TRUE");
@@ -861,11 +861,11 @@ fn non_membership_in_nat() {
     assert_eq!(eval("A == 2 \\notin Nat"), "FALSE");
 }
 
-// ---- recursive function definitions ----
+// ======== recursive function definitions ========
 //
 // `Fib[k \in 0..15] == … Fib[k-1] …` is ordinary TLA+ and needs no `RECURSIVE`
 // keyword. Inlining it reproduces the body inside itself, and the only thing
-// that stops is the lowering budget — so the recursion is kept instead, and
+// that stops is the lowering budget – so the recursion is kept instead, and
 // the evaluator ties the knot by repeated refinement over the finite domain.
 
 #[test]
@@ -880,7 +880,7 @@ fn a_recursive_function_is_computed() {
 #[test]
 fn a_recursive_function_is_a_function() {
     // On `1..n` a function *is* a tuple in TLA+, and `Value::fun` normalises
-    // it — so factorial over `1..4` prints as a sequence.
+    // it – so factorial over `1..4` prints as a sequence.
     assert_eq!(
         eval("f[k \\in 1..4] == IF k = 1 THEN 1 ELSE k * f[k-1]\nA == f"),
         "<<1, 2, 6, 24>>"
@@ -919,16 +919,16 @@ fn a_plain_function_definition_still_works() {
     assert_eq!(eval("f[k \\in 1..3] == k * 10\nA == f[2]"), "20");
 }
 
-// ===== Bags =====
+// ======== Bags ========
 // Each case is the standard module's own definition (`Bags.tla`, read from
-// tla2tools 1.7.4) evaluated over the function representation — a bag IS a
+// tla2tools 1.7.4) evaluated over the function representation – a bag IS a
 // function whose range is the positive naturals, so `SetToBag({1,2})`
 // prints as the function `[e ∈ {1,2} |-> 1]` and equals it structurally.
 
 #[test]
 fn bags_set_to_bag_and_back() {
     // SetToBag(S) == [e ∈ S |-> 1]; BagToSet(B) == DOMAIN B.
-    // A bag whose domain is exactly 1..n prints as the sequence spelling —
+    // A bag whose domain is exactly 1..n prints as the sequence spelling –
     // the same function value, the same way TLC prints it.
     assert_eq!(eval("A == SetToBag({1, 2})"), "<<1, 1>>");
     assert_eq!(eval("A == SetToBag({2, 5})"), "(2 :> 1 @@ 5 :> 1)");
@@ -990,7 +990,7 @@ fn bags_cardinality_and_subbag_order() {
 
 #[test]
 fn bags_union_of_a_set_of_bags() {
-    // BagUnion takes a SET of bags — one operator, per Bags.tla.
+    // BagUnion takes a SET of bags – one operator, per Bags.tla.
     assert_eq!(
         eval("A == BagUnion({SetToBag({1}), [e ∈ {1, 2} |-> 2]})"),
         "<<3, 2>>"
@@ -1004,7 +1004,7 @@ fn bags_union_of_a_set_of_bags() {
 
 #[test]
 fn bags_subbag_enumerates_all() {
-    // SubBag(B): every bag bounded by B — for [1 |-> 2] that is the empty
+    // SubBag(B): every bag bounded by B – for [1 |-> 2] that is the empty
     // bag, one copy, two copies: three subbags.
     // (The 1..n-domain subbags print in the sequence spelling, like TLC.)
     assert_eq!(eval("A == SubBag([e ∈ {1} |-> 2])"), "{<<>>, <<1>>, <<2>>}");
@@ -1018,7 +1018,7 @@ fn bags_subbag_enumerates_all() {
 
 #[test]
 fn bags_equality_is_function_equality() {
-    // Two spellings of one bag value are equal — the representation is the
+    // Two spellings of one bag value are equal – the representation is the
     // function, nothing else.
     assert_eq!(eval("A == SetToBag({1, 2}) = [x ∈ {2, 1} |-> 1]"), "TRUE");
     assert_eq!(

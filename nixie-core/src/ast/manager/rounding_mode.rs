@@ -4,7 +4,7 @@
 //! but it deliberately adds **no** `TermKind` variant: its five inhabitants
 //! are ordinary nullary `Var` terms interned at that sort. That single choice
 //! is what makes `(declare-const m RoundingMode)` work without touching term
-//! traversal, theory dispatch, substitution, printing or proof logging — a
+//! traversal, theory dispatch, substitution, printing or proof logging – a
 //! rounding mode is, structurally, just another nullary symbol, and EUF
 //! already decides equalities between nullary symbols.
 //!
@@ -21,7 +21,7 @@ impl TermManager {
     /// The *long* form, deliberately: it is the name every mode term is
     /// interned under, so the short alias `RNE` and the long
     /// `roundNearestTiesToEven` denote the identical [`TermId`], and it is the
-    /// spelling `get-model` emits — matching Z3's output.
+    /// spelling `get-model` emits – matching Z3's output.
     #[must_use]
     pub const fn rounding_mode_name(rm: RoundingMode) -> &'static str {
         match rm {
@@ -48,7 +48,7 @@ impl TermManager {
         self.mk_var(Self::rounding_mode_name(rm), sort)
     }
 
-    /// Whether anything in this manager has introduced a rounding mode — a
+    /// Whether anything in this manager has introduced a rounding mode – a
     /// mode term, or a parser-accepted `RoundingMode` declaration.
     #[must_use]
     pub fn rounding_mode_used(&self) -> bool {

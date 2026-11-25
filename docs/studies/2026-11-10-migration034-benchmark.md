@@ -90,8 +90,8 @@ available corpus labels or references; this is not a proof of general soundness.
 | Nixie before | 24 | 24 |
 | Nixie after | 24 | 24 |
 | Z3 4.16.0 | 24 | 35 |
-| Kissat 4.0.4 | 24 | — |
-| CaDiCaL 3.0.1 | 24 | — |
+| Kissat 4.0.4 | 24 | – |
+| CaDiCaL 3.0.1 | 24 | – |
 
 Observed after/before instruction ratios are **1.0016** on all 24 SAT pairs
 and **1.3678** on the 23 jointly solved, agreeing SMT pairs. SAT conflicts,

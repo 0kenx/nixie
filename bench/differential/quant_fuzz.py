@@ -3,7 +3,7 @@
 
 Companion to `mixed_fuzz.py` (the arithmetic generator): this one
 GENERATES random small *quantified* formulas targeting the machinery the
-2026-09 UFLRA unit landed — uninterpreted sorts with free constants,
+2026-09 UFLRA unit landed – uninterpreted sorts with free constants,
 Bool-valued predicates over them, definitional equalities (macro and
 quasi-macro shapes), implication axioms with nested exists/forall,
 tautological antecedents, and ground pins that force witness structure.
@@ -130,7 +130,7 @@ def gen_case():
             lines.append(f"(assert (forall ({decls}) (=> {q} {obs_app})))")
         elif kind < 0.9:
             # Contradictory definitional twin: the same observer defined
-            # as phi and as (not phi) — unsat once any pair instantiates.
+            # as phi and as (not phi) – unsat once any pair instantiates.
             lines.append(
                 f"(assert (forall ({decls}) (= {obs_app} {bool_expr(vs)})))"
             )
@@ -152,7 +152,7 @@ def gen_case():
     if obs_arity == 2:
         lines.append(f"(assert (not (= {a} {b})))" if random.random() < 0.6 else f"(assert (P {a} {b}))")
     # Spoil (~35%): a ground literal that contradicts a forcing axiom if
-    # one exists — turns sat-shaped goals into their unsat twins (the
+    # one exists – turns sat-shaped goals into their unsat twins (the
     # false-`unsat` class matters most: a wrong refutation claims a proof).
     if random.random() < 0.35:
         a, b = random.sample(consts, 2)

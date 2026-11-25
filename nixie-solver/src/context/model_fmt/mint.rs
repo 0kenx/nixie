@@ -4,7 +4,7 @@
 //! # What is minted
 //!
 //! A numeric or bit-vector term the arithmetic and bit-vector solvers never
-//! constrained has no value of its own — the model builder records the sort
+//! constrained has no value of its own – the model builder records the sort
 //! default and marks it so (`Model::set_default`).  Two such terms the
 //! congruence closure kept in *different* classes then printed the same
 //! value, and every table keyed by them described a function that is not
@@ -15,13 +15,13 @@
 //! congruence closure knows, an index or argument position, an `exists`
 //! Skolem constant).  This pass reaches every class through its
 //! **application and `select` members** too, innermost first, and it keys
-//! every one of them by the **point** it reads — the function and the values
+//! every one of them by the **point** it reads – the function and the values
 //! of its arguments, or the array's class and the value of its index:
 //!
 //! * a class a theory valued (a model entry that is not a default, or a
 //!   literal member) keeps that value;
-//! * an application whose point another application already has — theory
-//!   valued or minted — takes that application's value: the printed table
+//! * an application whose point another application already has – theory
+//!   valued or minted – takes that application's value: the printed table
 //!   is a function, and two applications at one point are one entry
 //!   (without this, a fresh value for `(f 4)` beside `(f y)` with `y = 4`
 //!   in the arithmetic model and in another class of the closure gave `f`
@@ -32,8 +32,8 @@
 //!
 //! Distinct classes therefore print distinct values (keeping every
 //! disequality the search decided), one point prints one value (keeping
-//! every table a function), and the printers — the constants, the tables,
-//! the arrays and `(get-value)` — all read the one model that results.  A
+//! every table a function), and the printers – the constants, the tables,
+//! the arrays and `(get-value)` – all read the one model that results.  A
 //! goal where the values still make the printed model falsify an assertion
 //! is caught by `printed_check` and printed without them.
 
@@ -172,7 +172,7 @@ impl Context {
     /// The variables pass 14 minted for: every `Int` / `Real` / bit-vector
     /// declared constant the congruence closure knows, and every declared
     /// constant or `exists` Skolem constant read as an index or passed as an
-    /// argument, the model leaves unvalued or only defaulted — in term-id
+    /// argument, the model leaves unvalued or only defaulted – in term-id
     /// order.
     fn variable_candidates(
         &self,
@@ -219,8 +219,8 @@ impl Context {
 
     /// Every application of a tabulated function and every read of an array
     /// the model does not interpret outright, the congruence closure interned
-    /// and no bound variable occurs in — any sort, since a point is keyed by
-    /// every argument — in term-id order.  An application of a function the
+    /// and no bound variable occurs in – any sort, since a point is keyed by
+    /// every argument – in term-id order.  An application of a function the
     /// model does not tabulate (a recursive definition's) is its
     /// definition's to value; a read of an array a completion interpreted is
     /// that value's to give.
@@ -447,8 +447,8 @@ impl Context {
     /// value the model folds for every other term the closure interned (a
     /// compound argument such as `(+ x 2)` prints the value it folds to), and
     /// the default of every declared constant that prints one (unvalued and
-    /// not about to be minted).  A literal the closure never saw — an element
-    /// value, a constant array's default — was never compared with anything.
+    /// not about to be minted).  A literal the closure never saw – an element
+    /// value, a constant array's default – was never compared with anything.
     fn values_in_use(
         &self,
         model: &crate::solver::Model,

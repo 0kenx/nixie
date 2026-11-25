@@ -3,9 +3,9 @@
 
 use nixie_solver::Context;
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // The reference semantics, width-parametric.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// `2^width`, the modulus of `width`-bit arithmetic. Exact for `width <= 32`,
 /// which is every width these references are used at.
@@ -56,9 +56,9 @@ const BINARY_PREDICATES: [&str; 6] = [
     "bvuaddo", "bvsaddo", "bvusubo", "bvssubo", "bvumulo", "bvsmulo",
 ];
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Driving the solver.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Run `script` and reduce its output to one verdict word.
 fn decide(script: &str) -> String {
@@ -119,15 +119,15 @@ fn check_case(predicate: &str, a: u64, b: u64, width: u32) {
     assert_eq!(
         contradicting, "unsat",
         "({predicate} {a} {b}) at width {width}: reference says {expected}, \
-         so asserting {} must be unsat — a `sat` here means the predicate \
+         so asserting {} must be unsat – a `sat` here means the predicate \
          constrained nothing",
         !expected
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // The cargo-formal conformance fixture.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// cargo-formal fixture `u07_bvuaddo_unsupported.smt2`, verbatim.
 ///
@@ -144,9 +144,9 @@ fn u07_fixture_is_unsat() {
     assert_eq!(decide(script), "unsat");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Exhaustive differential test at width 4.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// All 256 ordered pairs of 4-bit values, for every binary predicate, against
 /// the reference. Split one test per predicate so a failure names the culprit
@@ -189,9 +189,9 @@ fn bvnego_matches_the_reference_at_width_four() {
     assert_eq!(decide(&script_for("bvnego", 0, 0, 4, true)), "unsat");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Width 8, against Rust's own overflow flags.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// The reference agrees with `u8`/`i8`'s own overflow reporting.
 ///
@@ -229,7 +229,7 @@ fn pseudo_random_pairs(count: usize) -> Vec<(u64, u64)> {
     (0..count).map(|_| (next(), next())).collect()
 }
 
-/// 200 pseudo-random 8-bit pairs for every predicate, against the reference —
+/// 200 pseudo-random 8-bit pairs for every predicate, against the reference –
 /// which the test above has pinned to `u8`/`i8`'s own overflow flags.
 ///
 /// 0.3.3/0.3.4: the scripts did not parse (unknown operators).
@@ -255,14 +255,14 @@ fn every_predicate_matches_the_reference_at_width_eight() {
     check_case("bvnego", 0, 127, 8);
 }
 
-// ---------------------------------------------------------------------------
-// Width 64 — the double-width forms.
-// ---------------------------------------------------------------------------
+// ========  ========
+// Width 64 – the double-width forms.
+// ========  ========
 
 /// `bvumulo` and `bvsmulo` at width 64.
 ///
 /// These are the two definitions that build a `2 * w`-bit intermediate
-/// product, so at `w = 64` they exercise a 128-bit multiplier — the region
+/// product, so at `w = 64` they exercise a 128-bit multiplier – the region
 /// finding U-Z11 (wave W1-a, `nixie-theories/src/bv/solver.rs`
 /// `encode_add_const` shifting a `u64` by the bit index) makes unsound for
 /// `bvsub`/`bvneg` above 64 bits. This test is expected to pass once W1-a's
@@ -354,9 +354,9 @@ fn additive_overflow_predicates_at_width_sixty_four() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Sort discipline.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// The overflow predicates obey the same operand rule as every other binary
 /// bit-vector operator (U-Z14): one shared `(_ BitVec w)` sort.

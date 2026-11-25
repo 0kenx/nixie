@@ -3,7 +3,7 @@
 Date: 2026-08-19
 Verdict: **Landed as cadical-parity defaults.** Headline (94-file tracking, canonical
 seed) improved 23 → 17 files above 1.5× of CaDiCaL (geomean 1.129× → 0.952×), 0 verdict
-disagreements. The 5-seed null study is *completion-biased positive, instruction-noisy* —
+disagreements. The 5-seed null study is *completion-biased positive, instruction-noisy* –
 recorded below without inflation. One soundness bug in the new shrink port was found and
 fixed before landing (with two regression tests); it was ours, not pre-existing.
 
@@ -23,18 +23,18 @@ traced via `NIXIE_TRACE_DECISIONS` + a temporary bump trace):
 | raw 1-UIP clause            | 89 (med)      | ~66                  |
 
 Key structural finding (replayed from `cadical --log`): at every restart CaDiCaL's trail
-decision bump-stamps are *perfectly consecutive descending* —
-`[905562, 905561, …, 905554]` — i.e. the trail's decisions are literally the N most
+decision bump-stamps are *perfectly consecutive descending* –
+`[905562, 905561, …, 905554]` – i.e. the trail's decisions are literally the N most
 recently bumped variables in exact order. That is what makes `reuse_trail`'s
 first-cold-stamp walk keep 60% of levels. Our stamps zigzagged (conflicts don't re-bump
 the whole trail) because our learned clauses were 3× fatter and conflicts landed shallow.
 CaDiCaL **without inprocessing** (`--elim=false --probe=false …`) still shows
-1.26 dec/conf and 97.8% reuse — the search core, not preprocessing, holds the regime.
+1.26 dec/conf and 97.8% reuse – the search core, not preprocessing, holds the regime.
 
 ## Change 1: restart EMAs now eat the analysis-walk glue (cadical parity)
 
-`analyze.cpp:1281` feeds the restart EMAs with `levels.size() - 1` — the number of
-decision levels touched by the *whole 1-UIP resolution walk* — not the stored clause's
+`analyze.cpp:1281` feeds the restart EMAs with `levels.size() - 1` – the number of
+decision levels touched by the *whole 1-UIP resolution walk* – not the stored clause's
 LBD. We fed the clause LBD. Distribution consequences (stable-300, traced):
 our fast/slow ratio sat at median **0.82**, crossing the 1.10 margin on 12% of checks;
 first restart fired at conflict **1132** vs CaDiCaL's **73**. The walk-glue statistic is
@@ -58,7 +58,7 @@ result (matched null).
 
 `shrink_block`'s backward trail scan recomputed the popped literal's trail index as
 `cursor + 1` *after* the pop loop. With `cursor.saturating_sub(1)`, a block-UIP at trail
-index 0 leaves the cursor at 0, so `cursor + 1` is the *next* literal above — the block
+index 0 leaves the cursor at 0, so `cursor + 1` is the *next* literal above – the block
 was replaced by the wrong literal's negation. End-to-end symptom: 194 incremental
 model-blocking clauses over an 8-Boolean tautology answered `unsat` in the SMT layer
 (nixie-cli model-counter test; certified-mode independently rejected the verdict, Z3 says
@@ -81,7 +81,7 @@ verdicts cross-checked vs CaDiCaL; deterministic canonical seed):
 | walk-glue + shrink (new default) | **0.952×** | **17** | 0 |
 
 Paired speedup new/legacy on the 79 commonly-completed files: geomean **1.166×**;
-per-file highly bimodal — qwh.50.1250 27.8×, mp1-Nb7T42 20.6×, summle_X4044 7.2×,
+per-file highly bimodal – qwh.50.1250 27.8×, mp1-Nb7T42 20.6×, summle_X4044 7.2×,
 stable-300 5.0× vs frb65 0.03× (frb65 is seed-chaotic: 5–40s within a single config),
 mdp-28 0.06×, constraints_17 0.23×. Known-fragile files (ITC2021_Early_3, worker_550)
 did not regress.
@@ -90,11 +90,11 @@ did not regress.
 
 | arm | completions | med instr | paired geomean default/null |
 |-----|-------------|-----------|------------------------------|
-| default    | 26/30 | 162.9G | — |
+| default    | 26/30 | 162.9G | – |
 | gluenull   | 23/30 | 147.9G | 0.822 (default faster on 10/21 pairs) |
 | shrinknull | 16/30 | 197.5G | 0.690 (default faster on 10/16 pairs) |
 
-Read: the nulls time out more (completion gap is real signal — the null arms *do not
+Read: the nulls time out more (completion gap is real signal – the null arms *do not
 finish* where the default does), but the instruction ratios at n≤21 are mixed and cannot
 support a strong aggregate claim. Per-file, the effect is large and bimodal in both
 directions. The honest conclusion: this is cadical-parity semantics with a clear
@@ -110,11 +110,11 @@ proof of a tuned win.
   quality, more restarts just multiply the 67-decision re-descent cost. Cadical can
   restart every ~3 conflicts because each is nearly free.
 - **Reuse-keep-top-fraction probe** (`NIXIE_REUSE_KEEP`, non-semantic): keeping ~50% of
-  levels at restart cut decisions 466k → 298k — confirms restart *cost* is the lever,
+  levels at restart cut decisions 466k → 298k – confirms restart *cost* is the lever,
   but is not a cadical semantic and was not pursued further once shrink delivered the
   same equilibrium shift semantically.
 - **Propagation completeness**: `NIXIE_CHECK_FIXPOINT` sweep (hanging-unit invariant at
-  decision points, 8k conflicts) — zero violations. BCP is not missing cascades.
+  decision points, 8k conflicts) – zero violations. BCP is not missing cascades.
 - **Restart frequency as cause**: cadical restarts *as often as we do* (4996 vs 5313);
   the difference is entirely cost-per-restart.
 - **Inprocessing as cause**: cadical with all inprocessing disabled still shows the good
@@ -123,14 +123,14 @@ proof of a tuned win.
 
 ## Files
 
-- `nixie-sat/src/solver/conflict.rs` — walk-glue snapshot, `improve_learnt_clause`
+- `nixie-sat/src/solver/conflict.rs` – walk-glue snapshot, `improve_learnt_clause`
   dispatcher, `shrink_and_minimize_clause` / `shrink_block` / `shrink_literal` port,
   bump-block reordering (shrink adds block-UIP vars to the bump set where cadical adds
   them to `analyzed`).
-- `nixie-sat/src/solver/learn.rs` — `note_learned_lbd` EMA input switch (+ nulls).
-- `nixie-sat/src/solver/decide.rs` — restart diagnostics (`restarts_stable`,
+- `nixie-sat/src/solver/learn.rs` – `note_learned_lbd` EMA input switch (+ nulls).
+- `nixie-sat/src/solver/decide.rs` – restart diagnostics (`restarts_stable`,
   `reused_trails`, `reused_levels`), `nixie-restart` trace line.
-- `nixie-sat/src/solver/{mod,search_ext,tests}.rs`, `config_presets.rs`, `lib.rs` —
+- `nixie-sat/src/solver/{mod,search_ext,tests}.rs`, `config_presets.rs`, `lib.rs` –
   config/stats/flag plumbing, fixpoint diagnostic, updated EMA-contract test.
 
 
@@ -155,14 +155,14 @@ arms) – only the reduced arm is stable.
   That clause is entailed (CaDiCaL: input ∧ ¬clause = UNSAT).
 - The level-0 trail has 775 units; **286 are not entailed by the input**
   (per-unit CaDiCaL satisfiability witnesses), starting abruptly at trail
-  index 237 — one poisoned propagation cascade.
+  index 237 – one poisoned propagation cascade.
 - Every learned unit/binary/ternary is RUP-entailed over the live database at
   learn time, and every level-0-pinning learned clause (unit, or
   all-other-literals-false-at-0) is RUP over the then-current DB; every
   in-place rewrite of an original clause by vivify/subsume (5000 + 35 checked)
   is entailed by the pristine input.
 - The first poison unit is pinned via `assign_unit_fact` (a learned unit whose
-  RUP witness resolves through previously learned clauses — the chain bottoms
+  RUP witness resolves through previously learned clauses – the chain bottoms
   out somewhere after the pre-search round; the exact hand-off inside
   `inprocess()` {pure-literal, subsume+strengthen, vivify, transred} is **not
   yet isolated**: disabling subsume or the internal vivify individually makes
@@ -180,24 +180,24 @@ the walk-discovered literals as well and `reset_shrinkable` /
 `mark_shrinkable_as_removable` clear **all** of them.  A stale
 `MF_SHRINKABLE` from one block's reason walk leaking into a later block's
 backward trail scan within the same clause makes that scan pop a foreign
-literal — the same mis-derivation category as the `uip_pos` bug fixed before
+literal – the same mis-derivation category as the `uip_pos` bug fixed before
 landing (and caught then by the `si2-b03` replacement-level assert).  The
 reset now covers `block ∪ walk-marked` on both outcomes.  With the fix, the
-deterministic arm no longer produces the false `unsat` — it stops producing
+deterministic arm no longer produces the false `unsat` – it stops producing
 *any* verdict within 900 s (the trajectory moved from "wrong answer in 67 s"
 to "no answer"), so the fix is proven correct-by-parity but not proven curative
 on this file; the gate below stays until a clean refutation or a root-cause
 isolation lands.
 
 **Gate removed after the flag-reset fix** (see next section): the
-mechanistic fix plus the following evidence replaced the refusal gate —
+mechanistic fix plus the following evidence replaced the refusal gate –
 - both reproducer files answer `sat` under every previously-failing arm
-  (`INPROCESS=1` 71 s / 48 s; full stack 19 s — also *faster* than the
+  (`INPROCESS=1` 71 s / 48 s; full stack 19 s – also *faster* than the
   gated build's 25 s);
 - corpus soundness sweep, combo enabled: 40 files at the default seed plus
-  20 satcomp files × 2 extra seeds — 117 verdicts, 0 disagreements with
+  20 satcomp files × 2 extra seeds – 117 verdicts, 0 disagreements with
   CaDiCaL;
-- differential fuzzer, 2000 iterations — 0 failures (with the gate gone,
+- differential fuzzer, 2000 iterations – 0 failures (with the gate gone,
   the full-stack arm carries the combo automatically);
 - regression test `nixie-sat/tests/shrink_inprocessing_regression.rs`
   (never-UNSAT-under-budget on the seed1 circuit, gated behind
@@ -219,13 +219,13 @@ off and are unaffected.
 Re-measuring Item 2 with the (now ungated) combo surfaced a **false `sat`**:
 `j3037_10_mdd_bm1` answered `sat` under BVE+ELS+inprocessing (CaDiCaL and Z3:
 `unsat`; our default config: `unsat`).  The returned model falsified **134
-input clauses**.  Pre-existing — the parent commit `3fdcd38` reproduces it —
+input clauses**.  Pre-existing – the parent commit `3fdcd38` reproduces it –
 and historically invisible because the stack was off in default sweeps and
 this file timed out elsewhere.
 
 **Root cause** (`nixie-sat/src/preprocessing_core.rs`):
 `ClauseDatabase::len()` returns the number of *live* clauses
-(`num_original + num_learned`) — it shrinks with every deletion — while
+(`num_original + num_learned`) – it shrinks with every deletion – while
 clause IDs index the full slot space.  All five `for i in 0..clauses.len()`
 slot walks in that file (occurrence building, pure-literal, subsumption ×2,
 watch rebuild) therefore stopped early once anything had been deleted,
@@ -241,10 +241,10 @@ walks use `num_slots()` (the dense id upper bound), with the mechanism
 documented at `build_occurrences`.
 
 Regression tests (`nixie-sat/tests/preprocessor_slot_bound_regression.rs`):
-- `len_is_not_a_slot_bound_pure_pin_minimal` — unit-level: delete a clause,
+- `len_is_not_a_slot_bound_pure_pin_minimal` – unit-level: delete a clause,
   build occurrences, assert the tail clause is visible (verified to FAIL on
   the bug and PASS on the fix).
-- `j3037_stack_is_unsat` — end-to-end verdict pin under the full
+- `j3037_stack_is_unsat` – end-to-end verdict pin under the full
   BVE+ELS+inprocessing combination (`NIXIE_SLOW_REGRESSIONS`, ~57 s release).
 
 Post-fix: the stack sweep over all 92 CaDiCaL-solvable corpus files produced
@@ -252,11 +252,11 @@ Post-fix: the stack sweep over all 92 CaDiCaL-solvable corpus files produced
 failures; z3_parity 0 wrong; workspace 10046 green.
 
 **Item 2 consequence**: with soundness restored, the stack's earlier
-"1.74× net-negative" verdict is obsolete — on the 17-file dev corpus the
+"1.74× net-negative" verdict is obsolete – on the 17-file dev corpus the
 stack now completes 16/17 vs default 10/15 (0 disagreements), solving the
 two `circuit_48in64` files and `mdp-28`/`noL` where the default times out.
 Whether the stack (or a schedule variant) should become the default is the
-pre-registered factorial study the handover describes — now unblocked, next
+pre-registered factorial study the handover describes – now unblocked, next
 session, with matched nulls per docs/BENCHMARKING.md.
 
 
@@ -283,18 +283,18 @@ also the component with statistical evidence.
 
 **Walk-glue (restart-EMA input) is NOT supported as a performance claim at
 this sample size**: dead-even instructions, p=0.76, and the null completes
-10 more cells — concentrated in one file (`summle_X4053`: T 2/10 vs null
+10 more cells – concentrated in one file (`summle_X4053`: T 2/10 vs null
 9/10; all other files within ±2).  This *revises the 5-seed screening*
-below, which had the default ahead on completions (26 vs 23) — that ordering
+below, which had the default ahead on completions (26 vs 23) – that ordering
 was seed luck.  What survives for walk-glue is the *faithfulness* argument:
 cadical feeds its restart EMAs the analysis-walk glue (`analyze.cpp:1281`)
-and we fed the stored clause LBD — a genuine porting divergence, fixed to
+and we fed the stored clause LBD – a genuine porting divergence, fixed to
 match the reference, with documented single-file wins (stable-300 11.5×)
 and losses in both directions.  Keeping parity is the landed decision;
 **reverting would also be defensible on measurement alone** (the null is
 indistinguishable), and the resolver is a full-corpus multi-seed study,
 recorded as open.
 
-The single-seed tracking metric (23→17) stands as what it is — one seed of
-a chaotic system — and the study's original framing ("recorded without
+The single-seed tracking metric (23→17) stands as what it is – one seed of
+a chaotic system – and the study's original framing ("recorded without
 inflation") is why this addendum can revise rather than contradict it.

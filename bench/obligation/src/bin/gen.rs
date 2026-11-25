@@ -1,4 +1,4 @@
-//! `obligation-gen` — emit a deterministic corpus of certificate-carrying
+//! `obligation-gen` – emit a deterministic corpus of certificate-carrying
 //! instances plus per-instance metadata and a manifest.
 //!
 //! Usage:

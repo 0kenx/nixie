@@ -3,7 +3,7 @@
 //!
 //! The port's first version deleted the subsumed original reason and left
 //! the resolvent *learned*: a later database reduction then removed the only
-//! remaining (weaker) constraint, and the formula was under-constrained —
+//! remaining (weaker) constraint, and the formula was under-constrained –
 //! `Break_unsat_06_07.xml.cnf` answered `sat` in 165 ms under
 //! `INPROCESS+PROBE+HBP+BVE` (CaDiCaL: `unsat`; every proper flag subset
 //! unsat). cadical's `red = !contained || reason->redundant` makes the

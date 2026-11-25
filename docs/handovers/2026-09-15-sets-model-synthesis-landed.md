@@ -1,9 +1,9 @@
-# Handoff: set model synthesis landed — next steps, open chores
+# Handoff: set model synthesis landed – next steps, open chores
 
 **Date:** 2026-09-15
 **Landed by:** the model-synthesis arc (commits `bced380b`, `d4b72e2c`, `d832b82e`)
 **Predecessor:** `docs/handovers/2026-09-15-sets-cardinality-landed.md`
-(whose open chores are now closed — see *Chores* below; its roadmap items 1
+(whose open chores are now closed – see *Chores* below; its roadmap items 1
 is done, 2–4 remain).
 
 ## What landed
@@ -26,7 +26,7 @@ c ∧ choose(ite c A B) ≠ choose(A)    the ite identity is never an atom
 
 Fixes mirror Z3's `theory_finite_set_size::add_eq_axioms`: `a = b →
 card(a) = card(b)` for every equality relation with both sides in the cone
-(asserted equalities **and** implicit pairs — the cone's neighbour walk now
+(asserted equalities **and** implicit pairs – the cone's neighbour walk now
 follows implicit pairs too), `a = b → choose(a) = choose(b)` over the
 surveyed choose-term pairs, and `choose(ite c a b) = ite c (choose a)
 (choose b)`. Eight regressions in `finite_sets_cardinality.rs`.
@@ -34,7 +34,7 @@ surveyed choose-term pairs, and `choose(ite c a b) = ite c (choose a)
 Also in that commit: the counting equations' de-duplication guards mint
 element equalities one pass before the congruence block could see them;
 the new same-pass re-survey closes that window (SAT could commit `k = 5`
-while `k ∈ S` and `5 ∉ S` coexist — an unfaithful-model shape).
+while `k ∈ S` and `5 ∉ S` coexist – an unfaithful-model shape).
 
 ### 2. Set model synthesis (`d4b72e2c`, `d832b82e`)
 
@@ -44,7 +44,7 @@ factory default. New module `nixie-solver/src/solver/set_model.rs`:
 - **Synthesis** (`Solver::extract_set_model`, called last in
   `build_model`): ground members read from the committed membership atoms;
   cardinality targets read from the arithmetic solver (directly, from the
-  model entry, or through the `$p*` purification proxy — `set.card` is a
+  model entry, or through the `$p*` purification proxy – `set.card` is a
   foreign numeric leaf, see `purify_arith::PurifyState::proxy_of`);
   fresh elements minted per **equality class** of set terms (committed
   equality atoms + mutual subsets), propagated along committed subset
@@ -53,14 +53,14 @@ factory default. New module `nixie-solver/src/solver/set_model.rs`:
   Elements the model left unconstrained are minted distinct, with a
   collision-repair pass (the arith pass defaults every free integer to 0;
   two defaulted-equal elements with disagreeing memberships are re-minted
-  where unconstrained — if both values were pinned, the congruence axioms
+  where unconstrained – if both values were pinned, the congruence axioms
   would have forced agreement, so disagreement proves a pure default).
 - **Verified before published**: every cardinality target, committed
   equality/subset/membership atom and choose axiom is re-checked against
   the synthesized values; any definite mismatch rolls the whole sort back
   to unassigned (the honest pre-synthesis non-answer).
 - **`SetView`**, the shared read-only evaluator used by both
-  `Model::eval` (`get-value`/`get-model` folding — `set.member`/
+  `Model::eval` (`get-value`/`get-model` folding – `set.member`/
   `set.card`/`set.subset`/`set.choose` fold to constants, set terms fold
   to canonical `set.union`-of-`set.singleton` values) and the
   model-verification soundness gate (now set-aware: set-sorted equality
@@ -75,7 +75,7 @@ and `(get-value ((set.card S)))` folds to `3`.
 
 ## Chores from the predecessor (all closed)
 
-1. **Parity re-run** after `0682a6ed`/`8dbf0908`: done, z3 4.16.0 —
+1. **Parity re-run** after `0682a6ed`/`8dbf0908`: done, z3 4.16.0 –
    176 correct / 1 inconclusive / 0 mismatch, byte-identical to the
    tracked `results.linux-x86_64.json` (no movement; the corpus has no
    set problems).
@@ -95,7 +95,7 @@ and `(get-value ((set.card S)))` folds to `3`.
   being repaired by a parallel agent (`/tmp/wt-repair` was actively
   running them). Machine load was 20–39 on 20 cores from parallel agents.
 - `Model::eval` folds `=` but not order comparisons (`>=`, `>`) over any
-  theory — `(>= x 3)` echoes for a pure integer `x` too. Pre-existing,
+  theory – `(>= x 3)` echoes for a pure integer `x` too. Pre-existing,
   general (not set-specific); a cheap constant-folding arm would fix it
   for everyone.
 
@@ -108,26 +108,26 @@ single-constructor datatypes (`(_ Tuple A B)`, `(Tuple A B)`,
 `rel.*` operators reduce through the eager membership scheme
 (`set_theory/mod.rs`; reference CVC5 `theory_sets_rels.cpp`):
 
-- `t ∈ transpose(r) ⇔ rev(t) ∈ r` — `mk_tuple_select` folds over
+- `t ∈ transpose(r) ⇔ rev(t) ∈ r` – `mk_tuple_select` folds over
   constructors, so `rev((1,2))` is the literal `(2,1)`.
-- `(t,u) ∈ a×b ⇔ t ∈ a ∧ u ∈ b` — projections join the operands'
+- `(t,u) ∈ a×b ⇔ t ∈ a ∧ u ∈ b` – projections join the operands'
   element lists in the same pass (a pre-pass feeds derived elements
   before the definition loop).
 - `(a,b) ∈ iden(s) ⇔ a ∈ s ∧ a = b`.
 - Join: split (skolem per (element, join), like the disequality
   witnesses) + compose over ground pairs, capped at 512 with the
   honesty gate. Column arithmetic per CVC5's type rule:
-  `(A,B) ⨝ (B,C) : (A,C)` — the middle column is dropped.
+  `(A,B) ⨝ (B,C) : (A,C)` – the middle column is dropped.
 - Cardinality: `|transpose r| = |r|`, `|iden s| = |s|`,
   `|a×b| = |a|·|b|` (only when the product's support is not exact),
-  and **`|r⨝s| ≤ |r|·|s|`** — the bound closed a false-`sat` class
+  and **`|r⨝s| ≤ |r|·|s|`** – the bound closed a false-`sat` class
   (`|J| = 2` with `|r| = |s| = 1` answered `sat`; `J` is determined).
 
 Parity re-run after the change: z3 4.16.0, 176 correct / 1
-inconclusive / 0 mismatch — byte-identical to the record (the corpus
+inconclusive / 0 mismatch – byte-identical to the record (the corpus
 has no relation problems). Known honest declines: pure product
 cardinality over unconfined operands (nonlinear gate), rel compounds in
-`get-value` echo (opaque relation variables synthesize fully —
+`get-value` echo (opaque relation variables synthesize fully –
 `r = {(1,2), (3,4)}` prints as tuples). `precompile/2540544a/` cached.
 A debug-only false alarm in the datatype model verifier was fixed
 (tuples over Int/Bool are outside the pure-datatype fragment).
@@ -136,12 +136,12 @@ A debug-only false alarm in the datatype model verifier was fixed
 
 The synthesis-reach item's rel half is done: transpose/product/iden
 values now print and fold (`SetView` reads rel compounds through their
-installed entries — one source of truth for `get-value`, the gate, and
+installed entries – one source of truth for `get-value`, the gate, and
 nested reads); a cross-sort pass computes them after every sort's
 opaque values land, verified against their cardinality targets with
 rel-only rollback. Tuple-element component resolution makes committed
 members like the join split `(1, k)` read as the constructor over
-resolved (or freshly minted) components — both splits resolve through
+resolved (or freshly minted) components – both splits resolve through
 the one skolem entry, so the middles meet. A card target on a rel
 compound no longer rolls the operand's model back. The collision repair
 learned that an undecided atom is not a conflict and that a *refuted*
@@ -158,21 +158,21 @@ Chasing the join's model decline three defects deep, each fixed at its
 layer:
 
 - **One witness per disequality**: the implicit opaque pairs are
-  canonically ordered — the survey's discovery order flips as assertions
+  canonically ordered – the survey's discovery order flips as assertions
   accumulate, and a flipped pass minted a *second* witness
   (`@set_ext_a_b` beside `@set_ext_b_a`) with the opposite xor
   orientation. One unordered pair, one witness, stable across re-runs.
 - **Tuple surjectivity**: every tuple-sorted element equals its selector
-  rebuild — the constructor-surjectivity axiom the internally-declared
+  rebuild – the constructor-surjectivity axiom the internally-declared
   tuple sorts never get from `declare-datatype`.
 - **Skolem-faithful values**: the reduction's own existentials override
-  their defaults (arith's zero, the datatype canonical tuple — which
+  their defaults (arith's zero, the datatype canonical tuple – which
   sometimes carries the wrong arity, now caught by sort-sanity gates
   that decline instead of printing an ill-sorted value) with fresh
   distinct witnesses, unless a committed-true equality pins them.
 
 The join's own value still declines (the datatype default machinery's
-wrong-arity constructors for tuple sorts are the next layer — see the
+wrong-arity constructors for tuple sorts are the next layer – see the
 `tuple 7` in a binary relation from the debug trail); verdicts and all
 other rel values unaffected. Two model tests were pinned against
 witness-side drift (the xor satisfies on either side freely). Parity
@@ -185,21 +185,21 @@ The named "datatype wrong-arity tuple default" hunt found a **false-sat
 class** instead, plus the arity bug that produced those tuples:
 
 - **Dead push**: the join splits (`u`, `v`, the middle `k`) were pushed
-  into the element lists keyed by `element_sort(derived)` — a *set's*
-  element sort, `None` for a tuple — so the push never happened and the
+  into the element lists keyed by `element_sort(derived)` – a *set's*
+  element sort, `None` for a tuple – so the push never happened and the
   counting equations were blind to them. `(a,c) ∈ r ⨝ s` with both
   operands exactly pinned to a non-connecting pair answered `sat`.
   Fixed: key on the term's own sort, and derive the splits in a
   pre-pass *before* cardinality (a final assert's split is counted in
   the same pass). The feedback loop this opened (element lists
   ballooning) is closed by deriving splits only for user-reachable
-  elements — a split of a split re-derives what compose already forces —
+  elements – a split of a split re-derives what compose already forces –
   and skipping split-derived operands in the compose rule.
 - **`join_arities` returned decremented lengths** used as full ones: a
-  binary ⨝ binary built `(k)` and `(k, 1, 3)` — the wrong-arity tuples
+  binary ⨝ binary built `(k)` and `(k, 1, 3)` – the wrong-arity tuples
   from the debug trail, cross-sort elements no model could value.
 - **Tuple ctor equality now unfolds componentwise in `mk_eq`** (datatype
-  injectivity as a builder rewrite — holds in the counting guards too).
+  injectivity as a builder rewrite – holds in the counting guards too).
 - `rel_join_sort` + the parser follow CVC5's unary-join rule (only two
   unary operands rejected).
 - Model side: tuple mints enter components into `used` (every minted
@@ -207,7 +207,7 @@ class** instead, plus the arity bug that produced those tuples:
   self-entries with unresolved components re-resolve, and sweep-derived
   values are fixed under the collision repair.
 
-The join's own `get-value` display still declines honestly — the
+The join's own `get-value` display still declines honestly – the
 datatype reconstruction's arity handling is *still* the remaining layer
 (the sort-sanity gates contain it). Parity: 176/1/0, z3 4.16.0,
 byte-identical. `precompile/4ade3b1e/` cached.
@@ -224,13 +224,13 @@ byte-identical. `precompile/4ade3b1e/` cached.
    witness), complements over large finite sorts (> 1024 elements,
    `MAX_UNIVERSE_ENUM`), the join's own value (next layer: the datatype
    reconstruction defaults tuple-sorted vars with wrong-arity
-   constructors — fix the default to respect the sort's own constructor),
+   constructors – fix the default to respect the sort's own constructor),
    and pure product cardinality (a linear encoding of `|a×b|` via
    pairwise guards). Each extends naturally from the class/swap
    machinery in `set_model.rs`.
 3. **Remaining rel surface**: `rel.tclosure` (needs a fixpoint or a
    bounded-unrolling scheme), `rel.join_image`, `rel.group`,
-   `rel.project`, `rel.table_join` — all currently honest parse-level
+   `rel.project`, `rel.table_join` – all currently honest parse-level
    unknowns/rejections.
 4. **Caps re-measurement** (`MAX_CONE_SETS=40`, `MAX_COUNT_ELEMENTS=24`,
    `MAX_JOIN_PAIRS=512`): once the TLA+ corpus runs green end-to-end,

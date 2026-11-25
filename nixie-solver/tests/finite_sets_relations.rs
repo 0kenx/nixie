@@ -1,6 +1,6 @@
 //! Relations: the `rel.*` operators over tuple sorts, end to end.
 //!
-//! Tuples are single-constructor datatypes (`(_ Tuple A B)` — structural,
+//! Tuples are single-constructor datatypes (`(_ Tuple A B)` – structural,
 //! declared once per field-sort list), and the operators reduce through
 //! the same eager membership scheme as the rest of the finite-set theory
 //! (CVC5's `theory_sets_rels.cpp` is the reference):
@@ -13,10 +13,10 @@
 //! u ∈ r ∧ v ∈ s ∧ last(u) = first(v) ⇒ glue(u,v) ∈ r ⨝ s  (compose)
 //! ```
 //!
-//! The join keeps CVC5's column arithmetic: `(A,B) ⨝ (B,C) : (A,C)` — the
+//! The join keeps CVC5's column arithmetic: `(A,B) ⨝ (B,C) : (A,C)` – the
 //! shared middle column is dropped. Cardinality rules: `|transpose r| =
 //! |r|`, `|iden s| = |s|`, `|a×b| = |a|·|b|` and `|r⨝s| ≤ |r|·|s|` (the
-//! bound is what keeps a join's slack from being unconstrained above — a
+//! bound is what keeps a join's slack from being unconstrained above – a
 //! false-`sat` class caught while landing this).
 //!
 //! Each case's status was cross-checked against CVC5's semantics while
@@ -53,7 +53,7 @@ fn solve_smt(script: &str) -> SolverResult {
     }
 }
 
-// ===== the tuple surface =====
+// ======== the tuple surface ========
 
 /// `(_ tuple.select i)` reads components, `(_ tuple.update i)` writes them,
 /// and `tuple.unit` is the empty tuple.
@@ -95,7 +95,7 @@ fn tuple_equality_is_componentwise() {
     assert_eq!(sat, SolverResult::Sat);
 }
 
-// ===== transpose =====
+// ======== transpose ========
 
 /// `(1,2) ∈ transpose(r)` forces `(2,1) ∈ r`.
 #[test]
@@ -130,7 +130,7 @@ fn double_transpose_round_trips() {
     assert_eq!(got, SolverResult::Unsat);
 }
 
-// ===== product =====
+// ======== product ========
 
 /// `t ∈ a ∧ u ∈ b` puts `(t, u)` in the product; denying it is unsat.
 #[test]
@@ -184,7 +184,7 @@ fn unconfined_product_cardinality_declines_honestly() {
     assert_eq!(got, SolverResult::Unknown);
 }
 
-// ===== iden =====
+// ======== iden ========
 
 /// The diagonal is over equal components: `(3,4) ∈ iden(a)` is unsat.
 #[test]
@@ -224,7 +224,7 @@ fn iden_cardinality_is_the_operands() {
     assert_eq!(got, SolverResult::Unsat);
 }
 
-// ===== join =====
+// ======== join ========
 
 /// The compose rule: connecting members force the joined member.
 /// `(1,2) ∈ r ∧ (2,3) ∈ s` puts `(1,3)` in `r ⨝ s` (the middle column is
@@ -260,7 +260,7 @@ fn join_splits_through_a_witness() {
 
 /// `|r ⨝ s| ≤ |r|·|s|`: a join of two singletons cannot have two members.
 /// (The bound is what keeps the join's slack from being unconstrained
-/// above — without it this answered `sat`.)
+/// above – without it this answered `sat`.)
 #[test]
 fn join_cardinality_is_bounded() {
     let got = solve_smt(
@@ -292,7 +292,7 @@ fn join_witnesses_freely() {
     );
     assert_eq!(sat, SolverResult::Sat);
     // s pinned to its one non-connecting member: the join needs (1,x) ∈ r
-    // with (x,3) ∈ s — only (5,3) ∈ s, so r must hold (1,5), which a free
+    // with (x,3) ∈ s – only (5,3) ∈ s, so r must hold (1,5), which a free
     // r can.
     let sat2 = solve_smt(
         "(set-logic ALL)\n\
@@ -307,7 +307,7 @@ fn join_witnesses_freely() {
     assert_eq!(sat2, SolverResult::Sat);
 }
 
-// ===== the model side =====
+// ======== the model side ========
 
 /// A relation variable's members print as tuples, and the queries fold.
 #[test]
@@ -340,7 +340,7 @@ fn relation_models_print_tuples() {
     );
 }
 
-// ===== the surface's error side =====
+// ======== the surface's error side ========
 
 /// Non-joinable relations are a parse error, as in CVC5.
 #[test]
@@ -356,7 +356,7 @@ fn non_joinable_relations_are_rejected() {
     assert!(out.is_err(), "boundary mismatch must be rejected");
 }
 
-// ===== rel compounds in the model =====
+// ======== rel compounds in the model ========
 
 /// A transpose's value prints (reversed tuples) and its queries fold.
 #[test]
@@ -506,11 +506,11 @@ fn join_value_prints() {
     );
 }
 
-// ===== the join split's counting (a closed false-`sat` class) =====
+// ======== the join split's counting (a closed false-`sat` class) ========
 
 /// `(a,c) ∈ r ⨝ s` with both operands pinned exactly to a non-connecting
 /// pair is unsatisfiable: the split's witness `(a,k) ∈ r` forces a second
-/// member past `r`'s exact size. This was a **false `sat`** — the split
+/// member past `r`'s exact size. This was a **false `sat`** – the split
 /// terms were pushed into the element lists under a key read as a *set's*
 /// element sort (`None` for a tuple), so the push silently never happened
 /// and the counting equations never saw them.
@@ -635,16 +635,16 @@ fn unary_join_typing_follows_cvc5() {
 // `mk_eq` unfolds a tuple-constructor equality componentwise (datatype
 // injectivity as a builder rewrite), so two ctor-spelled tuple elements
 // never carry a syntactic `Eq` between them: their equality is decided at
-// the *component* level. Before the congruence pass stated the dual —
+// the *component* level. Before the congruence pass stated the dual –
 // `C(xs) = C(ys) → (C(xs) ∈ S ↔ C(ys) ∈ S)`, with the component
-// conjunction as antecedent — SAT could commit the component equalities
+// conjunction as antecedent – SAT could commit the component equalities
 // beside disagreeing membership atoms, an arrangement no set family
 // realizes, and each of the four shapes below answered `sat` (CVC5
 // 1.3.4: `unsat` on every one).
 
-/// Door 1 — the join's own skolem middle: `r = {(1,2)}` exactly, so
+/// Door 1 – the join's own skolem middle: `r = {(1,2)}` exactly, so
 /// `(1,3) ∈ r ⨝ s` forces the witness `k = 2` through the extensional
-/// singleton, and `(k,3) ∈ s` is then `(2,3) ∈ s` — contradicting the
+/// singleton, and `(k,3) ∈ s` is then `(2,3) ∈ s` – contradicting the
 /// asserted non-membership.
 #[test]
 fn join_split_skolem_pinned_by_singleton_is_congruent() {
@@ -660,7 +660,7 @@ fn join_split_skolem_pinned_by_singleton_is_congruent() {
     assert_eq!(got, SolverResult::Unsat);
 }
 
-/// Door 2 — a user's component equality: `x = 3` makes `(1,x)` and the
+/// Door 2 – a user's component equality: `x = 3` makes `(1,x)` and the
 /// compose-derived `(1,3)` the same element, so their memberships in the
 /// join must agree; the compose rule forces `(1,3) ∈ J`, the assertion
 /// negates `(1,x) ∈ J`.
@@ -680,7 +680,7 @@ fn join_component_equality_is_congruent() {
     assert_eq!(got, SolverResult::Unsat);
 }
 
-/// Door 3 — a syntactic tuple-level equality (`t = (1,x)`) at the join:
+/// Door 3 – a syntactic tuple-level equality (`t = (1,x)`) at the join:
 // congruence used to be stated at opaque sets only, and a join is the one
 // shape whose membership is not per-element defined from its bases.
 #[test]
@@ -701,7 +701,7 @@ fn join_syntactic_tuple_equality_is_congruent() {
     assert_eq!(got, SolverResult::Unsat);
 }
 
-/// Door 4 — no opaque set at all: the join of two literal singletons
+/// Door 4 – no opaque set at all: the join of two literal singletons
 /// still needs congruence, and the `any_opaque` gate used to skip the
 /// whole pass for formulas whose sets are all literal leaves.
 #[test]
@@ -737,11 +737,11 @@ fn join_compose_syntactic_glue_still_refutes() {
     assert_eq!(got, SolverResult::Unsat);
 }
 
-/// The mirror of door 2: without the negation the join is satisfiable —
+/// The mirror of door 2: without the negation the join is satisfiable –
 /// congruence must not overconstrain the ordinary connectable shape.
 /// The shape crosses the congruence pair budget (the compose feedback
 /// fills the element lists), so the honest verdict may degrade to
-/// `Unknown`; the one forbidden answer is `Unsat` — that would mean the
+/// `Unknown`; the one forbidden answer is `Unsat` – that would mean the
 /// congruence axioms overconstrained a satisfiable formula.
 #[test]
 fn join_component_equality_congruence_is_not_overconstrained() {
@@ -763,7 +763,7 @@ fn join_component_equality_congruence_is_not_overconstrained() {
 /// witnesses are pre-minted against a component-level used set, so no
 /// fresh value collides with a genuine constant and the collision repair
 /// no longer declines the whole sort (the join's own value may still
-/// echo honestly — see `join_value_declines_honestly_today`).
+/// echo honestly – see `join_value_declines_honestly_today`).
 #[test]
 fn join_operand_models_print_after_congruence() {
     let mut context = nixie_solver::Context::new();
@@ -789,11 +789,11 @@ fn join_operand_models_print_after_congruence() {
     );
 }
 
-// ===== query-side composition and the self-referential-pin fix =====
+// ======== query-side composition and the self-referential-pin fix ========
 
 /// A join the assertions never mention still folds under `get-value`:
 /// the compound is a function of its operands, whose values the model
-/// already verified — `r = {(1,2)}` and `s = {(2,3)}` compose to
+/// already verified – `r = {(1,2)}` and `s = {(2,3)}` compose to
 /// `{(1,3)}`. Before the on-demand pass this echoed (the model-build
 /// survey walks only the assertions, so a query-only compound had no
 /// entry to print).
@@ -851,7 +851,7 @@ fn query_only_transpose_and_product_fold() {
 
 /// A tuple-typed *variable* member no longer declines the whole sort's
 /// display: the extensionality witness used to sit "pinned" by the tuple
-/// surjectivity axiom (`e = (sel₁ e, sel₂ e)` — a self-referential,
+/// surjectivity axiom (`e = (sel₁ e, sel₂ e)` – a self-referential,
 /// vacuous pin) beside `t = (1,2)`, its stale default colliding with the
 /// variable's value while their membership atoms disagreed; the repair
 /// refused and every set of the sort printed empty.

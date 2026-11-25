@@ -107,8 +107,8 @@ cp.cumulative_optional(vec![OptionalTask {
 
 Variable durations/demands (and variable capacity) are separate future work:
 they require new declarations, conditional arithmetic, propagation rules, and
-independent proof/model semantics. Stronger cumulative filtering—energetic
-reasoning, edge finding, and broader joint-support reasoning—is also separately
+independent proof/model semantics. Stronger cumulative filtering–energetic
+reasoning, edge finding, and broader joint-support reasoning–is also separately
 scoped and is **not implemented**. No performance improvement is claimed.
 
 An empty domain is infeasible. A zero-arity table containing the empty tuple is

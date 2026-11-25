@@ -13,12 +13,12 @@
 //!   that cancels drops the summand; scalar 1 leaves the bare node;
 //! * in a product, a zero constant swallows everything and the folded
 //!   constant is prepended unless it is 1 (`postRewriteFfMult`);
-//! * children are ordered by `TermId` — cvc5's `std::map<Node>` ordering —
+//! * children are ordered by `TermId` – cvc5's `std::map<Node>` ordering –
 //!   so the form is canonical for hash-consing;
 //! * `ff.bitsum` folds when every child is a numeral:
 //!   `Σ 2ⁱ · bᵢ` evaluated in the field (`postRewriteFfBitsum`);
 //! * `=` between two numerals folds to `true`/`false` and is otherwise
-//!   oriented by term order (`postRewriteFfEq`) — that last rule lives in
+//!   oriented by term order (`postRewriteFfEq`) – that last rule lives in
 //!   `mk_eq` (builder.rs), like the other equality folds.
 
 use super::super::term::{TermId, TermKind};
@@ -183,7 +183,7 @@ impl TermManager {
             return self.mk_binary_fold(field, args, true);
         }
         let flat = self.ff_flatten(true, &args);
-        // Every operand must live in `field` — a mix is a type error.
+        // Every operand must live in `field` – a mix is a type error.
         for &a in &flat {
             if self.ff_field_of(a)? != field {
                 return Err(FfBuildError::FieldMismatch);
@@ -463,12 +463,12 @@ impl TermManager {
     /// Used by the substitution walkers (`query/substitute.rs`,
     /// `ematching/substitution/apply.rs`), which must return a `TermId`, not
     /// a `Result`. The normal-form builders are tried first; if they refuse
-    /// (which for an interned, well-typed node cannot happen — the only
+    /// (which for an interned, well-typed node cannot happen – the only
     /// failure modes are field mismatches and dangling ids, both excluded by
     /// the term having been interned at one field sort), the node is
     /// re-interned with its substituted children verbatim. That fallback is
-    /// still *semantically exact* — `ff.add` applied to substituted operands
-    /// is the substituted sum — it only loses the folded normal form, which
+    /// still *semantically exact* – `ff.add` applied to substituted operands
+    /// is the substituted sum – it only loses the folded normal form, which
     /// every consumer re-establishes through the builders. Total, no
     /// `unwrap`, and never a fabricated value.
     pub fn intern_ff_substituted(&mut self, kind: TermKind, sort: SortId) -> TermId {

@@ -70,7 +70,7 @@ on what a different propagation architecture could achieve.
 | User cycles/conflict | 124,526.827 | 122,689.666 | 0.985247 |
 | Branches | 2,677,288,238 | 2,692,544,808 | 1.005699 |
 | Branch misses | 61,542,806 | 61,839,262 | 1.004817 |
-| Reported verdict | Unknown | Unknown | — |
+| Reported verdict | Unknown | Unknown | – |
 | Solved at cap | 0/1 | 0/1 | unchanged |
 
 Instructions fell 0.91% and measured cycles/conflict fell 1.48%, below the

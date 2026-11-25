@@ -266,7 +266,7 @@ pub fn alpha_equivalent(lhs: TermId, rhs: TermId, manager: &TermManager) -> bool
                         }
                     }
                     // A field numeral's identity is its (normalized)
-                    // residue and its field — both interned, so the pair
+                    // residue and its field – both interned, so the pair
                     // decides equality.
                     TermKind::FfConst {
                         value: v1,
@@ -369,7 +369,7 @@ pub fn alpha_equivalent(lhs: TermId, rhs: TermId, manager: &TermManager) -> bool
                     // `bag.map f b` / `bag.filter p b`: the symbol is part
                     // of the identity (`bag.fold`'s discipline); the bag
                     // compares as a child.  Same conservative-`false` hole
-                    // as the structural walk — see the comment there.
+                    // as the structural walk – see the comment there.
                     TermKind::BagMap {
                         func: f1,
                         ret: r1,

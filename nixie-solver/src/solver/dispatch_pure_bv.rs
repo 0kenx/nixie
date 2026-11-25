@@ -99,7 +99,7 @@ impl crate::solver::Solver {
         }
 
         // Stage-4 routing (`bv_dispatch_unified`): pure goals without wide
-        // multipliers are owned by the unified general path — unless the
+        // multipliers are owned by the unified general path – unless the
         // unconstrained-variable elimination fires, in which case the
         // eager dispatch takes the goal over (Z3's `qfbv` pipeline runs
         // `elim-uncnstr` after `solve-eqs` and before bit-blasting; goals
@@ -133,7 +133,7 @@ impl crate::solver::Solver {
                         * super::bv_elim_uncnstr::TAKEOVER_SHRINK_NUM;
                 if outcome.fresh_vars == 0 || !shrunk {
                     // Nothing eliminated, or the rewrite does not meaningfully
-                    // shrink the goal — diverting a goal its existing route
+                    // shrink the goal – diverting a goal its existing route
                     // already solves is a measured regression
                     // (`tacas07/BBB-32` & friends): the unified general path
                     // owns this goal (its stage-4 preprocessing-parity pass
@@ -162,7 +162,7 @@ impl crate::solver::Solver {
         self.rebase_theory_state();
 
         // Rewrite every assertion through the BV normalizer (Z3's `qfbv`
-        // preamble: solve-eqs + simplify-with-som before bit-blast) —
+        // preamble: solve-eqs + simplify-with-som before bit-blast) –
         // already computed for the routing trial above, so reuse it.
         // Ring identities become syntactic here – `distrib16`-style goals
         // collapse to `true`/`false` with no SAT search, and `X±c`
@@ -182,7 +182,7 @@ impl crate::solver::Solver {
         };
 
         // For goals the dispatch already owns (wide-`bvmul` routing or
-        // `NIXIE_BV_DISPATCH_UNIFIED=0`), run the elimination as well —
+        // `NIXIE_BV_DISPATCH_UNIFIED=0`), run the elimination as well –
         // Z3's qfbv preamble does so unconditionally, and the wide-mul
         // unconstrained family (`brummayerbiere4/unconstrained04/05`:
         // 1024-bit `bvmul`s around unconstrained operands) is unreachable
@@ -206,7 +206,7 @@ impl crate::solver::Solver {
             }
         }
 
-        // Unconstrained-variable rewrite (Z3 `elim-uncnstr` port — see
+        // Unconstrained-variable rewrite (Z3 `elim-uncnstr` port – see
         // `bv_elim_uncnstr`): *satisfiability*-preserving, not
         // implication-preserving.  Sound here because this dispatch
         // decides the rewritten set alone: `Unsat` is a refutation of an
@@ -229,7 +229,7 @@ impl crate::solver::Solver {
                 .all(|&a| term_in_blastable_fragment(&self.blastable_memo, a, manager))
         {
             // Definition replay order: the uncnstr defs (dependency
-            // order, newest round first) then the solve-eqs definitions —
+            // order, newest round first) then the solve-eqs definitions –
             // the reconstruction fixpoint absorbs any residual order.
             let mut all_elims = outcome.defs;
             all_elims.extend(eliminations);
@@ -281,10 +281,10 @@ impl crate::solver::Solver {
             Ok("0") => 0,
             _ => 32,
         };
-        // Division threshold: OFF by default — a measured negative.  Both
+        // Division threshold: OFF by default – a measured negative.  Both
         // 32 and 64 thresholds A/B'd neutral-to-negative on the only
         // wide-division corpus available (`spear`: geomean 1.079×/1.057×
-        // vs exact, solved identical, 0 verdict changes — see the study):
+        // vs exact, solved identical, 0 verdict changes – see the study):
         // the quotient-multiplication circuit is expensive, but the value
         // lemmas rarely converge there and the round tax is real.  The
         // capability ships sound + regression-tested; enable with
@@ -334,7 +334,7 @@ impl crate::solver::Solver {
         let mut value_rounds: rustc_hash::FxHashMap<TermId, u32> = rustc_hash::FxHashMap::default();
         let mut round = 0usize;
         // Diagnostic split (`NIXIE_DUMP_CNF=<path>`): the instance as the
-        // search sees it before the first check — run an external SAT
+        // search sees it before the first check – run an external SAT
         // solver on it to attribute a gap to the blast or to the search.
         #[cfg(feature = "std")]
         if round == 0
@@ -361,7 +361,7 @@ impl crate::solver::Solver {
                     // Exact product check under the candidate model, per
                     // abstraction (BigUint, no truncation).
                     // (abstraction, operand values) pairs; the default
-                    // value pair marks "value unreadable — terminal-refine".
+                    // value pair marks "value unreadable – terminal-refine".
                     let mut spurious: Vec<(
                         nixie_theories::bv::BvAbstraction,
                         Option<(num_bigint::BigUint, num_bigint::BigUint)>,
@@ -430,7 +430,7 @@ impl crate::solver::Solver {
                                 self.bv.refine_abstraction_value(abs, va, vb);
                             }
                             // Tier 3: the exact circuit, wired into the
-                            // already-abstracted result bits — the
+                            // already-abstracted result bits – the
                             // guaranteed terminal refinement (also the path
                             // for unreadable model values).
                             (_, true) | (None, false) => {
@@ -460,12 +460,12 @@ impl crate::solver::Solver {
         {
             let mut model = self.build_pure_bv_model(manager);
             // The unconstrained-elimination rewrite ran: complete every
-            // still-unassigned free variable — of the original assertions
-            // and of the recorded definitions — with a chosen default
+            // still-unassigned free variable – of the original assertions
+            // and of the recorded definitions – with a chosen default
             // (an unconstrained variable's model value is chosen, not
             // searched; the certificate gate below decides whether the
             // completion works).  Variables that carry an elimination
-            // *definition* are excluded — defaulting them first would
+            // *definition* are excluded – defaulting them first would
             // shadow the definition's own value (the reconstruction pass
             // below skips vars the model already assigns, so a wrong
             // default would win and the completed model could contradict
@@ -518,7 +518,7 @@ impl crate::solver::Solver {
         }
         // Stage-4 routing (`bv_dispatch_unified`): pure goals without wide
         // multipliers decline the dispatch and solve through the unified
-        // main core (the general path's link pass owns their circuits) —
+        // main core (the general path's link pass owns their circuits) –
         // with the elim-uncnstr takeover exception decided inside
         // [`Self::dispatch_pure_bv_solve`] after the trial run.
         // Wide-`bvmul` goals keep the dispatch for its CEGAR machinery, and
@@ -600,7 +600,7 @@ impl crate::solver::Solver {
     /// The unconstrained-elimination rewrite can drop whole sub-DAGs from
     /// the blasted set (their circuits are never built), so variables the
     /// *original* assertions mention may have no bits to read.  Their
-    /// values are **chosen** (`0` / `false`), not searched — sound because
+    /// values are **chosen** (`0` / `false`), not searched – sound because
     /// the dispatch's `Sat` is only ever reported after the completed
     /// model certifies every original assertion
     /// (`model_certifies_assertions`); a completion that does not satisfy
@@ -758,7 +758,7 @@ fn term_in_blastable_fragment(
     // walk returns early and proves nothing about the visited prefix.
     // Solver-owned, NOT thread-local: TermIds are manager-relative, and a
     // thread can own two solvers (e.g. two `Context`s on one Python
-    // thread via nixie-py) whose id spaces collide — a thread-local memo
+    // thread via nixie-py) whose id spaces collide – a thread-local memo
     // would hand solver B a *false positive* proven by solver A, keeping
     // the pure-BV dispatch flag up on unblastable terms (partial-encode
     // territory).  One solver owns one manager, so a solver-owned memo
@@ -786,7 +786,7 @@ fn term_in_blastable_fragment(
             }
         }
         if memo.borrow().contains(&tid) {
-            // This subterm's subtree is already proven — skip it without
+            // This subterm's subtree is already proven – skip it without
             // visiting (and without counting it against MAX_VISITED).
             continue;
         }
@@ -877,7 +877,7 @@ mod blastable_memo_isolation_tests {
     //! The memo must be solver-owned, never thread-local: TermIds are
     //! manager-relative, so two solvers on one thread reuse ids for
     //! unrelated terms.  With a `thread_local!` memo, solver A's proven
-    //! positives read as positives in solver B — the exact id-collision
+    //! positives read as positives in solver B – the exact id-collision
     //! shape reproduced below (A's id-0 term is a BV constant, B's id-0
     //! term is an uninterpreted application).  A leaked positive keeps
     //! `all_assertions_bv_fragment` up on assertions the pure-BV dispatch
@@ -901,7 +901,7 @@ mod blastable_memo_isolation_tests {
 
         // Solver B, same thread, fresh manager: ids restart at zero, so
         // B's *first* interned terms land on the ids A just proved.  B's
-        // low ids are an uninterpreted application — unblastable.
+        // low ids are an uninterpreted application – unblastable.
         let b = Solver::new();
         let mut mgr_b = nixie_core::ast::TermManager::new();
         let bv_sort_b = mgr_b.sorts.bitvec(8);

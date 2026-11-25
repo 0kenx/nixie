@@ -29,9 +29,9 @@ pub(super) enum Exchange {
     /// A shared equality was refuted, or a check ran out of budget; the
     /// carried result is what `final_check` must return.
     Refuted(TheoryCheckResult),
-    /// Something crossed — a leaf equality was asserted and the circuit
+    /// Something crossed – a leaf equality was asserted and the circuit
     /// re-checked, an argument pair was merged, a leaf was created, or a
-    /// probe replaced the circuit's model — so the other direction must run
+    /// probe replaced the circuit's model – so the other direction must run
     /// again.
     Changed,
     /// Nothing crossed and the current model honours every known equality.
@@ -80,14 +80,14 @@ impl TheoryManager<'_> {
     ///
     /// A `false` from the encoder is **not** answered with a fresh free
     /// bit-vector for the whole operand any more (`#P2b-24`).  That fallback
-    /// abstracted a term whose semantics the solver knows — a `bvsub` over an
-    /// `ite` — into unconstrained bits, so the circuit admitted models the
+    /// abstracted a term whose semantics the solver knows – a `bvsub` over an
+    /// `ite` – into unconstrained bits, so the circuit admitted models the
     /// term forbids; a release build published them as `sat` until the model
     /// gate refused them, and a debug build tripped the circuit self-check.
     /// The encoder now abstracts only opaque leaves itself, so what is left
     /// when it fails is structure this solver cannot model, and the honest
-    /// answer is to record the atom on [`Self::bv_atom_unmodelled`] — the
-    /// owning `Solver` then degrades a final `Sat` to `Unknown` — and assert
+    /// answer is to record the atom on [`Self::bv_atom_unmodelled`] – the
+    /// owning `Solver` then degrades a final `Sat` to `Unknown` – and assert
     /// nothing.  A width mismatch is recorded the same way: an ill-sorted
     /// atom is not one the circuit can be trusted about either.
     pub(super) fn bit_blast_bv_pair(
@@ -146,7 +146,7 @@ impl TheoryManager<'_> {
     ///   uninterpreted application or array `select` of bit-vector sort has
     ///   no circuit and is abstracted into a free bit-vector (an *opaque
     ///   leaf*, `BvSolver::new_opaque_leaf`).  Congruence closure owns the
-    ///   equalities between such leaves — `f(a) = f(b)` once `a = b` — and
+    ///   equalities between such leaves – `f(a) = f(b)` once `a = b` – and
     ///   until this pass nothing carried them into the circuit, so `(= a b)
     ///   ∧ (distinct (bvadd (f a) #x01) (bvadd (f b) #x01))` answered `sat`.
     /// * **bit-vector → EUF** ([`Self::share_bv_equalities_with_euf`]): the
@@ -155,8 +155,8 @@ impl TheoryManager<'_> {
     ///   on argument equalities it is told about, so `(= (bvadd x #x01)
     ///   (bvadd y #x01)) ∧ (distinct (g x) (g y))` answered `sat`.
     ///
-    /// The two feed each other — a merged argument pair creates a
-    /// congruence, a shared leaf equality changes the circuit's model — so
+    /// The two feed each other – a merged argument pair creates a
+    /// congruence, a shared leaf equality changes the circuit's model – so
     /// they alternate until a round changes nothing.  Every equality that
     /// crosses in either direction is a *deduction* with a recorded
     /// explanation, never a guess (see the two methods).  Cost on a problem
@@ -167,7 +167,7 @@ impl TheoryManager<'_> {
     /// clause names the atoms, pins and justifications it rests on),
     /// `Some(Sat)` with `resource_exhausted` set when a check ran out of
     /// budget, and `None` when the assignment is consistent with every
-    /// derived equality — or when the exchange could not decide it and
+    /// derived equality – or when the exchange could not decide it and
     /// [`Self::bv_euf_undecided`] was set, which the owning `Solver` reads as
     /// `unknown`, never `sat`.
     pub(super) fn combine_bv_with_euf(
@@ -208,10 +208,10 @@ impl TheoryManager<'_> {
     ///
     /// Model-based, the Nelson-Oppen way: the leaves are bucketed by EUF
     /// representative, and two leaves of one class whose circuit values
-    /// *disagree* have their bit-equality asserted — with EUF's explanation
+    /// *disagree* have their bit-equality asserted – with EUF's explanation
     /// of the equality recorded in [`DerivedReasons`](super::DerivedReasons)
     /// under a tag the conflict clause expands back into the literals that
-    /// justify it ([`Self::assert_explained_bv_equality`]) — and the circuit
+    /// justify it ([`Self::assert_explained_bv_equality`]) – and the circuit
     /// is re-checked.  A class whose members already agree needs nothing:
     /// the current model honours the equality.  Each round asserts at least
     /// one new equality or ends the loop, and an asserted pair agrees in
@@ -243,8 +243,8 @@ impl TheoryManager<'_> {
         let mut changed = false;
         for _ in 0..MAX_SHARING_ROUNDS {
             // Bucket by representative, in leaf-creation order, so which
-            // member becomes the witness — and hence which equality is
-            // asserted and tagged — never depends on hash iteration order.
+            // member becomes the witness – and hence which equality is
+            // asserted and tagged – never depends on hash iteration order.
             let leaves: Vec<TermId> = self.bv.opaque_leaves().to_vec();
             let mut by_class: FxHashMap<u32, SmallVec<[TermId; 4]>> = FxHashMap::default();
             let mut class_order: Vec<u32> = Vec::new();
@@ -306,7 +306,7 @@ impl TheoryManager<'_> {
             changed = true;
             // Charged like every other embedded check (it was the one that was
             // not, so `:bv-embedded-checks` undercounted the solves exactly
-            // where the leaf-equality exchange was busiest — re-fix pass 12).
+            // where the leaf-equality exchange was busiest – re-fix pass 12).
             if self.charge_bv_embedded_check() {
                 self.resource_exhausted = true;
                 return Exchange::Refuted(TheoryCheckResult::Sat);
@@ -336,7 +336,7 @@ impl TheoryManager<'_> {
     /// propagated** (a lost propagation costs completeness; an
     /// unexplainable fact in a conflict costs soundness), and one that is
     /// propagated has its explanation recorded under a tag that names no
-    /// literal — the leaf itself, which is bit-vector sorted and so has no
+    /// literal – the leaf itself, which is bit-vector sorted and so has no
     /// SAT variable of its own.  That tag is also recorded on the circuit as
     /// a constraint term, so every explanation the embedded solver hands
     /// back includes it and `terms_to_conflict_clause` expands it into the
@@ -370,14 +370,14 @@ impl TheoryManager<'_> {
     /// (`#P2b-29`; the other direction of [`Self::combine_bv_with_euf`]).
     ///
     /// The candidates are the bit-vector-sorted terms that occur as an
-    /// argument of some application or `select` congruence closure holds —
+    /// argument of some application or `select` congruence closure holds –
     /// the only terms whose equality can fire a congruence.  Two candidates
     /// the circuit's current model gives the same value while EUF holds them
     /// in different classes are the gap: the model says they are equal and
     /// EUF has not been told.  Rather than probing each pair, the pass asks
     /// EUF about the whole partition at once, inside a scratch EUF scope: it
     /// merges every model-equal pair tentatively and checks for a conflict,
-    /// and — when there is none — whether the classes the tentative merges
+    /// and – when there is none – whether the classes the tentative merges
     /// induce agree with the model on the circuit's opaque leaves (`f(s) =
     /// f(t)` must hold in the model once `s = t` does).
     ///
@@ -387,7 +387,7 @@ impl TheoryManager<'_> {
     ///   model).
     /// * EUF refutes it: its explanation names the tentative merges `s_i =
     ///   t_i` that took part and the asserted atoms `A` it used, so
-    ///   `A ⊨ ∨_i s_i ≠ t_i` — a **lemma**, entailed by the assignment, never
+    ///   `A ⊨ ∨_i s_i ≠ t_i` – a **lemma**, entailed by the assignment, never
     ///   a guess.  It is asserted into the circuit as one clause
     ///   (`BvSolver::assert_any`), recorded in
     ///   [`DerivedReasons`](super::DerivedReasons) under a tag that expands
@@ -406,7 +406,7 @@ impl TheoryManager<'_> {
     /// 1,600-script campaigns in `nixie-solver/tests/bv_euf_combination.rs`
     /// reach it on a handful of width-3 QF_ABV scripts nesting `select` four
     /// to six deep, which enumerate the partitions of ~15 argument terms
-    /// one lemma at a time — under a temporary 8,192-round cap two of them
+    /// one lemma at a time – under a temporary 8,192-round cap two of them
     /// decide `sat` at rounds 2,030 and 1,645.  What a give-up costs is
     /// bounded by `BvSolver`'s `eq_cache`: before it every lemma re-encoded
     /// its pair disequalities and the embedded instance grew with the round
@@ -420,7 +420,7 @@ impl TheoryManager<'_> {
     /// set unmodelled.  This is what keeps `(distinct (g x) (g y))` over two
     /// free variables `sat`: the first model has `x = y = 0`, EUF refutes
     /// `x = y` under `g(x) ≠ g(y)`, the lemma `x ≠ y` is asserted, and the
-    /// next model — the one `build_model` publishes — separates them.
+    /// next model – the one `build_model` publishes – separates them.
     pub(super) fn share_bv_equalities_with_euf(&mut self, manager: &TermManager) -> Exchange {
         use nixie_theories::Theory;
         use nixie_theories::TheoryCheckResult as TheoryCheckResultEnum;
@@ -592,8 +592,8 @@ impl TheoryManager<'_> {
             return self.arithmetic_partition_lemma(&[]);
         }
 
-        // Tentative merges, each tagged with one of its own endpoints — a
-        // term that names no literal — so EUF's explanation can be read back
+        // Tentative merges, each tagged with one of its own endpoints – a
+        // term that names no literal – so EUF's explanation can be read back
         // into the pairs it rests on.  A tag shared by two pairs (an
         // endpoint common to both) makes both suspects, which only weakens
         // the lemma.
@@ -778,7 +778,7 @@ impl TheoryManager<'_> {
     /// Read an EUF explanation that may rest on tentative merges back into a
     /// lemma: the merged pairs it names must not all hold, or (when given)
     /// the two leaves must be equal.  The lemma's own justification is the
-    /// explanation with the tentative tags removed — except a tag that also
+    /// explanation with the tentative tags removed – except a tag that also
     /// carries a recorded explanation or is a registered tautology, which is
     /// kept: dropping it could lose a genuine justification, keeping it can
     /// only lengthen the clause.
@@ -830,8 +830,8 @@ impl TheoryManager<'_> {
 
     /// The reason term for a tentative merge of `s` and `t`: an endpoint
     /// that names no literal, is not a bit-vector literal (a constant is the
-    /// tautological reason of its own canonical merges), and — when both
-    /// qualify — has not tagged another pair of this round.
+    /// tautological reason of its own canonical merges), and – when both
+    /// qualify – has not tagged another pair of this round.
     fn tentative_tag_for(&self, s: TermId, t: TermId, used: &FxHashSet<TermId>) -> Option<TermId> {
         let eligible =
             |term: TermId| !self.term_to_var.contains_key(&term) && !self.is_bv_constant(term);

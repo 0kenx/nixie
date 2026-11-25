@@ -8,10 +8,10 @@
 //! can answer "how much completeness would a higher cap buy, and at what
 //! cost" without a rebuild:
 //!
-//! * `NIXIE_DEBUG_CAPS=1` — every firing prints one `[cap] <name>
+//! * `NIXIE_DEBUG_CAPS=1` – every firing prints one `[cap] <name>
 //!   actual=<n> cap=<limit>` line, greppable from any harness (the TLA+ BMC
 //!   survey, the differential fuzzers, the parity suite).
-//! * `NIXIE_CAPS=name=value,…` — overrides the defaults for an A/B run.
+//! * `NIXIE_CAPS=name=value,…` – overrides the defaults for an A/B run.
 //!   Unknown names are ignored (measured runs must not silently retune a
 //!   cap that no longer exists).
 //!

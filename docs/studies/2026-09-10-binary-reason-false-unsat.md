@@ -1,4 +1,4 @@
-# Kissat-style `Reason::Binary` — false UNSAT, reverted
+# Kissat-style `Reason::Binary` – false UNSAT, reverted
 
 Tried storing the other literal of a binary implication as
 `Reason::Binary(Lit)` instead of `Reason::Propagation(ClauseId)`, matching

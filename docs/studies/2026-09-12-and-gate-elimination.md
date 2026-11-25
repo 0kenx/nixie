@@ -1,7 +1,7 @@
 # AND-gate elimination: the recognizer lands; the compounding blocker is the resolvent ballast (2026-09-12)
 
 > **ERRATUM (same day)**: the "resolvent ballast" below was a counter
-> artifact — `num_original` does not decrement on elim retirements, so
+> artifact – `num_original` does not decrement on elim retirements, so
 > the "+580 k growth" missed ~660 k removals.  Live masses match cadical
 > (1,648,558 vs 1,626,226).  See
 > [`2026-09-12-elim-ballast-erratum.md`](2026-09-12-elim-ballast-erratum.md)
@@ -18,21 +18,21 @@ and root-caused why gates alone do not compound.
 
 cadical `gates.cpp::find_and_gate` (SATeLite SAT'05): `g ↔ x1∧…∧xk` is
 recognized exactly when the occurrence lists contain the sides
-`(¬g ∨ xi)` and the base `(g ∨ ¬x1 ∨ … ∨ ¬xk)` (false literals dropped —
+`(¬g ∨ xi)` and the base `(g ∨ ¬x1 ∨ … ∨ ¬xk)` (false literals dropped –
 actual-binary semantics).  Both orientations are tried, because
 `elim_round` flips the pivot to its less-occurring polarity and the same
 clauses then present as the OR-shape mirror `¬g ↔ ¬x1∨…∨¬xk`.  A hit
-feeds the existing `elim_definition_resolvents_bounded` — the g×a + g×g
+feeds the existing `elim_definition_resolvents_bounded` – the g×a + g×g
 restricted products (a×a entailed), the same machinery the sub-solver
 `NIXIE_DEFINITIONS` path uses, now reached by pure pattern matching.
 
 Soundness: the equivalence sides ∧ base ⊨ g ↔ x1∧…∧xk is elementary;
-two differential suites pin it (240 paired random AND-gate circuits —
-verdict agreement, model validity, non-vacuous eliminations — plus 60
+two differential suites pin it (240 paired random AND-gate circuits –
+verdict agreement, model validity, non-vacuous eliminations – plus 60
 broken-gate circuits where one side clause is removed and the recognizer
 must not fire).  A subtle test-infrastructure finding: the tiny circuits
 solve before the conflict-scheduled eliminator (`lim_elim` = 2 000)
-ever fires — the tests run under `presearch_collapse`, which is also why
+ever fires – the tests run under `presearch_collapse`, which is also why
 the arm's corpus-reachable surface is the mid-search schedule.
 
 ## Measured: gates alone add ~1 % of the gap
@@ -42,7 +42,7 @@ the arm's corpus-reachable surface is the mid-search schedule.
 | 8 k conflicts | 76,844 | 77,695 (+851) |
 | 60 k conflicts | 80,734 | 81,612 (+878) |
 
-The +878 does not grow with the horizon — no compounding.
+The +878 does not grow with the horizon – no compounding.
 
 ## The real blocker: the phase-yield collapse and the resolvent ballast
 
@@ -61,13 +61,13 @@ Our elimination **balloons the database by +580 k clauses** in phase 1
 (resolvent ballast); every later phase operates on the bloated formula
 where occurrence lists exceed the limits and nothing shrinks again.
 cadical runs the same resolution counts (52.8 M) on the same file and
-its formula *shrinks* — because its eliminator absorbs its own
+its formula *shrinks* – because its eliminator absorbs its own
 resolvents as they are added: **elim-side backward subsumption
 (`elimbwsub` 21,891) and elimination-time OTF strengthening
 (`elimotfstr` 60,492)**, plus interleaved subsume phases (7 phases,
 13 rounds, 107 k subsumed total).
 
-We have `elim_backward_clauses` (the backward pass runs) — but its yield
+We have `elim_backward_clauses` (the backward pass runs) – but its yield
 on Timetable is negligible against the ballast.  The recorded next
 eliminator item is that absorption system: resolvent-time
 self-subsumption/strengthening against the occurrence lists (cadical

@@ -7,8 +7,8 @@ the BIG-authoritative and write-elision landings re-ranked the levers:
 |---|---|---|---|
 | propagate | 33.3 % | 6.2 % | 26.0 % |
 | eliminate_phase | 10.2 % | 4.8 % | **29.4 %** |
-| shrink/minimize walk | — | **37.3 %** | 1.1 % |
-| parse/attach/add | 17 % | 14 % | — |
+| shrink/minimize walk | – | **37.3 %** | 1.1 % |
+| parse/attach/add | 17 % | 14 % | – |
 
 Gent's saved-position scan was measured **dead** first: scan
 instrumentation (`iters/miss`, `false_examined`) shows the false-prefix
@@ -27,7 +27,7 @@ Counting-allocator instrumentation (`MAXC=20000`):
 | circuit | 2.79 M | 0.22 M |
 | worker | 14.97 M | 1.71 M |
 
-Source: `elim_round` constructs a fresh `Eliminator` per round —
+Source: `elim_round` constructs a fresh `Eliminator` per round –
 `Vec<Vec<ClauseId>>` occurrence lists over 2×num_vars (202 k lists on
 g2-slp) that re-grow geometrically as the connect pass pushes ~12 M
 occurrence entries (789 k clauses × ~15 unassigned literals after phase
@@ -45,12 +45,12 @@ phases 2–3 reconnect 789 k clauses per round for triple-digit yields.
 ## The change
 
 **Round- and phase-persistent `Eliminator` on the Solver** (lazy,
-created on first eliminate phase, kept for the solver's life — cadical's
+created on first eliminate phase, kept for the solver's life – cadical's
 shape): between rounds *and* phases, every occurrence list is **cleared,
 not dropped** (capacity retained), and the scratch vectors (`ps`, `ns`,
 `collected`, `doomed`, `to_retire`, `to_mark`) become Eliminator fields
 reused via `clear()`. The connect pass then pushes into lists that
-already hold their high-water capacity — no growth reallocs after the
+already hold their high-water capacity – no growth reallocs after the
 first phase.
 
 Pure capacity/lifetime refactor: identical pushes in identical order,
@@ -59,10 +59,10 @@ identical schedule, identical semantics. The values snapshot
 
 ## Go / no-go (pre-registered BEFORE measuring)
 
-1. **Gate 1 — trajectory identity**: 54-file corpus, `stats_solve`,
+1. **Gate 1 – trajectory identity**: 54-file corpus, `stats_solve`,
    `MAXC=60000`, default seed vs `precompile/d3261a6`: counters +
    verdict bit-identical.
-2. **Gate 2 — instructions**: fixed `MAXC=40000`, {g2-slp, g2-ak128 ×2
+2. **Gate 2 – instructions**: fixed `MAXC=40000`, {g2-slp, g2-ak128 ×2
    (elimination-heavy class), circuit + worker + frb45 (elim-active
    controls)}: elimination-class geomean ≥ **1.02**, controls in
    0.99–1.01; both-solve corpus geomean ≥ 1.00.
@@ -70,12 +70,12 @@ identical schedule, identical semantics. The values snapshot
    `diff_equiv` ≥ 100 k, corpus verdict sweep 0 mismatches, SMT
    differential 0 disagreements, z3 parity.
 
-## Results — REVERTED (Gate 2 failed at 1.0008; the alloc-count target was a mirage)
+## Results – REVERTED (Gate 2 failed at 1.0008; the alloc-count target was a mirage)
 
-**Gate 1 passed** (54/54 bit-identical vs `precompile/d3261a6` — the
+**Gate 1 passed** (54/54 bit-identical vs `precompile/d3261a6` – the
 persistence + the learned-ledger doomed scan are behavior-preserving,
 including the retire-order argument). **Gate 2 failed**: elimination-class
-geomean **1.0008** (g2-slp 1.0023, g2-ak128 ×2 exactly 1.0000 — no
+geomean **1.0008** (g2-slp 1.0023, g2-ak128 ×2 exactly 1.0000 – no
 eliminate activity there at the cap), controls 1.0040 (all within noise,
 slightly positive). Below the pre-registered 1.02 bar and inside the
 neutrality band → reverted per the letter (same disposition as
@@ -83,7 +83,7 @@ watcher-8byte and shrink-retention).
 
 **Why the 77 % allocation count bought ~0.2 % of cost**: ~3.5 M growth
 reallocs were eliminated, but a glibc fastbin alloc+free pair is
-~30–100 cycles and the occurrence-list growth is amortized — ≈ 0.3 G
+~30–100 cycles and the occurrence-list growth is amortized – ≈ 0.3 G
 cycles on a ~30 G-instruction run. The counting-allocator number
 (alloc **count**) was real but alloc count ≠ alloc **cost**; the
 perf-annotate view that seemed to confirm allocator dominance was an
@@ -95,7 +95,7 @@ measurement lesson: allocator counts must be priced (cycles/alloc
 
 1. **Gent's saved-position port is dead**: scan instrumentation shows
    `iters/miss` = 2.38 / 2.11 / 2.82 on circuit / noL / si2 (len/miss
-   12.9 / 20.2 / 19.1) with 58–65 % of examined literals false — the
+   12.9 / 20.2 / 19.1) with 58–65 % of examined literals false – the
    false-prefix Gent would skip is worth ≤ 1 % end-to-end on the best
    file, for a divergence-class change plus header surgery. frb45
    (7.2 iters/miss, 86.6 % false) and worker (52.5 iters/miss, 99.1 %)
@@ -112,7 +112,7 @@ measurement lesson: allocator counts must be priced (cycles/alloc
    789 k-clause reconnect + watch rebuild per round for
    triple-digit yields in rounds 2+ (`NIXIE_LOG_ELIM` transcript
    recorded). The next eliminate lever, if anyone takes it, is the
-   **round-2+ economics** (schedule/schedule-gating — heuristic class,
+   **round-2+ economics** (schedule/schedule-gating – heuristic class,
    matched-null required), not data-structure capacity.
 
 ## Disposition

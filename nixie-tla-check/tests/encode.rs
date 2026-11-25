@@ -105,7 +105,7 @@ fn wide_literals_above_i64_max() {
 ///
 /// The original defect: the default arithmetic solver ran real mode, which
 /// refuses the Euclidean `div`/`mod` defining axioms, so every division atom
-/// was gated to `Unknown` (`26 \div 2 = 13` among them) — sound, but it made
+/// was gated to `Unknown` (`26 \div 2 = 13` among them) – sound, but it made
 /// any TLA+ specification doing integer division undecidable. The default
 /// became mixed-integer and the builder constant-folds two-literal
 /// `div`/`mod` exactly, so these are decided.
@@ -121,15 +121,15 @@ fn division_on_literals_is_decided() {
     }
 }
 
-/// Tuples and records **do** encode now — as single-constructor datatypes —
+/// Tuples and records **do** encode now – as single-constructor datatypes –
 /// so the two that used to head this list have moved to their own test below.
 /// A function is still declined as a single term: it is a domain *and* a
 /// graph, and handing back the graph alone would drop the half that makes
 /// equality right.
 #[test]
 fn unencodable_constructs_are_declined_by_name() {
-    // `2 ^ 3` no longer belongs here — a ground exponent is an unfolded
-    // product since issue #24 — so the `^` refusal is pinned by a symbolic
+    // `2 ^ 3` no longer belongs here – a ground exponent is an unfolded
+    // product since issue #24 – so the `^` refusal is pinned by a symbolic
     // exponent instead.
     for (body, want) in [
         ("CHOOSE v \\in {1} : v # 2 ^ v", "^"),

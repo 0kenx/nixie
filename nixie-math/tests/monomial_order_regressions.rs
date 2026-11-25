@@ -1,7 +1,7 @@
 //! Monomial-order regressions: `grevlex_cmp` must be a term order.
 //!
 //! The first version ordered by variable index when the two monomials'
-//! top variables differ — not grevlex, and not a well-order — which
+//! top variables differ – not grevlex, and not a well-order – which
 //! broke the termination argument of Gröbner reduction: any system whose
 //! monomials' top variables differ (six-plus random quadratics) looped
 //! until budget death. These tests pin the comparator against a

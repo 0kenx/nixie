@@ -1,7 +1,7 @@
 //! Differential soundness fuzz for structured bounded variable addition.
 //!
-//! Random CNFs solved twice through the identical parser path — SBVA off
-//! vs on — requiring (a) verdict agreement and (b) any SAT model of the
+//! Random CNFs solved twice through the identical parser path – SBVA off
+//! vs on – requiring (a) verdict agreement and (b) any SAT model of the
 //! SBVA arm to satisfy every ORIGINAL clause.  The pass's encoding is
 //! equisatisfiable and model-preserving in both directions by construction
 //! (`nixie-sat/src/solver/bva.rs`); this fuzz is the executable check of
@@ -25,7 +25,7 @@ fn gen_formula(seed: &mut u64, nvars: usize, nclauses: usize, wide: bool) -> Vec
         // Wide clauses exercise larger common sets G; short ones fill the
         // pair index the way real corpora do.
         // Cap at nvars: a clause cannot exceed one literal per variable,
-        // and the fill loop below is rejection sampling — an unreachable
+        // and the fill loop below is rejection sampling – an unreachable
         // len would spin forever (the exact trap the first version of this
         // generator fell into: nv=5 with a len-9 wide clause).
         let len = if wide {

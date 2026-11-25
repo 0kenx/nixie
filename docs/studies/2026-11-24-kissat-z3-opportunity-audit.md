@@ -13,7 +13,7 @@ The existing `NEXT_TARGETS.md` (2026-09-05) and scans #1–#5 (2026-11-10…14)
 remain accurate for what they close. This audit only lists what is **still
 open and not yet tried in the reference's shape**.
 
-## Already at reference parity — do not redo
+## Already at reference parity – do not redo
 
 Watch layout / BIG-authoritative binaries (scan #4 item 4), sweep (kitten port,
 default on), factor pre-search, congruence/gate subsumption (opt-in, powered
@@ -31,10 +31,10 @@ A‑B‑B‑A. Z3 4.16.0 `-st`.
 
 | instance | nixie default | nixie `NIXIE_NO_RESTART_RESYNC=1` | z3 |
 |---|---|---|---|
-| QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3 | `unsat` 2.44 / 1.98 s — conflicts 4337, decisions **273 577**, theory_props 930 902 | `unsat` 12.06 / 12.99 s — conflicts 4025, decisions 210 913 | 0.136 s — conflicts **296**, decisions **547**, `arith-bound-propagations-lp` **2090**, `arith-fixed-eqs` **2370**, `arith-conflicts` 56, restarts 2 |
-| QF_UFLIA/wisas/xs_8_13 | `unsat` 1.16 / 1.11 s — conflicts 3357, decisions 181 972 | **unknown at 25 s (both runs)** | 0.025 s |
+| QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3 | `unsat` 2.44 / 1.98 s – conflicts 4337, decisions **273 577**, theory_props 930 902 | `unsat` 12.06 / 12.99 s – conflicts 4025, decisions 210 913 | 0.136 s – conflicts **296**, decisions **547**, `arith-bound-propagations-lp` **2090**, `arith-fixed-eqs` **2370**, `arith-conflicts` 56, restarts 2 |
+| QF_UFLIA/wisas/xs_8_13 | `unsat` 1.16 / 1.11 s – conflicts 3357, decisions 181 972 | **unknown at 25 s (both runs)** | 0.025 s |
 
-Pure QF_LIA gap cells (nixie counters unavailable on timeout — neither
+Pure QF_LIA gap cells (nixie counters unavailable on timeout – neither
 `--stats` nor `STATS=1` prints on the timeout path):
 
 | instance | nixie | z3 | z3 counters |
@@ -51,7 +51,7 @@ run outside the difference-logic family: LP-derived bound propagation and
 
 ## Ranked opportunities
 
-### A. CDCL(T) arithmetic — the Z3 reference (largest measured gap: 156 QF_LIA cells in scan #4)
+### A. CDCL(T) arithmetic – the Z3 reference (largest measured gap: 156 QF_LIA cells in scan #4)
 
 #### A1. Z3-shaped LP bound propagation + cheap equalities on every LIA/UFLIA fragment (structural, biggest payoff)
 
@@ -59,9 +59,9 @@ run outside the difference-logic family: LP-derived bound propagation and
 `arith_assert_parsed`, `theory_manager.rs:3145`) and checked for crossed
 bounds on its own variable (`check_bound_conflicts`, `theory_manager.rs:3836`/
 `4218`). The LP runs at `final_check` only (`theory_manager.rs:4460`). The two
-propagation channels that exist — `Simplex::propagate_bounds_in`
+propagation channels that exist – `Simplex::propagate_bounds_in`
 (`simplex/mod.rs:5961`, internal bound tightening) and
-`derive_arith_bound_propagations` (`theory_manager.rs:2358`, atom forcing) —
+`derive_arith_bound_propagations` (`theory_manager.rs:2358`, atom forcing) –
 are armed on `is_dl_family` only.
 
 **Z3.** `theory_lra::propagate()` (`src/smt/theory_lra.cpp:2261`) runs after
@@ -75,7 +75,7 @@ assert the queued bound atoms → `make_feasible()` (line 2312) →
   `max_row_length_for_bound_propagation` or containing a big number are skipped
   (`calculate_implied_bounds_for_row`, line 113).
 * `lp_bound_propagator::add_bound` (`src/math/lp/lp_bound_propagator.h`):
-  an implied bound is kept only if it is **interesting** —
+  an implied bound is kept only if it is **interesting** –
   `bound_is_interesting` (`theory_lra.cpp:2423`) requires an *unassigned
   existing atom* on that variable to be implied; `m_unassigned_bounds[v]`
   is an O(1) gate (`propagate_lp_solver_bound`, 2478). No new atoms, no
@@ -85,7 +85,7 @@ assert the queued bound atoms → `make_feasible()` (line 2312) →
 * `propagate_eqs` (`arith.propagate_eqs=true`, default): for each touched
   row with ≤ 2 non-fixed columns, `cheap_eq_on_nbase` derives
   `v1 = v2` from the fixed tables (`try_add_equation_with_lp_fixed_tables`)
-  or from two rows of equal value — explains by the bounds of the fixed
+  or from two rows of equal value – explains by the bounds of the fixed
   columns only, no probing. These are the `arith-fixed-eqs` /
   `arith-offset-eqs` counters that are 1.5k–23k per solve in the table above.
 * Cost control: `arith.propagation_mode=1` (existing literals only);
@@ -101,7 +101,7 @@ plus the cheap-equality channel that feeds EUF/equality atoms. The counter
 evidence above says this is where z3's conflict supply comes from on wisa,
 rings, bofill and nec-smt.
 
-**First slice (equivalent-work, gateable on counters):** instrument — for the
+**First slice (equivalent-work, gateable on counters):** instrument – for the
 four cells, count how many *existing* atoms would be implied by a touched-row
 pass at each `final_check`, and how many `cheap_eq_on_nbase` equalities exist
 among fixed columns. If either number is material, port
@@ -118,7 +118,7 @@ QF_LIA/QF_UFLIA. Keep `is_dl_family` for the legacy channel.
 
 `TheoryManager::on_backtrack` (`theory_manager.rs:5100–5120`) resets EUF,
 arithmetic, BV and DL **on every backtrack to level 0** for function-bearing
-inputs with arithmetic — i.e. on every restart — and replays the root atoms.
+inputs with arithmetic – i.e. on every restart – and replays the root atoms.
 The A/B above shows the rebuild is **load-bearing**: without it wisa runs 5×
 slower with *fewer* conflicts and xs_8_13 times out. The code comment names
 the reason: `Simplex::pop` keeps rows permanent (Dutertre–de Moura,
@@ -137,7 +137,7 @@ adapter; the `int_solver::simplify` it calls is a `return;` stub,
 **First slice:** the scoped-row contract is written down but not
 implemented: `Simplex::row_scope_trail` (`simplex/mod.rs:1621–1637`, doc:
 "rows interned inside a decision scope are REMOVED by that scope's `pop`")
-is never pushed to and never read by `pop` — it is only cleared in `reset`
+is never pushed to and never read by `pop` – it is only cleared in `reset`
 (`:6905`). So every cut row `lia_cuts_then_bnb`
 interns is permanent, for the whole search. Count them per search on the two
 A/B cells, make cut/branch rows scope-local (fill the trail in
@@ -172,7 +172,7 @@ storecomm).
 
 With A2/A3 in place, `make_feasible` can run after each assertion batch as in
 z3 (`theory_lra.cpp:2312`), so bound violations surface at *partial*
-assignments — short explanations, early backjumps — instead of at complete
+assignments – short explanations, early backjumps – instead of at complete
 candidates. The current comment at `theory_manager.rs:4212` records why this
 was switched off (a full re-solve per literal was 50 % of `dlx`/`pp-*`); the
 precondition is an incrementally maintained assignment (`assignment_current`)
@@ -209,9 +209,9 @@ pivot_row_to_row_given_cell`, `:45 scan_row_strip_to_work_vector`). The
 column-slot back-pointers (`f5fb11ef`) did the removal half; the substitution
 half remains.
 
-### B. SAT core — the Kissat reference (smaller, heuristic class; each needs the ≥10-seed matched-null protocol)
+### B. SAT core – the Kissat reference (smaller, heuristic class; each needs the ≥10-seed matched-null protocol)
 
-#### B1. `reorder` — never ported (deferred "Slice B" of the tiered-schedule study)
+#### B1. `reorder` – never ported (deferred "Slice B" of the tiered-schedule study)
 
 `src/reorder.c`: every `reorderint` (10 000) conflicts, weight each variable
 by `max(pos,neg) + 2·min(pos,neg)` over occurrence weights `2^(2−size)` in
@@ -256,31 +256,31 @@ only (`clause.c new_binary_clause` → `INVALID_REF`). Memory item, large scope.
 
 ### C. Hot-path hygiene (equivalent-work, mechanical)
 
-Per-call `std::env::var` in theory hot paths — each takes the environment
+Per-call `std::env::var` in theory hot paths – each takes the environment
 lock and scans `environ`:
 
 * `arithmetic/solver.rs:1255,1275,1326,1502,1543,1874,1936`
-  (`NIXIE_TRACE_TWRITES`) — on every single-term assertion and every
+  (`NIXIE_TRACE_TWRITES`) – on every single-term assertion and every
   propagation-bound write;
 * `arithmetic/simplex/mod.rs:5974,5998` (`NIXIE_S6_NDIR2`, `NIXIE_S6_PINNED`)
-  — per `propagate_bounds_in` call;
-* `solver/theory_manager.rs:5113` (`NIXIE_NO_RESTART_RESYNC`) — per
-  backtrack to root; `:2629` (`NIXIE_APROP_VERIFY`) — inside the derive loop.
+  – per `propagate_bounds_in` call;
+* `solver/theory_manager.rs:5113` (`NIXIE_NO_RESTART_RESYNC`) – per
+  backtrack to root; `:2629` (`NIXIE_APROP_VERIFY`) – inside the derive loop.
 
 The SAT kernel already snapshots such gates once per solver (`63bed214`,
 `ScanProbes`); the theory side should do the same (`OnceLock`).
 
 ## Suggested order
 
-1. **A3 + C** — equivalent-work, bit-identical counters, no new invariants;
+1. **A3 + C** – equivalent-work, bit-identical counters, no new invariants;
    removes the per-assertion churn that A1/A4 will multiply.
-2. **A1 instrumentation slice** — counters only: how many existing atoms and
+2. **A1 instrumentation slice** – counters only: how many existing atoms and
    cheap equalities a touched-row pass would yield on the four cells. That
    number decides whether to port the z3 propagator.
-3. **A2** — make B&B rows scope-local, re-measure the resync A/B; then drop
+3. **A2** – make B&B rows scope-local, re-measure the resync A/B; then drop
    the rebuild.
-4. **A4 / A5** — once the state survives restarts.
-5. **B1–B4** — independent of the above; one pre-registered arm each
+4. **A4 / A5** – once the state survives restarts.
+5. **B1–B4** – independent of the above; one pre-registered arm each
    (`docs/BENCHMARKING.md`), B1 first (it is the only structural one and has
    no prior negative).
 
@@ -292,13 +292,13 @@ The SAT kernel already snapshots such gates once per solver (`63bed214`,
   deeper than `docs/studies/data/scan4/smt.tsv` names them
   (`CAV_2009_benchmarks/smt/<n>-vars/…`); resolve with `find`.
 * `NIXIE_NO_RESTART_RESYNC=1` changes the trajectory (conflicts 4337 → 4025),
-  so its A/B is not a pure cost comparison — the 5× wall with fewer
+  so its A/B is not a pure cost comparison – the 5× wall with fewer
   conflicts/decisions is the signal, not the ratio.
 
 ## Status (same day, end of session)
 
 * **A3 + C landed** (`c02e2f4d`, `3f6f83b9`, follow-up `fec10404`): counter-identical,
-  instructions 0.9375 geomean on the 17-cell SMT probe corpus (dlx-pc 0.43) —
+  instructions 0.9375 geomean on the 17-cell SMT probe corpus (dlx-pc 0.43) –
   [`2026-11-24-theory-assert-path-equivalent-work.md`](2026-11-24-theory-assert-path-equivalent-work.md).
   The paired SMT probe harness is now `bench/perf_gate/smt_probe_ab.sh`.
 * **A1 census taken and the first three slices built as a default-off arm**
@@ -308,7 +308,7 @@ The SAT kernel already snapshots such gates once per solver (`63bed214`,
   feasible). The sound arm recovers 25–28 % of the wisa conflicts and one
   ANIA `unknown → sat` at +70–80 % instructions; the remaining gap is
   structural (atoms are slack rows, not bounds on columns; no LP in
-  propagation; no closure) —
+  propagation; no closure) –
   [`2026-11-24-row-driven-arith-propagation-arm.md`](2026-11-24-row-driven-arith-propagation-arm.md).
   One false `unsat` was found by z3-checking the learned clauses (explanation
   polarity at the SAT interface) and fixed before any number was kept.

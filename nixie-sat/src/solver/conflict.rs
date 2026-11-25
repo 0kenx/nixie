@@ -377,7 +377,7 @@ impl Solver {
         let mut counter = 0;
         let mut p = None;
         let mut index = self.trail.assignments().len();
-        // OTFS arming (`NIXIE_OTFS`): off under any proof attachment — the
+        // OTFS arming (`NIXIE_OTFS`): off under any proof attachment – the
         // pivot drop is justified by resolution against the in-flight
         // resolvent, which a hint-less checker cannot replay (cadical builds
         // an LRAT mini-chain for it; not ported). While armed, every newly
@@ -509,7 +509,7 @@ impl Solver {
                         self.cadical_used.resize(slot + 1, 0);
                     }
                     self.cadical_used[slot] = 31;
-                    // kissat `statistics.used[mode].glue[glue]++` — feeds the
+                    // kissat `statistics.used[mode].glue[glue]++` – feeds the
                     // dynamic tier bounds (NIXIE_KISSAT_REDUCE arm).
                     if crate::kissat_reduce_enabled()
                         && let Some(c) = self.clauses.get(reason_clause)
@@ -617,7 +617,7 @@ impl Solver {
             // placeholder) is SMALLER than the antecedent, then the
             // antecedent is self-subsumed by the resolvent: dropping its
             // pivot literal `p` and every level-0-falsified literal yields a
-            // clause every model of the formula satisfies — PROVIDED the
+            // clause every model of the formula satisfies – PROVIDED the
             // accumulated resolvent is exactly absorbed into the antecedent
             // (cadical's `resolvent_size < antecedent_size` with the
             // resolvent counted *after* merging this antecedent's literals:
@@ -626,10 +626,10 @@ impl Solver {
             // BE `A \ {p}`).  Then any model reaching `A` only through `p`
             // falsifies the resolvent (which contains ¬p as its sole
             // non-`A` literal), and the level-0-falsified literals are
-            // entailed units — so `A'` is entailed.
+            // entailed units – so `A'` is entailed.
             //
             // The tightness test is NOT optional (found as false `unsat` on
-            // `constraints_17` — a model-verified sat file — 2026-09-12):
+            // `constraints_17` – a model-verified sat file – 2026-09-12):
             // the cheap size comparison `counter + learnt < |A|` undercounts
             // the marked set (resolved-away conflict-level pivots leave both
             // accumulators while staying `seen`), so it fires when the drop
@@ -658,7 +658,7 @@ impl Solver {
                     .collect();
                 // A' smaller than 2 literals: the self-subsumption derived a
                 // unit (level >= 1) or the empty clause (root refutation).
-                // Learn it directly and leave the DB untouched — the
+                // Learn it directly and leave the DB untouched – the
                 // in-place shrink helpers require >= 2 literals for the two
                 // watches.
                 if a_prime.len() < 2 {
@@ -718,7 +718,7 @@ impl Solver {
                 // Rewrite the antecedent in place (watches re-attached, LBD
                 // recomputed for learned clauses, dirty marks for the
                 // subsume/elimination schedules). The pivot's recorded
-                // reason is reset to `Decision` — the rewritten clause no
+                // reason is reset to `Decision` – the rewritten clause no
                 // longer contains the literal it used to propagate, and a
                 // chronological backtrack can keep the pivot assigned past
                 // this conflict (a decision boundary is the conservative,
@@ -737,7 +737,7 @@ impl Solver {
                 // conflict"): un-mark everything this pass created, reset
                 // the accumulators, and re-enter the loop with the
                 // strengthened clause as the conflict. Sound by construction
-                // — the restarted analysis derives a consequence of A', and
+                // – the restarted analysis derives a consequence of A', and
                 // A' is formula-entailed (the self-subsumption argument
                 // above).
                 for l in self.otfs_analyzed.drain(..) {
@@ -869,7 +869,7 @@ impl Solver {
                 }
             }
             // One antecedent resolution completed (the conflict clause's own
-            // iteration — `resolved == 0` at its OTFS check — does not reach
+            // iteration – `resolved == 0` at its OTFS check – does not reach
             // this tail because `break 'resolve` exits above it; the OTFS
             // restart's `continue 'resolve` resets `resolved` to 0 and skips
             // this tail, matching cadical's restart bookkeeping).
@@ -1736,7 +1736,7 @@ impl Solver {
     fn clear_minimize_flags(&mut self) {
         // Disjoint-field iteration (index into `lrat_minimized`, mutate
         // `lrat_flags`): the previous `drain(..).collect()` made a fresh
-        // SmallVec per conflict — a heap allocation + copy on every
+        // SmallVec per conflict – a heap allocation + copy on every
         // conflict whose analyzed set exceeds the inline capacity (the
         // common case once shrink marks are included; `clear_minimize_flags`
         // was 11.5 % self-time in the 2026-08-21 noL profile).
@@ -1781,7 +1781,7 @@ impl Solver {
     /// the walk extends the RUP chain per removed literal, so proofs no
     /// longer force the weaker plain minimizer and both modes share one
     /// search shape.  `NIXIE_SHRINK_NULL` runs the full shrink walk and
-    /// discards its result — the matched null for the seed study
+    /// discards its result – the matched null for the seed study
     /// (docs/BENCHMARKING.md).
     ///
     /// Takes `vars_to_bump` so a successful shrink can add each block-UIP
@@ -1805,7 +1805,7 @@ impl Solver {
     /// cadical's `chronoreusetrail` scan (see the call site): over the trail
     /// region strictly above `jump`'s boundary, find the variable with the
     /// highest bump key (VMTF stamp while focused, VSIDS score bits while
-    /// stable — cadical's `bumped`/`score_smaller` split), then walk `res`
+    /// stable – cadical's `bumped`/`score_smaller` split), then walk `res`
     /// up from `jump` while the next level's boundary starts at or below
     /// that variable's trail position (`control[res+1].trail <= best_pos`).
     /// Returns `None` when the scan finds nothing to reuse (fall back to the
@@ -1856,7 +1856,7 @@ impl Solver {
     /// The clause's literals at one common decision level (below the conflict
     /// level) form a *block*; resolving the block's literals against their
     /// reasons, restricted to that level and iterated to its own 1-UIP,
-    /// derives a clause that subsumes the block — so the whole block is
+    /// derives a clause that subsumes the block – so the whole block is
     /// replaced by the single block-UIP literal (`¬uip`, false at that
     /// level).  On stable-300-class instances cadical removes ~68% of learned
     /// literals this way (vs ~30-40% for plain recursive minimization), which
@@ -1910,7 +1910,7 @@ impl Solver {
         // below change (sentinel-replaced block members, the block-UIP
         // replacement, fallback-minimized literals) owes the ORIGINAL
         // literal's resolution sub-graph as RUP hints, collected during the
-        // compaction below and appended (reversed) to `lrat_chain` — the
+        // compaction below and appended (reversed) to `lrat_chain` – the
         // exact scheme cadical added for direct LRAT output, where the same
         // `calculate_minimize_chain` walk serves both plain minimization and
         // the shrink ("we cannot create the chain directly during shrinking
@@ -1968,7 +1968,7 @@ impl Solver {
         // no longer equals the sorted snapshot's is collected as a chain
         // obligation FIRST: the stored literal was resolved away by the
         // block walk (a sentinel slot), replaced by the block's UIP
-        // negation, or minimized by a fallback — in every case the
+        // negation, or minimized by a fallback – in every case the
         // ORIGINAL literal is the one the resolution derivation owes, and
         // `calculate_minimize_chain_lrat` walks its reason graph through
         // the still-live keep/removable/poison flags (so this must run
@@ -2049,7 +2049,7 @@ impl Solver {
         // Chunk-summary state for this block: lazily activated by the scan
         // below after `SHRINK_SUMMARY_AFTER` consecutive probe misses (the
         // signature of a sparse stretch).  Until then the block pays
-        // nothing — no epoch bump, no sizing, no marking.  `shrink_literal`
+        // nothing – no epoch bump, no sizing, no marking.  `shrink_literal`
         // reads this to decide whether to mark walk-discovered literals.
         self.shrink_active_epoch = None;
         for k in start..=end {
@@ -2090,7 +2090,7 @@ impl Solver {
             //   groups of `SHRINK_SUMMARY_AFTER` positions.  Dense blocks
             //   (2–7 skipped entries per pop, the frb45/noL/circuit class)
             //   always find their literal inside the first group and never
-            //   touch the summary — their cost is the original scan plus
+            //   touch the summary – their cost is the original scan plus
             //   the group-loop induction, nothing else.
             // * **Summary jump** (after a full group misses): a 64-position
             //   chunk summary of `MF_SHRINKABLE`, epoch-stamped per
@@ -2104,9 +2104,9 @@ impl Solver {
             // incrementally under the same epoch; the flagged set only
             // grows and positions never move within a block.  Stale
             // entries from earlier blocks read as empty (epoch mismatch).
-            // `mf_get` remains authoritative for every popped literal —
+            // `mf_get` remains authoritative for every popped literal –
             // the summary only decides where to look next, never what
-            // pops — so the pop order (newest flagged first) is the scan's
+            // pops – so the pop order (newest flagged first) is the scan's
             // in every mix, and even a wrong summary could not mis-pop.
             let popped;
             'pop: loop {
@@ -2128,7 +2128,7 @@ impl Solver {
                     // A whole group missed: activate the summary for this
                     // block.  One-time O(open + walk-marked) bulk mark of
                     // the complete flagged set (positions already popped
-                    // included — harmless, the cursor never revisits them),
+                    // included – harmless, the cursor never revisits them),
                     // then the summary-jump path below takes over.
                     self.shrink_epoch = self.shrink_epoch.wrapping_add(1);
                     let epoch = self.shrink_epoch;
@@ -2254,13 +2254,13 @@ impl Solver {
             // NOTE: cadical iterates oldest-first here (reverse iterators),
             // and oldest-first measured +2.4 fallback literals/analyze with
             // the poison cascade gone (`2026-08-satcomp-standing-gap.md`,
-            // "SOLVED" section) — but it REVERTED again: the changed learned
+            // "SOLVED" section) – but it REVERTED again: the changed learned
             // clauses explode the `wisas/xs_8_13` determinism canary by
             // 50×+ CPU (11 s → >515 s user, both profiles; 20-core box, 4×
             // oversubscribed controls isolate CPU from load).  A designated
             // canary gates landings, so the semantic win stays unlanded
             // until wisas's trajectory fragility is understood.  Newest-first
-            // (the pre-existing order) is equally SOUND — each removal is
+            // (the pre-existing order) is equally SOUND – each removal is
             // still individually justified; it merely saves less.
             for k in start..=end {
                 let lit = self.learnt[k];
@@ -2369,7 +2369,7 @@ impl Solver {
         self.mf_set(var, MF_SHRINKABLE);
         self.lrat_minimized.push(var.index() as i32);
         // Walk-discovered marking site: keep the chunk summary exact once
-        // the block's scan has activated it (dense blocks never do — see
+        // the block's scan has activated it (dense blocks never do – see
         // `shrink_block`).
         if let Some(epoch) = self.shrink_active_epoch {
             self.shrink_flag_position(self.trail.trail_index(var) as usize, epoch);
@@ -2549,7 +2549,7 @@ impl Solver {
         // the learned clause) sitting above the remaining conflict-level
         // literals.  Discharging on it terminates the 1-UIP loop early and
         // emits an asserting literal at or below the backtrack level
-        // (`backtrack_level == uip level`, corrupting the trail) — the same
+        // (`backtrack_level == uip level`, corrupting the trail) – the same
         // defect `analyze`'s `analyze_scan_pivot` guard exists for (Z3
         // `sat_solver.cpp` skips marked literals with
         // `lvl(c_var) != m_conflict_lvl`).  Port that guard here.

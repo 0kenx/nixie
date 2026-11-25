@@ -50,7 +50,7 @@ const MAX_COMBINATIONS: usize = 24;
 ///
 /// The certificate is a *validity* query per universal plus one for the
 /// assertions, and a goal this module could actually discharge is small by
-/// construction — the whole `#P2b-58` family is two to five assertions.  The
+/// construction – the whole `#P2b-58` family is two to five assertions.  The
 /// cap is what keeps a large benchmark from paying for a search that would
 /// decline anyway.
 const MAX_GOAL_NODES: usize = 4_096;
@@ -237,7 +237,7 @@ struct Goal {
     /// witness among the goal's points (`#P2b-63`, `declined`).
     existentials: Vec<TermId>,
     /// Ground terms left at the candidate model's value rather than
-    /// completed — ground applications of uninterpreted functions and ground
+    /// completed – ground applications of uninterpreted functions and ground
     /// reads of arrays only ever read at ground indices (`#P2b-63`,
     /// `declined`); empty on every goal the completion took before.
     ground_values: FxHashMap<TermId, TermId>,
@@ -337,8 +337,8 @@ impl Solver {
     /// Two searches, cheapest first: one constant array per array over the
     /// pooled defaults (`#P2b-58`), then a default plus pinned points
     /// (`pinned`, decision (41)).  Every candidate is first *evaluated* on a
-    /// finite sample — the assertions, each universal replaced by its
-    /// instances at the goal's own points and at one point they do not name —
+    /// finite sample – the assertions, each universal replaced by its
+    /// instances at the goal's own points and at one point they do not name –
     /// and only a candidate the evaluation cannot refute costs a certificate
     /// query.  The evaluation only ever discards (a definite `false` at a
     /// sampled point is a counterexample the certificate would find), so it
@@ -472,7 +472,7 @@ impl Solver {
     /// Record the certified interpretation in the published model.
     ///
     /// Each array variable is bound to the term the certificate was
-    /// discharged over — `((as const A) d)`, or a `store` chain over it — so
+    /// discharged over – `((as const A) d)`, or a `store` chain over it – so
     /// what `(get-model)` prints and what was verified are the same object.
     ///
     /// Installing *replaces* an interpretation, so every other entry whose
@@ -548,7 +548,7 @@ fn free_symbols(
         let mut free: Vec<TermId> = manager.free_vars_including_patterns(assertion);
         // `free_vars_including_patterns` answers from a set, so order it by
         // the id the term manager already assigned: the attempt's combination
-        // order — and hence its verdict — must not depend on a hash iteration
+        // order – and hence its verdict – must not depend on a hash iteration
         // order.
         free.sort_unstable_by_key(|term| term.raw());
         for var in free {
@@ -581,8 +581,8 @@ impl Goal {
             return None;
         }
         let (mut arrays, scalar_pins) = free_symbols(assertions, assignments, manager)?;
-        // Where the completion used to decline — an uninterpreted function
-        // in the goal, or more arrays than it searches over — the symbols the
+        // Where the completion used to decline – an uninterpreted function
+        // in the goal, or more arrays than it searches over – the symbols the
         // universals never read through a binder are interpreted from the
         // candidate model instead (`#P2b-63`); every other goal is classified
         // exactly as before.
@@ -632,10 +632,10 @@ impl Goal {
 
     /// The default values tried for each array, in a deterministic order.
     ///
-    /// The pool is drawn from what the goal itself makes plausible — the
+    /// The pool is drawn from what the goal itself makes plausible – the
     /// element-sort values the candidate model already committed to, then the
     /// element-sort literals the script spells out, then the two ends of the
-    /// sort — which is the same "values the goal makes plausible" rule
+    /// sort – which is the same "values the goal makes plausible" rule
     /// [`crate::mbqi::model_certify`] uses for a function default.
     fn default_pools(
         &self,
@@ -717,7 +717,7 @@ impl Goal {
         // completion where it can be (and one that cannot is left
         // undetermined for step 2, `undetermined`).  The bound variables become fresh reserved constants, so
         // the query is quantifier-free and the bound name can never be
-        // confused with a free one of the same name — which is exactly the
+        // confused with a free one of the same name – which is exactly the
         // collision shape of `rk8/atk/f5_binder_collide_index.smt2`.  The dual
         // `∀x⃗. ¬φ` of a negated `exists` certifies that `exists` *false*
         // (`polarity`); where it does not, the `exists` itself may still be
@@ -880,7 +880,7 @@ impl Goal {
 /// A fresh Boolean constant standing for a quantifier sub-term neither of
 /// whose values could be certified.  The assertions' validity query then has
 /// to hold for *both* of its values, so an assertion that does not depend on
-/// the sub-term — `(=> p (forall …))` under `p = false` — still certifies, and
+/// the sub-term – `(=> p (forall …))` under `p = false` – still certifies, and
 /// one that does cannot: sound for the same reason every other symbol the
 /// query leaves free is.
 fn undetermined(manager: &mut TermManager, kind: &str, position: usize) -> TermId {
@@ -990,8 +990,8 @@ fn run_query(
 /// universal this module handles.
 ///
 /// A chain is peeled rather than a single binder, so
-/// `(forall ((k …)) (forall ((k …)) …))` — decision (36)'s "the collision shape
-/// with the array name bound **twice**" — is one multi-binder universal and not
+/// `(forall ((k …)) (forall ((k …)) …))` – decision (36)'s "the collision shape
+/// with the array name bound **twice**" – is one multi-binder universal and not
 /// a nested one.  A quantifier that survives the peel is a genuine
 /// alternation and is declined, because the certificate below would not be
 /// quantifier-free.

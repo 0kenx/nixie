@@ -3,18 +3,18 @@
 #
 # Four comparisons, in increasing strength:
 #
-#   1. TRANSLATE — every corpus file whose algorithm our translator accepts
+#   1. TRANSLATE – every corpus file whose algorithm our translator accepts
 #      is translated; the oracle (pcal.trans 1.7.4) must accept the same set.
-#   2. PARSE+LEVELS — every translated module parses and level-checks in the
+#   2. PARSE+LEVELS – every translated module parses and level-checks in the
 #      pure-Rust front end, and SANY resolves it with matching definition
 #      levels (the same one-sided gate bench/tla_parity runs over plain
 #      modules, applied to what we generate).
-#   3. DEFINITIONS — the definitions our translation declares are the
+#   3. DEFINITIONS – the definitions our translation declares are the
 #      definitions the oracle's declares, with the same levels: a missing
 #      action or an undeclared variable is a failure, not a curiosity. (This
 #      gate caught a real bug during development: process-local variables
 #      were not declared when the algorithm had no `define` block.)
-#   4. STATES — TLC explores models of the golden and of ours, printing
+#   4. STATES – TLC explores models of the golden and of ours, printing
 #      every initial state and successor pair; BOTH translations' Init and
 #      Next must hold on BOTH dumps. This is the gate that catches a wrong
 #      translation rather than a malformed one: label placement, UNCHANGED

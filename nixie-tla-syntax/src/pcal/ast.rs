@@ -1,4 +1,4 @@
-//! The PlusCal AST — the shape `pcal/AST.java` defines, at the level of
+//! The PlusCal AST – the shape `pcal/AST.java` defines, at the level of
 //! detail this translator needs.
 //!
 //! Two generations of node live here deliberately. The **preliminary**
@@ -18,11 +18,11 @@ use crate::ast::Expr;
 /// Whether a process is fair, and in which sense.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fairness {
-    /// `process` — no fairness conjunct.
+    /// `process` – no fairness conjunct.
     Unfair,
-    /// `fair process` — weak fairness.
+    /// `fair process` – weak fairness.
     Weak,
-    /// `fair+ process` — strong fairness.
+    /// `fair+ process` – strong fairness.
     Strong,
 }
 
@@ -55,9 +55,9 @@ pub struct SingleAssign {
 /// One step of an assignment's left-hand selector path.
 #[derive(Debug, Clone)]
 pub enum Selector {
-    /// `[e]` — function application.
+    /// `[e]` – function application.
     Index(Expr),
-    /// `.f` — record field.
+    /// `.f` – record field.
     Field(String),
 }
 
@@ -75,7 +75,7 @@ pub enum Stmt {
         /// The statement's label, if any.
         lbl: Label,
     },
-    /// `if … then … [elsif|else …] end if` — a `LabelIf` with empty labelled
+    /// `if … then … [elsif|else …] end if` – a `LabelIf` with empty labelled
     /// parts; the splitting pass decides what actually belongs where.
     If {
         /// The test.
@@ -134,7 +134,7 @@ pub enum Stmt {
         /// The statement's label, if any.
         lbl: Label,
     },
-    /// `while e do … end while` — owns the unlabeled prefix of its body; the
+    /// `while e do … end while` – owns the unlabeled prefix of its body; the
     /// labeled remainder arrives when statement sequences are split.
     While {
         /// The test.
@@ -151,7 +151,7 @@ pub enum Stmt {
         /// The statement's label, if any.
         lbl: Label,
     },
-    /// `call P(a, b) ;` — a procedure call. Parsed, and declined at
+    /// `call P(a, b) ;` – a procedure call. Parsed, and declined at
     /// translation time with a named error: nothing in the corpus uses
     /// procedures, and a stack-machine half-implementation would be a
     /// silent wrong answer, not a subset.
@@ -168,7 +168,7 @@ pub enum Stmt {
         /// The statement's label, if any.
         lbl: Label,
     },
-    /// `Name(a, b) ;` — a macro invocation, expanded during parsing.
+    /// `Name(a, b) ;` – a macro invocation, expanded during parsing.
     MacroCall {
         /// The macro's name.
         name: String,
@@ -227,7 +227,7 @@ pub struct Macro {
     pub name: String,
     /// The parameters.
     pub params: Vec<String>,
-    /// The body — preliminary statements, already free of macro calls.
+    /// The body – preliminary statements, already free of macro calls.
     pub body: Vec<Stmt>,
 }
 
@@ -244,7 +244,7 @@ pub struct Process {
     pub id: Expr,
     /// The process's local variables.
     pub decls: Vec<VarDecl>,
-    /// The body — preliminary statements until the label pass runs, labeled
+    /// The body – preliminary statements until the label pass runs, labeled
     /// clusters after it.
     pub body: Vec<Stmt>,
     /// Labels carrying a `+` fairness modifier.
@@ -253,7 +253,7 @@ pub struct Process {
     pub minus_labels: Vec<String>,
 }
 
-/// A `procedure` declaration — parsed, and declined at translation time.
+/// A `procedure` declaration – parsed, and declined at translation time.
 #[derive(Debug, Clone)]
 pub struct Procedure {
     /// The procedure's name.
@@ -281,7 +281,7 @@ pub enum Algorithm {
         macros: Vec<Macro>,
         /// The procedures (declines translation).
         procedures: Vec<Procedure>,
-        /// The body — preliminary statements until the label pass runs.
+        /// The body – preliminary statements until the label pass runs.
         body: Vec<Stmt>,
     },
     /// The multiprocess form.
@@ -405,7 +405,7 @@ pub struct LabeledProcess {
     pub minus_labels: Vec<String>,
 }
 
-/// An algorithm whose bodies have been cut into labeled clusters — the form
+/// An algorithm whose bodies have been cut into labeled clusters – the form
 /// the symbol table, renaming, explosion and generator all work on.
 #[derive(Debug, Clone)]
 pub enum LabeledAlgorithm {
@@ -475,7 +475,7 @@ pub enum FlatStmt {
         /// The `else` sequence.
         els: Vec<FlatStmt>,
     },
-    /// An `if` whose branches contain labeled statements — present between
+    /// An `if` whose branches contain labeled statements – present between
     /// the splitting and explosion passes, which lift the labeled parts out
     /// into their own clusters.
     LabelIf {

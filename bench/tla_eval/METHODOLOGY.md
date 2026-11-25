@@ -1,4 +1,4 @@
-# TLA+ semantic parity — methodology
+# TLA+ semantic parity – methodology
 
 ## Why this exists
 
@@ -24,8 +24,8 @@ This suite asks that question at scale.
 1. For every module, lower each nullary definition and evaluate it to a value.
 
    Constants and variables do not exclude a module. Only **ground** definitions
-   are probed — one that mentions a constant or a variable has a free name and
-   is not evaluated at all — so the declarations can be given dummy
+   are probed – one that mentions a constant or a variable has a free name and
+   is not evaluated at all – so the declarations can be given dummy
    assignments purely to make TLC run the module. That is what widened the
    sample from 93 definitions to 299.
 
@@ -36,15 +36,15 @@ This suite asks that question at scale.
      assigning `N = N` there replaces the real value with a model value, and
      TLC prints `N` where this evaluator prints `3`. Only genuinely undefined
      constants are assigned.
-   - A constant of non-zero arity cannot be assigned at all — TLC's
-     configuration language has no way to name an operator — so those modules
+   - A constant of non-zero arity cannot be assigned at all – TLC's
+     configuration language has no way to name an operator – so those modules
      are skipped.
 2. Emit a probe module that `EXTENDS` the **original** module and `PrintT`s
    those same definitions.
 3. Run TLC and compare the two sets of values.
 
 Step 2 is the load-bearing detail. The probe extends the *source* module, so
-TLC evaluates the definition **as written** — not a kernel term printed back
+TLC evaluates the definition **as written** – not a kernel term printed back
 out. Comparing against a re-printed term would test the evaluator and the
 printer against each other and say nothing about lowering.
 
@@ -57,14 +57,14 @@ TLA+ values have several printed forms:
 
 - sets are unordered, and TLC prints them in insertion order;
 - TLC prints a function on `1..n` as a sequence (`<<1>>`), and one on strings
-  as a record (`[a |-> 1]`) — both are the same *value* as `(1 :> 1)` and
+  as a record (`[a |-> 1]`) – both are the same *value* as `(1 :> 1)` and
   `("a" :> 1)`;
 - record fields keep source order;
 - a contiguous integer set prints as `1..3`.
 
 Nine "mismatches" in the first run were every one of those, and none was a
 disagreement about a value. `compare.py` therefore parses both sides into a
-canonical form — tuples and records both become functions — and compares
+canonical form – tuples and records both become functions – and compares
 values.
 
 ## What is deliberately not compared
@@ -77,7 +77,7 @@ values.
   comparison measures TLC's runtime rather than this evaluator. `JavaTime` was
   the single "mismatch" of the first clean run: the examples' `TLC.tla` defines
   it as `123`, and the tool substitutes the clock.
-- **Anything the evaluator declines** — a free name, an unimplemented
+- **Anything the evaluator declines** – a free name, an unimplemented
   primitive such as `\o`, a set past the size cap. It reports the reason and
   evaluates nothing; an evaluator that guesses would make the differential
   compare two guesses.
@@ -97,7 +97,7 @@ nothing:
 - **A private working directory per TLC run.** TLC writes its metadata into the
   working directory; parallel runs sharing one clobber each other.
 - **A bounded heap (`-Xmx`).** TLC reserves a very large heap by default, so
-  parallel runs are OOM-killed and produce no output — which looks exactly like
+  parallel runs are OOM-killed and produce no output – which looks exactly like
   "TLC could not evaluate these".
 
 That is now the third oracle harness in this project to have been wrong because
@@ -114,14 +114,14 @@ Two real lowering bugs, both of which passed every structural check:
   even carried a comment saying flattening was the lowering step's job.
 - **A multi-bound set map was nested.** `{e : x \in S, y \in T}` collects `e`
   over every combination and is one flat set; nesting the binders produced a
-  set of sets — `{{<<1, 2>>}}` against TLC's `{<<1, 2>>}`.
+  set of sets – `{{<<1, 2>>}}` against TLC's `{<<1, 2>>}`.
 
 Both now have regressions in `nixie-tla/tests/eval.rs`.
 
 ## An unparsed value is an untested value
 
 `compare.py` exits non-zero on a value it cannot parse, not just on a
-mismatch. Seven values were being silently skipped in an earlier run — all of
+mismatch. Seven values were being silently skipped in an earlier run – all of
 them TLC printing a model value, which is how the configuration-override trap
 above was found. A differential that quietly shrinks its own sample is worse
 than one that fails.
@@ -134,7 +134,7 @@ Three separate ceilings, worth keeping apart because they need different work:
    evaluator refuses them by design. Reaching those needs the encoder and a
    bounded model check, not a bigger evaluator.
 2. **Unimplemented primitives.** `ToString`, `SetToBag`, the `Variants`
-   operators, and the Apalache folds — which take an *operator* argument that
+   operators, and the Apalache folds – which take an *operator* argument that
    lowering records only by name. `CHOOSE` is excluded on purpose.
 3. **TLC will not run the probe.** 130 of 294 probes fail before printing
    anything, dominated by **failing `ASSUME`s**: a module that declares
@@ -143,7 +143,7 @@ Three separate ceilings, worth keeping apart because they need different work:
    assumptions needs reading those assumptions, which is a real piece of work
    and the largest remaining widening.
 
-A smaller instance of (3) was missing module paths — several corpus modules
+A smaller instance of (3) was missing module paths – several corpus modules
 extend `Apalache`, whose `.tla` ships in the Apalache checkout rather than with
 the community modules. That is now on the default library path.
 
@@ -160,7 +160,7 @@ not printed by TLC              : 530
 value unparsed by comparator    : 0
 ```
 
-390 against 4 349 definitions that lower. It is a sample, not a gate — but it
+390 against 4 349 definitions that lower. It is a sample, not a gate – but it
 is the only check here that tests *meaning*, and it has already found three
 real bugs that every structural check passed.
 
@@ -184,5 +184,5 @@ Two changes, because the path fix alone would leave the shape intact:
   in. A differential that finds nothing has not passed; it has not run.
 
 With it fixed the suite compares 587 definitions across 217 probes, and found
-four real mismatches immediately (`Apalache!MkSeq` against a tuple literal —
+four real mismatches immediately (`Apalache!MkSeq` against a tuple literal –
 in TLA+ a tuple *is* a function on `1..n`, and the evaluator disagreed).

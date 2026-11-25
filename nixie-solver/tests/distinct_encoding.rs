@@ -65,9 +65,9 @@ fn distinct_of(n: usize) -> String {
 
 const N: usize = 40; // comfortably past the pairwise threshold (32)
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Injective map: positive `distinct` over an uninterpreted sort
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn large_distinct_over_uninterpreted_sort_is_sat() {
@@ -147,9 +147,9 @@ fn large_distinct_nested_under_negation_of_equality_pair() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Injective map: negated `distinct`
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn large_not_distinct_alone_is_sat() {
@@ -205,9 +205,9 @@ fn large_not_distinct_with_duplicate_argument_is_sat() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Pigeonhole short-circuit on finite sorts
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn distinct_over_bool_pigeonhole_is_unsat() {
@@ -327,9 +327,9 @@ fn large_distinct_int_with_forced_equality_is_unsat() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Scope consistency
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn large_distinct_push_pop_then_negate_is_sat() {
@@ -384,9 +384,9 @@ fn popped_large_distinct_does_not_poison_outer_scope() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Boundary: the pairwise threshold itself
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn distinct_at_threshold_32_and_just_above_agree() {
@@ -416,9 +416,9 @@ fn distinct_at_threshold_32_and_just_above_agree() {
     }
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Injective map over Int/Real (the separation machinery)
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// `n` Int constants `x1..xn` + `(distinct x1 .. xn)`.
 fn int_header(n: usize) -> String {
@@ -754,9 +754,9 @@ fn large_distinct_real_free_vars_is_sat() {
     check(&script, "sat");
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Composite finite datatypes and the pigeonhole short-circuit
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn distinct_over_composite_finite_datatype_pigeonhole_is_unsat() {

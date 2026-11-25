@@ -3,12 +3,12 @@
 //! Each object must occupy exactly one resource (capacity 1); every object
 //! has a set of allowed resources. SAT instances ship a planted injection;
 //! UNSAT instances contain a subset S of objects whose combined allowed
-//! resources are fewer than |S| — a Hall violation, certified explicitly.
+//! resources are fewer than |S| – a Hall violation, certified explicitly.
 //! Controls: choice-set overlap (a "hot pool" of resources), deficit size,
 //! symmetry, distance from feasibility.
 //!
 //! Realizations: Bool (exactly-one + pairwise AMO), LIA (0/1 sums), UF
-//! (uninterpreted `use` with bounds + pairwise distinct applications —
+//! (uninterpreted `use` with bounds + pairwise distinct applications –
 //! congruence meets arithmetic), CNF, and an incremental push/pop history.
 
 use crate::{Answer, Instance, InstanceKind, Rng};
@@ -188,9 +188,9 @@ pub fn build(seed: u64, p: &Params, sat: bool, variant: Variant) -> Result<Data,
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Emission
-// ---------------------------------------------------------------------------
+// ========  ========
 
 fn bool_name(i: usize, j: usize) -> String {
     format!("r_{i}_{j}")

@@ -24,7 +24,7 @@ pub struct GF2Row {
     /// Original clause/constraint IDs
     sources: Vec<usize>,
     /// Literals folded into this row so far, as (column, value), in fold
-    /// order — the material for reason clauses (2026-09-05 in-search
+    /// order – the material for reason clauses (2026-09-05 in-search
     /// integration: a row that becomes single-var implies its last
     /// variable; the entailed reason clause is the negated folded
     /// literals plus the implied literal).
@@ -84,7 +84,7 @@ impl GF2Row {
         self.rhs ^= other.rhs;
         // Source tracking is capped: through Gaussian reduce chains the
         // accumulated lists grow Fibonacci-exponentially (measured
-        // 2026-09-05: a 373-constraint build spent 7.8 s in these copies —
+        // 2026-09-05: a 373-constraint build spent 7.8 s in these copies –
         // the row bit-ops themselves are nanoseconds).  Nothing consumes
         // `sources` today (this module is newly wired); when a reason
         // consumer lands it must either derive reasons from the row ids
@@ -164,7 +164,7 @@ pub struct GF2Matrix {
     pivots: Vec<Option<usize>>,
     /// Row occurrence lists per column: which stored rows contain the
     /// column (built at row insertion).  `propagate` touches exactly
-    /// these instead of scanning every row — measured 2026-09-05: with a
+    /// these instead of scanning every row – measured 2026-09-05: with a
     /// 17k-row matrix the full scan made every assigned literal O(rows)
     /// and the in-search integration wall-bound (summle/mp TO'd at the
     /// cap with *fewer* conflicts than their baselines).
@@ -304,7 +304,7 @@ impl GF2Matrix {
 
         let mut touched_rows = Vec::new();
 
-        // Update all rows containing this variable (occurrence-indexed —
+        // Update all rows containing this variable (occurrence-indexed –
         // stored rows never change after insertion, so `col_rows` stays
         // exact; folds clear bits transiently, but the undo restores them
         // before any new insertion could observe a stale list).
@@ -421,10 +421,10 @@ pub enum XorAddResult {
     /// Constraint was redundant
     Redundant,
     /// Found a unit implication (variable, value, reason sources, and
-    /// the row's folded literals as (variable, assigned-value) — the
+    /// the row's folded literals as (variable, assigned-value) – the
     /// material for the entailed reason clause).
     Unit(Var, bool, Vec<usize>, Vec<(Var, bool)>),
-    /// Found a conflict (reason sources, and the row's folded literals —
+    /// Found a conflict (reason sources, and the row's folded literals –
     /// a falsified row is fully folded, so these are exactly the trail
     /// literals whose negation forms the entailed conflict clause).
     Conflict(Vec<usize>, Vec<(Var, bool)>),

@@ -11,7 +11,7 @@
 //! every assertion against it using the bit-exact [`Ieee754Engine`]. A `Sat`
 //! verdict is returned **only** when a genuine, verified model witness exists:
 //! every FP-sorted variable is pinned to a concrete IEEE-754 datum and every
-//! assertion evaluates to `true`. There is no guessing — if any term cannot be
+//! assertion evaluates to `true`. There is no guessing – if any term cannot be
 //! pinned, or any assertion cannot be evaluated, or the constructed model
 //! fails to satisfy some assertion, the routine gives up (returns `false`) and
 //! the caller falls back to the honest `Unknown`.
@@ -28,13 +28,13 @@
 //! The three evaluators (`eval_real_core`, `eval_fp_core`, `eval_bool_core`)
 //! used to be plain native recursion with no depth guard and no memo: a term
 //! built through the `TermManager` builder API can nest arbitrarily deep, so
-//! a sufficiently deep formula overflowed the native stack — a fatal,
-//! `catch_unwind`-proof process abort — and a shared sub-DAG of the
+//! a sufficiently deep formula overflowed the native stack – a fatal,
+//! `catch_unwind`-proof process abort – and a shared sub-DAG of the
 //! hash-consed term graph was re-expanded once per path (`2^n` work for an
 //! `n`-level doubling DAG).  Each evaluator is now an explicit-worklist walk
 //! ([`Task`]) over a per-call `TermId`-keyed memo table.  A depth cap was
 //! never an option: these functions return `Option` where `None` means "give
-//! up on `Sat`", so a cap would be survivable — but the explicit stack makes
+//! up on `Sat`", so a cap would be survivable – but the explicit stack makes
 //! the walk total on every input, which is strictly better than refusing
 //! deep-but-legitimate models.
 //!
@@ -43,7 +43,7 @@
 //! the concrete fragment as `None` leaves), `values` is never mutated during
 //! a single evaluation (only [`FpModelFinder::try_define`] writes it, after
 //! the evaluator returned), and the engine's rounding mode cannot leak
-//! between sub-evaluations — every rounding-sensitive operation
+//! between sub-evaluations – every rounding-sensitive operation
 //! (`add`/`sub`/`mul`/`div`/`sqrt`/`fma`/`convert_format`) sets its mode from
 //! the term's own `RoundingMode` immediately before executing, and the
 //! remaining operations (`abs`/`neg`/`rem`/`min`/`max`/`classify` and the
@@ -53,8 +53,8 @@
 //!
 //! The worklist evaluates every operand of a node before combining, whereas
 //! the recursive original short-circuited (`?`, and `And`/`Or` early
-//! returns).  The produced values are identical — a definite `false`/`true`
-//! still dominates an unknown sibling, and skipped operands were pure — only
+//! returns).  The produced values are identical – a definite `false`/`true`
+//! still dominates an unknown sibling, and skipped operands were pure – only
 //! the work profile differs, and the memo keeps that linear in DAG size.
 
 #[allow(unused_imports)]
@@ -95,8 +95,8 @@ impl PredicateFlags {
 }
 
 /// One step of an explicit-worklist evaluation (see the module doc's
-/// "Recursion and memoization" section): either visit a term — resolving it
-/// immediately when it is a leaf of the walk, or scheduling its operands —
+/// "Recursion and memoization" section): either visit a term – resolving it
+/// immediately when it is a leaf of the walk, or scheduling its operands –
 /// or apply a deferred operator whose operands have all been evaluated into
 /// the memo table.
 enum Task<Op> {
@@ -123,7 +123,7 @@ enum RealOp {
 
 /// A deferred FP operator awaiting its operand values (`eval_fp_core`).
 /// Rounding-sensitive operators carry the term's own [`RoundingMode`], which
-/// is applied to the engine immediately before the operation — exactly where
+/// is applied to the engine immediately before the operation – exactly where
 /// the recursive original applied it.
 enum FpOp {
     Abs(TermId),
@@ -140,7 +140,7 @@ enum FpOp {
     /// `fp.to_fp` format conversion to `(eb, sb)`.
     Convert(RoundingMode, TermId, u32, u32),
     /// The value of an `ite` is the value of the branch its condition
-    /// selected. Only that branch is scheduled — evaluating both and choosing
+    /// selected. Only that branch is scheduled – evaluating both and choosing
     /// afterwards would return `unknown` whenever the *un*taken branch happens
     /// to be unevaluable, which is exactly the common case for a symbolic
     /// rounding mode: only one of the five arms has its operands pinned.
@@ -181,8 +181,8 @@ fn canonical_rounding_mode(name: &str) -> Option<RoundingMode> {
 /// Each crossing costs one native stack frame (see
 /// `FpModelFinder::ite_condition_depth`), so this is the one place in this
 /// module where native depth is input-controlled. Formulas that arise in
-/// practice have depth 1 — the rounding-mode case split puts no `ite` inside
-/// its conditions — so the cap is generous and never fires on real input;
+/// practice have depth 1 – the rounding-mode case split puts no `ite` inside
+/// its conditions – so the cap is generous and never fires on real input;
 /// past it the evaluator answers the honest `unknown` and the solve reports
 /// `Unknown` rather than risking an unrecoverable stack overflow.
 const MAX_ITE_CONDITION_ALTERNATION: u32 = 64;
@@ -197,7 +197,7 @@ struct FpModelFinder<'a> {
     manager: &'a TermManager,
     engine: Ieee754Engine,
     values: FxHashMap<TermId, FpValue>,
-    /// Candidate assignment for the free `RoundingMode` variables — the
+    /// Candidate assignment for the free `RoundingMode` variables – the
     /// symbolic-mode counterpart of `values`.
     rm_values: FxHashMap<TermId, RoundingMode>,
     /// How many times the walk has crossed from FP evaluation back into
@@ -207,7 +207,7 @@ struct FpModelFinder<'a> {
     /// arm of `eval_fp_core` calls `eval_bool_core` back for the branch
     /// condition. Each pair of crossings costs one native frame, so a formula
     /// that nests an FP-sorted `ite` inside another one's *condition*, over
-    /// and over, would grow the native stack — the one thing this module's
+    /// and over, would grow the native stack – the one thing this module's
     /// explicit worklists exist to prevent. The counter caps that alternation
     /// at [`MAX_ITE_CONDITION_ALTERNATION`] and answers the honest `unknown`
     /// beyond it. Ordinary formulas never come close: the rounding-mode case
@@ -227,10 +227,10 @@ impl<'a> FpModelFinder<'a> {
     }
 
     /// Evaluate a bit-vector-sorted ground term to its exact integer value
-    /// (two's-complement semantics NOT applied — the raw unsigned encoding
+    /// (two's-complement semantics NOT applied – the raw unsigned encoding
     /// of `BitVecConst`, or the per-mode integer rounding of
     /// `fp.to_sbv`/`fp.to_ubv` over a pinned FP operand, encoded at the
-    /// target width).  `None` for anything else — callers decline honestly.
+    /// target width).  `None` for anything else – callers decline honestly.
     fn eval_bv(&mut self, term: TermId) -> Option<num_bigint::BigInt> {
         let td = self.manager.get(term)?;
         match &td.kind {
@@ -249,7 +249,7 @@ impl<'a> FpModelFinder<'a> {
                 };
                 if !fits {
                     // Underspecified per SMT-LIB: any encoding acceptable,
-                    // so no concrete value can be *derived* — decline.
+                    // so no concrete value can be *derived* – decline.
                     return None;
                 }
                 if cell.sign() == num_bigint::Sign::Minus {
@@ -345,8 +345,8 @@ impl<'a> FpModelFinder<'a> {
     ///
     /// A mode *constant* resolves from its canonical name; any other
     /// `RoundingMode`-sorted variable resolves from the candidate assignment
-    /// in `rm_values`. Anything else — a differently-sorted term, or a mode
-    /// variable this finder never pinned — is `None`, and the caller reports
+    /// in `rm_values`. Anything else – a differently-sorted term, or a mode
+    /// variable this finder never pinned – is `None`, and the caller reports
     /// the honest unknown.
     fn resolve_rm(&self, term: TermId) -> Option<RoundingMode> {
         let td = self.manager.get(term)?;
@@ -381,7 +381,7 @@ impl<'a> FpModelFinder<'a> {
     /// Evaluate a `Real`/`Int`-sorted term to an `f64`, following the small
     /// arithmetic shapes that appear as `(_ to_fp …)` operands.
     ///
-    /// Explicit-worklist walk over a per-call memo — see the module doc's
+    /// Explicit-worklist walk over a per-call memo – see the module doc's
     /// "Recursion and memoization" section.  Purely a function of the term
     /// (no engine, no `values`), so `TermId`-keyed memoization is trivially
     /// exact.
@@ -508,7 +508,7 @@ impl<'a> FpModelFinder<'a> {
     /// only cost work, never change an answer, and the conditions this is
     /// called on are tiny (`(= m RNE)`). What it *does* cost is one native
     /// frame per FP→Bool crossing, which is why the crossing is counted and
-    /// capped — see `FpModelFinder::ite_condition_depth`.
+    /// capped – see `FpModelFinder::ite_condition_depth`.
     fn eval_ite_condition(&mut self, cond: TermId) -> Option<bool> {
         if self.ite_condition_depth >= MAX_ITE_CONDITION_ALTERNATION {
             return None;
@@ -664,7 +664,7 @@ impl<'a> FpModelFinder<'a> {
                         TermKind::RealToFp { rm, arg, eb, sb } => {
                             // EXACT rational conversion: the previous path
                             // evaluated the real expression as an `f64`
-                            // first — itself an RNE rounding — and then
+                            // first – itself an RNE rounding – and then
                             // converted, which silently disabled every
                             // directed mode on the already-rounded value
                             // (`RTZ` of `1 + 2^-52 + 2^-53` pinned the RNE
@@ -724,7 +724,7 @@ impl<'a> FpModelFinder<'a> {
     /// memo, setting the engine rounding mode exactly where the recursive
     /// original did: immediately before each rounding-sensitive operation.
     /// The remaining operations (`abs`/`neg`/`rem`/`min`/`max`) are exact and
-    /// mode-independent, so no mode is set for them — same as before.
+    /// mode-independent, so no mode is set for them – same as before.
     fn apply_fp_op(
         &mut self,
         op: FpOp,
@@ -875,9 +875,9 @@ impl<'a> FpModelFinder<'a> {
                             let (a, b) = (*a, *b);
                             // Rounding modes first: they are nullary `Var`s, so
                             // neither the FP interpretation below nor the
-                            // Boolean fallback can read them, and `(= m RNE)` —
+                            // Boolean fallback can read them, and `(= m RNE)` –
                             // the condition of every arm of a symbolic
-                            // rounding-mode case split — would evaluate to
+                            // rounding-mode case split – would evaluate to
                             // `unknown` and take the whole formula with it.
                             if let (Some(ra), Some(rb)) = (self.resolve_rm(a), self.resolve_rm(b)) {
                                 bool_memo.insert(term, Some(ra == rb));
@@ -892,12 +892,12 @@ impl<'a> FpModelFinder<'a> {
                             {
                                 // Bit-vector equality over exactly
                                 // evaluable operands (BV constants and
-                                // fp.to_sbv/ubv conversions) — needed for
+                                // fp.to_sbv/ubv conversions) – needed for
                                 // the FP-fold fall-through's verification.
                                 bool_memo.insert(term, Some(ba == bb));
                             } else if self.eq_satisfiable_via_underspecified_conv(a, b, fp_memo) {
                                 // An UNDERSPECIFIED conversion (rounded
-                                // value outside the target width — SMT-LIB
+                                // value outside the target width – SMT-LIB
                                 // leaves the result free) equated with a
                                 // concrete constant: the free value CAN be
                                 // the constant, so the equality is
@@ -917,13 +917,13 @@ impl<'a> FpModelFinder<'a> {
                         // decoration: the solver asserts
                         // `(distinct RNE RNA RTP RTN RTZ)` on every solve that
                         // mentions a mode, and `find` requires *every*
-                        // assertion to evaluate to `true` — so without this arm
+                        // assertion to evaluate to `true` – so without this arm
                         // no symbolic-rounding-mode formula could ever produce
                         // a verified model.
                         //
                         // SMT-LIB `distinct` is pairwise disequality under `=`,
                         // which on both sorts is structural identity (for FP:
-                        // all NaNs equal, and `+0` differs from `-0` — the
+                        // all NaNs equal, and `+0` differs from `-0` – the
                         // `fp.eq` numeric comparison is a different predicate
                         // and is handled by `TermKind::FpEq`).
                         TermKind::Distinct(args) => {
@@ -1059,7 +1059,7 @@ impl<'a> FpModelFinder<'a> {
 
     /// Evaluate `(distinct t1 .. tn)`.
     ///
-    /// Answers only when *every* operand resolves in one interpretation —
+    /// Answers only when *every* operand resolves in one interpretation –
     /// all rounding modes, or all concrete FP values. A mixed or partly
     /// unresolved list is an honest `None`: a `false` could be justified by a
     /// single colliding pair, but a `true` requires knowing all of them, and
@@ -1259,7 +1259,7 @@ impl<'a> FpModelFinder<'a> {
     ///
     /// The default is a *guess*, and deliberately not a search. `find` ends by
     /// verifying every assertion against the completed assignment, so a wrong
-    /// guess yields `false` — reported as `Unknown`, never as a wrong verdict.
+    /// guess yields `false` – reported as `Unknown`, never as a wrong verdict.
     /// Enumerating all `5^k` assignments would buy completeness on formulas
     /// that pin a mode only indirectly, at a cost paid by every `QF_FP` solve;
     /// the honest partial answer is the better trade, and matches how this
@@ -1311,8 +1311,8 @@ impl<'a> FpModelFinder<'a> {
     /// a verified satisfying model exists.
     fn find(&mut self, assertions: &[TermId]) -> bool {
         // Rounding modes are assigned first: an FP-sorted `ite` over
-        // `(= m RNE)` cannot be evaluated — and so `z = (fp.add m x y)` cannot
-        // define `z` — until `m` has a value.
+        // `(= m RNE)` cannot be evaluated – and so `z = (fp.add m x y)` cannot
+        // define `z` – until `m` has a value.
         self.assign_rounding_modes(assertions);
         let fp_vars = self.collect_fp_vars(assertions);
         // Definitional propagation, then witness the still-free predicate-
@@ -1344,7 +1344,7 @@ impl Solver {
     /// Returns `true` **only** when a genuine model witness is found: every
     /// FP-sorted variable is pinned to a concrete IEEE-754 value and every
     /// assertion evaluates to `true` under the bit-exact engine. This is sound
-    /// — it never reports a satisfiable verdict for an unsatisfiable formula,
+    /// – it never reports a satisfiable verdict for an unsatisfiable formula,
     /// and it declines (returns `false`) whenever any assertion falls outside
     /// the concrete-evaluation fragment, letting the caller answer `Unknown`.
     pub(super) fn try_fp_model_sat(&self, manager: &TermManager) -> bool {
@@ -1358,7 +1358,7 @@ impl Solver {
 
 /// Regression tests for the explicit-worklist conversion of the three
 /// concrete-model evaluators (`eval_real_core` / `eval_fp_core` /
-/// `eval_bool_core`) — see the module doc's "Recursion and memoization"
+/// `eval_bool_core`) – see the module doc's "Recursion and memoization"
 /// section for the rationale.  Deep-nesting tests run on a deliberately small
 /// (128 KiB) thread stack: a native stack overflow is a fatal abort that
 /// `catch_unwind` cannot intercept, so returning at all is the proof, and the
@@ -1375,9 +1375,9 @@ mod tests {
         finder.eval_real_core(term, &mut memo)
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Semantic pins: small inputs with known-exact answers.
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn eval_real_pins_the_arithmetic_shapes() {
@@ -1559,10 +1559,10 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Shared-DAG regressions: doubling DAGs that were exponential without the
     // per-call memo must now be linear.
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn eval_real_shared_add_dag_is_linear_not_exponential() {
@@ -1623,16 +1623,16 @@ mod tests {
         assert_eq!(finder.eval_bool(term), Some(true));
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Deep-nesting regressions on a 128 KiB stack.
     //
     // Each `(STACK_SIZE, DEPTH)` pair below was scaled down from
     // (1 MiB, 100 000) by a factor of 8 on both sides.  What these tests pin
-    // is the ~10 bytes of stack available per nesting level — no native frame
-    // fits in that, so a recursive evaluator still dies — not the absolute
+    // is the ~10 bytes of stack available per nesting level – no native frame
+    // fits in that, so a recursive evaluator still dies – not the absolute
     // depth, and the smaller pair costs a 64th of the construction work.
     // Never raise one of the two without the other.
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn eval_real_survives_a_deep_neg_chain_on_a_small_stack() {

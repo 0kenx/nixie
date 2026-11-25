@@ -53,8 +53,8 @@ pub(super) const THEORY_LAZY_SWITCH_AFTER: u64 = 1_000_000;
 /// Fast-glue-EMA threshold arming the drought-gated max-gap floor: above
 /// this the learned-clause glue stream is "uniform huge" (the
 /// restart-drought class where the focused Glucose condition goes silent).
-/// Measured separation 2026-09-11: worker_550 avg LBD 762, qwh 224 — the
-/// class the floor fixes; noL 21 / mdp 15 / rbsat 10 / 6s167 11 — the
+/// Measured separation 2026-09-11: worker_550 avg LBD 762, qwh 224 – the
+/// class the floor fixes; noL 21 / mdp 15 / rbsat 10 / 6s167 11 – the
 /// files the ungated floor costs verdicts.  100 sits in the empty band
 /// between 26 and 224 with ~4x margin on both sides.
 /// `NIXIE_FOCUSED_MARGIN_NULL=1`: arms the matched null for the margin arm.
@@ -94,7 +94,7 @@ fn focused_fire_every() -> u64 {
 /// crosses 3 -> 6 (round-6 attribution: the semantic winners Break 5.5 /
 /// summle 9.5 vs the pure-rate losers j3037 2.8 / x9 2.1 / frb65 2.2; the
 /// 1.25 rung was flat on Break, so the ramp is steep). Files whose EMA
-/// stays below 3 keep margin exactly 1.10 — bit-identical trajectories.
+/// stays below 3 keep margin exactly 1.10 – bit-identical trajectories.
 #[cfg(feature = "std")]
 fn focused_adaptive_enabled() -> bool {
     use std::sync::OnceLock;
@@ -139,7 +139,7 @@ fn focused_restart_margin() -> f64 {
 pub(super) const DROUGHT_GLUE_GATE: f64 = 500.0;
 
 /// Conflicts before the drought gate may arm.  Early-search glue transients
-/// (a warm-up spike of the fast EMA on files whose steady glue is normal —
+/// (a warm-up spike of the fast EMA on files whose steady glue is normal –
 /// measured: rbsat avg LBD 10, yet its first ~hundreds of learned clauses
 /// pushed the EMA past the 2026-09-11 round-one gate of 100 and the floor
 /// fired) must not arm the floor; the real drought class stays huge well
@@ -170,7 +170,7 @@ pub(super) fn inproc_round_trace_enabled() -> bool {
 /// Whether the effort-relative inprocessing-round schedule is on.
 /// **Default ON** since 2026-09-07 (user-directed landing of the
 /// `sched-vivon` arm: 0.83× conflicts geomean corpus-wide at 5 seeds,
-/// P(solve) statistically tied, 0 verdict mismatches — see
+/// P(solve) statistically tied, 0 verdict mismatches – see
 /// `docs/studies/2026-09-07-inproc-effort-schedule.md`).  cadical
 /// `SET_EFFORT_LIMIT` shape: each mid-search round's pass budgets are a
 /// fixed per-mille of the search work since the last round, and the round
@@ -223,7 +223,7 @@ pub(super) fn inproc_sched_null() -> bool {
 #[cfg(feature = "std")]
 /// Whether the cadical `vivifythresh` skip is DISABLED (τ=0: budgeted
 /// vivify runs, never threshold-skipped).  **Default ON** since
-/// 2026-09-07 — this is the `vivon` half of the landed `sched-vivon`
+/// 2026-09-07 – this is the `vivon` half of the landed `sched-vivon`
 /// default (budgeted vivify at 50 ‰ of the window; the skip starves
 /// mid-size instances entirely).  `NIXIE_INPROC_VIVSKIP=1` restores
 /// cadical's τ=20 skip for A/B.
@@ -250,7 +250,7 @@ pub(crate) struct InprocBudgets {
     /// their legacy absolute budgets.
     pub window: u64,
     /// Vivify propagation budget (cadical `vivifyeffort` = 50‰ of window;
-    /// skipped entirely below `vivifythresh × clauses` — cadical skips the
+    /// skipped entirely below `vivifythresh × clauses` – cadical skips the
     /// pass, it does not run it at a floor).
     pub vivify_props: u64,
     /// Whether the vivify pass may run at all this round.
@@ -262,7 +262,7 @@ pub(crate) struct InprocBudgets {
     /// Transitive-reduction step budget (cadical `transredeffort` = 100‰
     /// of the window; our steps are a close analogue of its tick budget).
     pub transred_steps: u64,
-    /// Mid-search BVA pair-index build cap (entries) — a work bound in the
+    /// Mid-search BVA pair-index build cap (entries) – a work bound in the
     /// scan's own unit (kissat budgets `factor` at 50‰ of window ticks;
     /// entries ≈ clauses × pairs are the scan's dominant cost).
     pub bva_entries: u64,
@@ -288,7 +288,7 @@ impl InprocBudgets {
 impl Solver {
     /// The mid-search inprocessing interval currently in force.  Under the
     /// effort schedule (`NIXIE_INPROC_SCHED`) this grows with completed
-    /// rounds — cadical `inprobe`: `delta = interval × log10(rounds + 9)` —
+    /// rounds – cadical `inprobe`: `delta = interval × log10(rounds + 9)` –
     /// so late rounds fire increasingly rarely on long-running instances.
     /// Without the flag this is exactly `config.inprocessing_interval`
     /// (legacy flat schedule, bit-identical trajectories).
@@ -315,12 +315,12 @@ impl Solver {
         // cadical `vivifythresh`: skip vivify when the effort allowance is
         // below `thresh × live clauses` (20‰×clauses… exactly: thresh(20) ×
         // clauses.size(), against the tick-scaled delta; ticks ≈ props at
-        // this granularity — deviation noted in the study).
+        // this granularity – deviation noted in the study).
         let live = (self.clauses.num_original() + self.clauses.num_learned()) as u64;
         let vivify_sized = w.saturating_mul(VIVIFY_EFFORT_PERMILLE) / 1000;
         // `NIXIE_INPROC_VIVON=1` disables the cadical skip (τ=0): vivify
         // still runs under its effort budget, just never skipped by the
-        // threshold — the arm for instances whose measured win tracks
+        // threshold – the arm for instances whose measured win tracks
         // vivify's semantic effect rather than its volume.
         let vivify_allowed = vivify_sized
             > if vivify_thresh_disabled() {
@@ -431,11 +431,11 @@ impl Solver {
             .assign_propagation_at(asserting, clause_id, level);
         // LRAT: when every falsified sibling sits at level 0 the asserting
         // literal is installed as a **level-0 propagation** outside
-        // `propagate()` — the two flush sites there never see it, so without
+        // `propagate()` – the two flush sites there never see it, so without
         // this flush the literal lands on the trail with no unit-table
         // entry. The "every level-0 literal is a unit with an id" invariant
         // that `analyze`'s RUP chains rely on breaks, and the first conflict
-        // chain through such a literal emits a 0 hint — an unverifiable
+        // chain through such a literal emits a 0 hint – an unverifiable
         // proof (repro: 6s167-opt with LRAT attached; found 2026-09-02).
         // The flush builds exactly the right chain: the level-0 units of
         // the clause's other literals + this clause's id.
@@ -660,7 +660,7 @@ impl Solver {
             // literals to live at positions [0] and [1] of the stored clause.
             // When it fires on a falsified watch it swaps that literal to
             // position 1, reads the other watch from `lits[0]`, and searches
-            // for a replacement only over the tail `j >= 2` — it *never*
+            // for a replacement only over the tail `j >= 2` – it *never*
             // examines `lits[1]`. Selecting `best` without moving it to
             // position 1 therefore leaves the second watch out in the tail:
             // the day it falsifies, the scan reads some unrelated `lits[0]`
@@ -668,7 +668,7 @@ impl Solver {
             // assigns `lits[0]` from a clause that is not unit. That
             // fabricates a trail fact with a reason clause that is already
             // satisfied, and every conflict resolved through it learns an
-            // unentailed clause — observed as false UNSAT on SATISFIABLE
+            // unentailed clause – observed as false UNSAT on SATISFIABLE
             // `si2-b03m-m800-03` / `circuit_48in64out…dist128_seed1`
             // (CaDiCaL models verified). Swap the chosen literal into place
             // in the stored clause *and* the local vector (they must remain
@@ -689,11 +689,11 @@ impl Solver {
             // first for at most 20 candidates, retiring any subsumed by
             // the fresh driving clause. Learned-by-learned only (both are
             // consequences of the formula; the subsumer stays and is
-            // stronger — sound by definition). This is NOT the removed
+            // stronger – sound by definition). This is NOT the removed
             // unbounded `check_subsumption` scan (see the NOTE below):
             // that walked the whole `learned_clause_ids` table per short
             // clause (~30 % of crn_11_99_u's instructions); this is a
-            // constant ≤ 20-probe newest-first walk — cadical's exact
+            // constant ≤ 20-probe newest-first walk – cadical's exact
             // shape, measured at 51 672 retirements on Timetable_C (48 %
             // of its total subsumed).
             if self
@@ -709,7 +709,7 @@ impl Solver {
     /// clauses subsumed by the freshly learned `cid`, walking newest-first
     /// under the `EAGER_SUB_LIM` candidate budget. `retire_clause` handles
     /// the watch/BIG purges and re-points any live trail reason to
-    /// `Decision` (the established sound degradation — a subsumed reason's
+    /// `Decision` (the established sound degradation – a subsumed reason's
     /// consequences remain justified by the surviving subsumer).
     fn eagerly_subsume_recently_learned(&mut self, cid: ClauseId) {
         const EAGER_SUB_LIM: u64 = 20; // cadical `eagersubsumelim`
@@ -722,7 +722,7 @@ impl Solver {
             return;
         };
         // The walk visits newest-first with every visit consuming budget
-        // (garbage/self entries included — cadical counts them), so it
+        // (garbage/self entries included – cadical counts them), so it
         // visits exactly the newest `min(len, LIM)` entries. Snapshot those
         // ids first: `retire_clause` needs `&mut self`.
         let take = (EAGER_SUB_LIM as usize).min(self.learned_clause_ids.len());
@@ -780,7 +780,7 @@ impl Solver {
                 // `red = !contained || reason->redundant`: it subsumed an
                 // *original* and carries that original's deletion obligation
                 // permanently) still appears here. Deleting it on the word of
-                // a *learned* subsumer drops the obligation — the final model
+                // a *learned* subsumer drops the obligation – the final model
                 // then violates an input clause (false SAT; reproduced by
                 // `dominator_hbr_subsuming_original_promotes_resolvent` under
                 // `NIXIE_CHRONO_ALWAYS=1`: promoted `(-874,-1072,-1076)`
@@ -1112,12 +1112,12 @@ impl Solver {
 
     /// Whether `cid` is the recorded propagation reason of any of `lits`'s
     /// variables (exact, all-literal scan). The historical O(1) form checked
-    /// only `lits[0]` — valid for watch-propagated clauses (propagate assigns
+    /// only `lits[0]` – valid for watch-propagated clauses (propagate assigns
     /// `clause[0]`) but **wrong for BIG-propagated binaries**, whose implied
     /// literal can sit at either position: the binary edge traversal assigns
     /// the edge's target independently of the stored clause order. Deleting a
     /// clause the trail still records as a reason makes conflict analysis
-    /// resolve against a deleted clause and produce a spurious empty clause —
+    /// resolve against a deleted clause and produce a spurious empty clause –
     /// a wrong UNSAT (reproducer: `constraints_17_0.4_1.sanitized.cnf` under
     /// `NIXIE_CADICAL_REDUCE_NULL=1`, 2026-09-02; the same escape is named in
     /// the pure-literal cleanup's comment). All deletion guards use this
@@ -1241,7 +1241,7 @@ impl Solver {
             // Adaptive arm (`NIXIE_REDUCE_ADAPT` / `NIXIE_REDUCE_ADAPT_NULL`,
             // pre-registered in docs/studies/2026-09-02-adaptive-retention.md):
             // rank by glue only when glue actually ranks usage among the
-            // candidates — the best-glue quartile must have a higher mean
+            // candidates – the best-glue quartile must have a higher mean
             // used-stamp than the worst-glue quartile. The null inverts the
             // choice (same signal, same firing, opposite correlation).
             let adapt = crate::reduce_adapt_enabled();
@@ -1303,7 +1303,7 @@ impl Solver {
             // Binaries additionally need their implication-graph edges
             // purged BEFORE the flag is set: unlike the legacy reducer, this
             // port deletes len == 2 clauses, and the BIG's edge scan never
-            // consults the deleted flag — a stale edge keeps PROPAGATING
+            // consults the deleted flag – a stale edge keeps PROPAGATING
             // implications of the deleted clause and recording it as fresh
             // trail reasons, which is a wrong-UNSAT (the exact failure
             // `retire_clause`'s purge was added for on Break_unsat_06_07;
@@ -1393,7 +1393,7 @@ impl Solver {
                 // O(1) `lits[0]`-only form rests on the propagate
                 // watch-position invariant, which BIG-propagated binaries
                 // break (their implied literal can sit at either position)
-                // — the identical bug class the cadical-reduce port
+                // – the identical bug class the cadical-reduce port
                 // exhibited live (constraints_17, 2026-09-02), hardened
                 // here too so no future edit re-opens it.
                 let is_reason = self.is_live_reason_clause(cid, clause.lits);
@@ -1405,7 +1405,7 @@ impl Solver {
                     // `glue <= tier2limit && used >= max_used-1` are kept.
                     // Our tier-percentage deletion has no such shield (the
                     // 96 %-vs-76 % deletion anomaly, standing-gap study).
-                    // `NIXIE_REDUCE_USED_SHIELD=1` (default OFF — the shield
+                    // `NIXIE_REDUCE_USED_SHIELD=1` (default OFF – the shield
                     // measured corpus-negative here: 23 vs 25 solved on a
                     // 60-file sample; our tier promotions already reward
                     // use, so the shield over-retains under the
@@ -1434,7 +1434,7 @@ impl Solver {
         // 10 % / 30 % / 75 %; the standing-gap study measures retention
         // against cadical's (76 %-deleted overall vs our 96 %) via the
         // `NIXIE_REDUCE_PCT_{CORE,MID,LOCAL}` knobs (percent 0..=100,
-        // default = the historical values — unset knobs change nothing).
+        // default = the historical values – unset knobs change nothing).
         // Cached (this fires per reduce round): the three tier percentages,
         // historical defaults 10 / 30 / 75 (see the standing-gap study for
         // the retention experiments behind the knobs).
@@ -1857,11 +1857,11 @@ impl Solver {
         self.check_stabilize();
         // T1 stall trigger (`NIXIE_RESTART_STALL=<k>`, unset = inert): the
         // Glucose condition above restarts on glue *degradation* only, and
-        // has no max-gap fallback — on the uniform-huge-glue class the fast
+        // has no max-gap fallback – on the uniform-huge-glue class the fast
         // EMA never crosses 1.10x slow and focused restarts stop firing
         // (measured: 19 restarts / 25.5k conflicts on worker_550 vs
         // cadical's 226; the forced-restart causal test halved qwh and
-        // constraints_17 conflicts — see the 2026-09-07 tier-1 study). Fire
+        // constraints_17 conflicts – see the 2026-09-07 tier-1 study). Fire
         // when the current gap exceeds k x the recent gap EMA (floor 200):
         // a healthy search never sees 8x its own restart cadence, a stalled
         // one lives above it.
@@ -1880,12 +1880,12 @@ impl Solver {
         // stall trigger so the two arms compose predictably when both are
         // set (the tighter bound wins).
         // Config field (portfolio arm) wins; the process-global env is the
-        // fallback. Both unset (the default) leaves the trigger inert —
+        // fallback. Both unset (the default) leaves the trigger inert –
         // bit-identical to the pre-field behaviour.
         let maxgap = self.config.restart_maxgap.or_else(crate::restart_maxgap);
         // Drought-gated floor (2026-09-11 conflicts program): the flat floor
         // is armed only while the fast glue EMA shows the uniform-huge-glue
-        // signature — measured class avg LBD 762 (worker_550) / 224 (qwh),
+        // signature – measured class avg LBD 762 (worker_550) / 224 (qwh),
         // everything the ungated floor breaks sits at <= 26 (noL 21, mdp 15,
         // rbsat 10).  The fast EMA (tau 33) reaches the class level within
         // ~10 conflicts, so the gate opens as early as the drought can bite.
@@ -1899,7 +1899,7 @@ impl Solver {
         // the drought axis can.  The gap EMA (window 8, updated only at
         // restarts) freezes at the pre-drought cadence while a drought
         // runs, so `gap >= k x ema` is true exactly while restarts have
-        // stopped — qwh's floor-negative phases sit on a healthy cadence
+        // stopped – qwh's floor-negative phases sit on a healthy cadence
         // and fail it.  Conjunction of glue signature AND gap stagnation.
         let drought_restart = drought.is_some_and(|n| {
             gap >= n
@@ -1946,11 +1946,11 @@ impl Solver {
             } else {
                 // Focused-mode rule is selected by `restart_strategy`
                 // (wired 2026-09-16; before this the knob was unreachable
-                // under `enable_stabilize` — every preset sets it, so the
+                // under `enable_stabilize` – every preset sets it, so the
                 // whole config surface was facade).  Glucose/LocalLbd keep
                 // the EMA rule bit-for-bit; Luby/Geometric fall back to the
                 // legacy conflict-threshold cadence that `decide.rs`'s
-                // per-strategy bookkeeping already maintains — so the
+                // per-strategy bookkeeping already maintains – so the
                 // MiniSAT/Glucose-era semantics are real again inside the
                 // stabilized schedule.
                 match self.config.restart_strategy {
@@ -2022,7 +2022,7 @@ impl Solver {
             // so running both would just redo the rollback.
             self.rephase();
             // Rephase's leading backtrack is a full root backtrack, so the
-            // level-0 restart invariant applies regardless of `reuse_trail` —
+            // level-0 restart invariant applies regardless of `reuse_trail` –
             // except when the round was a debug no-op (no backtrack ran), in
             // which case the conflict handler's own backtrack level stands.
             if !self.rephase_skipped {
@@ -2044,7 +2044,7 @@ impl Solver {
         {
             // 2026-09-04 telemetry (study
             // `2026-09-04-inprocessing-standing-corpus.md` -> gating follow-up):
-            // env-gated per-round cost/yield trace.  Purely diagnostic — one
+            // env-gated per-round cost/yield trace.  Purely diagnostic – one
             // `OnceLock` bool load per round, no search-path change (the flag
             // does not feed any decision), so conflict trajectories stay
             // bit-identical with the flag off *and* with it on.
@@ -2169,7 +2169,7 @@ impl Solver {
         // Conflict-scheduled one-shot equivalent-literal substitution
         // (cadical parity, see `SolverConfig::presearch_collapse`): the ELS
         // pass that the pre-search collapse used to run unconditionally now
-        // fires on the elimination clock instead — sharing `lim_elim` with
+        // fires on the elimination clock instead – sharing `lim_elim` with
         // the eliminator (cadical's `decompose` runs in the same schedule
         // region).
         //
@@ -2183,7 +2183,7 @@ impl Solver {
         // This also fixes the silent no-op that slot carried from
         // `58df118` until 2026-09-05: it used to set `did_equiv_subst`
         // BEFORE calling `substitute_equivalent_literals`, whose first line
-        // is exactly that one-shot guard — so whenever the pass was enabled
+        // is exactly that one-shot guard – so whenever the pass was enabled
         // the scheduled ELS (and the gate-congruence augmentation it hosts)
         // silently did nothing, and the `0ed8543` "BVE + ELS" default-on
         // measurement had measured BVE alone.  The latch-free `_round`
@@ -2354,7 +2354,7 @@ impl Solver {
                     // Reintroduced variables skip the walk: their retired
                     // clauses were resurrected as live originals
                     // (`void_elimination_promises`), so the search already
-                    // enforces them — and a toggle here could now falsify one
+                    // enforces them – and a toggle here could now falsify one
                     // of those live clauses, which the walk has no knowledge of.
                     if self.ext_rementioned.contains(&witness.var()) {
                         i = start;
@@ -2378,7 +2378,7 @@ impl Solver {
                             // extend flips EVERY falsified literal of the entry,
                             // witness-only is our long-standing shape; the naive
                             // flip-all port regressed 13,762 violated clauses on
-                            // the b21 repro — our push side differs from
+                            // the b21 repro – our push side differs from
                             // cadical's somewhere upstream; see
                             // docs/studies/2026-09-18-fold-dedup-false-sat.md.
                             let witness_true = match *slot {
@@ -2662,7 +2662,7 @@ impl Solver {
         self.remove_literal_opts(clause_id, idx, true);
     }
 
-    /// The physical shrink without the default strengthen emission — for
+    /// The physical shrink without the default strengthen emission – for
     /// callers that emit their own (resolution-justified) proof event for
     /// the same shrink first (`subsume_round`'s strengthen arm). A double
     /// emission would append two additions and two deletions for one
@@ -2748,7 +2748,7 @@ impl Solver {
         // falsify a just-shortened clause are typically already on the trail,
         // propagated long ago.  A clause that had two unassigned literals and
         // loses one becomes unit under the *current* assignment with no
-        // future event left to notice it — a "hanging unit" that unit
+        // future event left to notice it – a "hanging unit" that unit
         // propagation never fires on, losing an implication (which, if it was
         // the one that closed a branch, can change the search enough to
         // matter).  Rewinding is always safe: re-propagating a literal that is
@@ -2768,7 +2768,7 @@ impl Solver {
     /// solver nondeterministic under load (breaking `run_parity.sh`
     /// reproduction) and burned ~11% of solve time on `clock_gettime` calls.
     ///
-    /// Returns `(shortened, subsumed)` — the round's vivify yield in
+    /// Returns `(shortened, subsumed)` – the round's vivify yield in
     /// cadical `vivified`/`vivifysubs` terms (shortenings tick no
     /// `SolverStats` counter, so this return is the only yield signal;
     /// diagnostic data only, callers may ignore it).
@@ -2779,7 +2779,7 @@ impl Solver {
         const MAX_VIVIFY_PROPS: u64 = 10_000_000;
         const MAX_CLAUSES: usize = 5_000;
         // Effort-scheduled rounds (2026-09-07 study): cadical `SET_EFFORT_LIMIT
-        // // (vivify)` — 50‰ of the search window, and the pass is SKIPPED
+        // // (vivify)` – 50‰ of the search window, and the pass is SKIPPED
         // (not floored) when that allowance is below `vivifythresh × live
         // clauses` (cadical vivifythresh = 20).  Legacy rounds keep the
         // absolute 10M budget.
@@ -2830,10 +2830,10 @@ impl Solver {
         // candidate SET and budgets are unchanged.  Measured (6s167-opt,
         // study `2026-08-trie-vivify.md`): identical strengthening (693 vs
         // 709 clauses) at 39% fewer vivify-internal propagations (278k vs
-        // 458k); end-to-end neutral over the 94-file corpus — an above-band
+        // 458k); end-to-end neutral over the 94-file corpus – an above-band
         // component win at no system cost, landed per the band rule.
         /// One candidate snapshot: (decision levels prefix, clause, original
-        /// literals) — trie order preserves the shared-prefix invariant.
+        /// literals) – trie order preserves the shared-prefix invariant.
         type Cand = (SmallVec<[u32; 8]>, ClauseId, SmallVec<[Lit; 8]>);
         let mut snapshot: Vec<Cand> = Vec::new();
         for cid in candidates {
@@ -2881,7 +2881,7 @@ impl Solver {
         // Charge this round's propagation to the inprocessing counter
         // (the budget above already measures the same delta).  Search
         // BCP keeps `propagations` so cross-solver props/conflict
-        // comparisons stay honest — kissat reports search-only counters.
+        // comparisons stay honest – kissat reports search-only counters.
         self.stats.propagations_inprocessing += self.stats.propagations.saturating_sub(start_props);
         // The shared version deliberately leaves the trail at the last
         // candidate's end state for reuse; this round is over, so restore
@@ -2902,7 +2902,7 @@ impl Solver {
     /// `vivify_clauses`).  `prev_lits`/`prev_depths` describe the previous
     /// candidate's examined-literal prefix: `prev_depths[j]` is the exact
     /// decision depth (relative to the round's base level) after handling
-    /// `prev_lits[..=j]`.  The trail still holds that state — identical
+    /// `prev_lits[..=j]`.  The trail still holds that state – identical
     /// decision sequences propagate identically, so starting the scan at
     /// the first diverging index is exactly the state a fresh scan would
     /// have reached there.
@@ -2915,11 +2915,11 @@ impl Solver {
     /// inflation of strengthenings; see the study).
     ///
     /// On return the trail holds THIS candidate's end state (for the next
-    /// round's reuse) — the caller backtracks to the base level after the
+    /// round's reuse) – the caller backtracks to the base level after the
     /// whole round, not per candidate.
     /// On-the-fly subsumption test (POS'25, cadical `vivify_deduce`'s
     /// `marked2` check): does clause `d_id` subsume the candidate `cand`
-    /// modulo the level-0 units — i.e. is every literal of `d_id` either a
+    /// modulo the level-0 units – i.e. is every literal of `d_id` either a
     /// literal of `cand` or permanently false at decision level 0?  Such a
     /// `d_id` entails `cand` outright (level-0-false literals are droppable
     /// from `d_id` under the units), so `cand` can be deleted.
@@ -2930,7 +2930,7 @@ impl Solver {
         // cadical `assert (c != subsuming)`: the subsumer must differ from
         // the candidate.  The candidate CAN be its own conflict/reason
         // clause (assuming ¬ of a prefix propagates the rest of C), and
-        // "C ⊆ C" would pass the subset test trivially — deleting C on its
+        // "C ⊆ C" would pass the subset test trivially – deleting C on its
         // own word, with nothing justifying the deletion.
         if d_id == cid {
             return false;
@@ -2966,7 +2966,7 @@ impl Solver {
         // On-the-fly subsumption (POS'25 / cadical `vivify_deduce`): when
         // vivifying C finds a conflict or an implied literal whose reason
         // clause D satisfies `D \ {level-0-fixed literals} ⊆ C`, C is
-        // DELETED as subsumed rather than shrunk — D ⊨ C outright.
+        // DELETED as subsumed rather than shrunk – D ⊨ C outright.
         let mut subsumed_by: Option<ClauseId> = None;
 
         // Shared prefix: literal-index count whose handling is already live.
@@ -2997,7 +2997,7 @@ impl Solver {
             match self.trail.lit_value(lits[j]) {
                 crate::literal::LBool::True => {
                     // Satisfied from here; [0..=j] examined (j by this very
-                    // check, no decision added — depth unchanged).
+                    // check, no decision added – depth unchanged).
                     handled_end = j + 1;
                     depths.push(self.trail.decision_level() - base_level);
                     break 'outer;
@@ -3052,10 +3052,10 @@ impl Solver {
         *prev_lits = lits.iter().take(handled_end).copied().collect();
         *prev_depths = depths;
 
-        // On-the-fly subsumption commit: mirror `subsume_round`'s rules —
+        // On-the-fly subsumption commit: mirror `subsume_round`'s rules –
         // promote a learned subsumer to original when the deleted clause is
         // original (else reduction could later drop the justification and
-        // uncover a false SAT — the `crn_11_99_u` lesson), re-arm
+        // uncover a false SAT – the `crn_11_99_u` lesson), re-arm
         // elimination for the removed literals, retire, and account.
         if let Some(sub_id) = subsumed_by {
             let subsumed_learned = self.clauses.get(cid).is_some_and(|c| c.learned);
@@ -3323,7 +3323,7 @@ impl Solver {
         // Every `probe_conflicts` above opened a decision level, propagated
         // (draining any still-pending level-0 literals *at the probe level*)
         // and backtracked, discarding the consequences.  Rewind so the next
-        // `propagate()` re-derives the lost level-0 implications — the same
+        // `propagate()` re-derives the lost level-0 implications – the same
         // hanging-unit repair as `vivify_clauses`. (Ported from upstream
         // v0.3.3.)
         self.trail.reset_propagation_head();
@@ -3362,7 +3362,7 @@ impl Solver {
     pub(super) fn inprocess(&mut self) {
         // Wall attribution: time spent inside inprocessing rounds (search
         // keeps everything else).  This is the counter the mixed-per-work
-        // cost analysis lacked — cross-solver wall comparisons folded the
+        // cost analysis lacked – cross-solver wall comparisons folded the
         // inprocessing share into "per-prop cost" invisibly.
         let t0 = std::time::Instant::now();
         self.inprocess_inner();
@@ -3430,7 +3430,7 @@ impl Solver {
         // sweep inside the probe/inprocess cycle): prove equivalences and
         // backbone units with the embedded sub-solver under this round's
         // effort budget, then fold the proved equivalences through the
-        // substitution round (the sweep's `sweep_round` does both — it
+        // substitution round (the sweep's `sweep_round` does both – it
         // re-checks every soundness gate itself).  Placed after the ELS
         // slot so the static pass folds what it can see first and the
         // sweep only spends kitten solves on the residual; before
@@ -3450,11 +3450,11 @@ impl Solver {
         // `solver/bva.rs`): introduce aux vars merging original-clause
         // groups under the round's effort budgets.  Runs BEFORE the
         // pure-literal/subsume passes so they see (and can consume) the
-        // introduced structure — and BEFORE the `Preprocessor` is sized,
+        // introduced structure – and BEFORE the `Preprocessor` is sized,
         // since introductions grow the variable space its occurrence
         // arrays are indexed by.  Introductions leave watches/BIG stale
         // and can add level-0 units ((G ∨ t) with G fully false forces t,
-        // then each (¬t ∨ U_i) forces U_i) — rebuild and re-propagate
+        // then each (¬t ∨ U_i) forces U_i) – rebuild and re-propagate
         // immediately; a conflict there is a genuine Unsat certificate
         // over live clauses.
         //
@@ -3476,7 +3476,7 @@ impl Solver {
             introduced_now += n;
         }
         // Quotient-chain factor (the full kissat `factor.c` port): per the
-        // handover, it REPLACES the AND-gate slice when enabled — the
+        // handover, it REPLACES the AND-gate slice when enabled – the
         // 2-chain AND-gate is the chain's special case, and the
         // incremental chain construction is the shape that measured
         // positive in kissat on the worker class.  Budgeted by the round's
@@ -3494,7 +3494,7 @@ impl Solver {
                 // Level-0 conflict from the re-encoded clauses: the
                 // original formula was already falsified by the
                 // level-0 trail (the encodings' old→new directions make
-                // this sound — see `solver/bva.rs`).
+                // this sound – see `solver/bva.rs`).
                 self.trivially_unsat = true;
                 return;
             }
@@ -3506,7 +3506,7 @@ impl Solver {
             diag_wall[1] = w.elapsed().as_micros() as u64;
         }
 
-        // Create preprocessor with the CURRENT number of variables —
+        // Create preprocessor with the CURRENT number of variables –
         // after BVA, which may have introduced new ones.
         let mut preprocessor = Preprocessor::new(self.num_vars);
         // Per-pass cost attribution: pure-literal + subsume pass marker.
@@ -3717,11 +3717,11 @@ impl Solver {
         // loop, at which point the level-0 propagation queue is routinely
         // *non-empty*.  `vivify_clauses` and the probe passes above open
         // probe decision levels, assign literals speculatively and call
-        // `propagate()` — which drains the still-pending level-0 literals
+        // `propagate()` – which drains the still-pending level-0 literals
         // under the probe's assumptions: any consequence it derives is filed
         // at the probe level, and the subsequent backtrack throws those
         // consequences away.  The genuine level-0 implications among them are
-        // then never re-derived — leaving a live clause with one unassigned
+        // then never re-derived – leaving a live clause with one unassigned
         // literal and every other literal false that nothing will ever fire
         // on (a "hanging unit").  In-place strengthening
         // (`remove_literal_and_rewatch`) has the same shape and rewinds at
@@ -3822,7 +3822,7 @@ mod tests {
 /// propagation reason or conflict clause (e.g. C = (a ∨ b ∨ c) under
 /// decisions ¬a, ¬b propagates c with reason C).  The subset test
 /// "D ⊆ C" then holds trivially for D = C, and deleting C on its own
-/// word is a false deletion with no justification — measured live: it
+/// word is a false deletion with no justification – measured live: it
 /// flipped `6s167-opt` to a false `sat` (cadical: `unsat`) before the
 /// guard.  cadical's `assert (c != subsuming)` is the same rule.
 #[test]

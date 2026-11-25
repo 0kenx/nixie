@@ -1,4 +1,4 @@
-# SAT performance program — round-10 handoff (2026-09-12 close)
+# SAT performance program – round-10 handoff (2026-09-12 close)
 
 > Entry point for the next agent. Full detail in the 14 studies dated
 > 2026-09-12 under `docs/studies/` (start with
@@ -7,19 +7,19 @@
 
 continue sat perf work. Based on the measured state, in priority order:
 
-## 1. Portfolio at wider caps — the only open route to the circuit-class conversions
+## 1. Portfolio at wider caps – the only open route to the circuit-class conversions
 
-Measured state: the amplitude arms are done and sound — `NIXIE_OTFS` +
+Measured state: the amplitude arms are done and sound – `NIXIE_OTFS` +
 `NIXIE_EAGER_SUB` together give **0.9645× conflicts (super-additive;
 singles are 1.016×/0.9932×), circuit_64in64out 0/5→5/5, mp1-Nb7T42 4→5**,
-0 verdict disagreements ever — but corpus-neutral in aggregate, and every
+0 verdict disagreements ever – but corpus-neutral in aggregate, and every
 route to *adaptive* arming is now measured dead (seven static features +
 early-window online probe all non-predictive:
 `2026-09-12-class-signature-exhaustion.md`). The 60 s mini-bench
 portfolio died on budget arithmetic (Phase-3, 2026-09-11); **300 s+
 is untested**. First step: the 13-file 0/5-at-60 s class, seeds 0–4,
 default@300 s vs default@X→comb@(300−X) for X ∈ {60,120} (~3 h wall at
-5 workers; runners exist as assets — see below). If the comb arm
+5 workers; runners exist as assets – see below). If the comb arm
 converts ≥3 files, the `SEEDS=` portfolio token already accepts it as a
 late arm.
 
@@ -66,11 +66,11 @@ every BCP hot path; needs the same bit-identity + screen bar.
 
 - **Binaries**: `precompile/{8082e335,303771ef,7c7c4623,4f51efd7,
   6cdaea11,7c7c4623,67b02c80,6c769850,e0cc947e,81192b11}/stats_solve`.
-- **Cells**: same trees under `benchmark/runs/sc24f/` — baseline
+- **Cells**: same trees under `benchmark/runs/sc24f/` – baseline
   (`default`), tiered, otfs, eager-sub, otfs-plus-eager-sub, gent-off,
   elim-subfix; all verdict-verified (SAT model-checked, UNSAT
   cadical-agreed). Reuse, never re-run.
-- **Screen runners** (config-hash-aware skip — see the bug history in
+- **Screen runners** (config-hash-aware skip – see the bug history in
   the first gent/comb attempts): `docs/studies/assets/
   inproc-amplitude-2026-09-12/sc24f-*-screen-runner.py`. The record's
   `config.flags` content-hash is the cell identity; the runner's `OUT`
@@ -83,17 +83,17 @@ every BCP hot path; needs the same bit-identity + screen bar.
 ## Traps that cost real time today
 
 1. `clauses.num_original()` **never decrements** on
-   `mark_deleted_raw` retirements (elim/vivify/OTFS paths) — it is not
+   `mark_deleted_raw` retirements (elim/vivify/OTFS paths) – it is not
    a live-DB measure; use `live_orig` from the elim trace. This
    manufactured a false 580 k "ballast" narrative for a day.
 2. The default `RandomSlice` subsume mode **re-rolls the dirty set at
-   every round's end** — any extra `subsume_round()` call (even
+   every round's end** – any extra `subsume_round()` call (even
    zero-yield) re-places the scheduled literals and diverges
    trajectories. Nulls for schedule changes must control for this.
 3. The OTFS false-unsat (caught by the screen's verification gate, fixed
    in `7c7c4623`): trigger conditions must be exactly cadical's
    absorption condition, not a size heuristic. The corpus screen with
-   model-checked SAT cells is the net that catches this class — never
+   model-checked SAT cells is the net that catches this class – never
    screen without it.
 4. The screen runner's skip glob must match the config hash exactly
    (a bare `*` glob matches other arms' cells and silently skips them).

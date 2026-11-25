@@ -37,7 +37,7 @@ pub struct CpProof {
     /// CP explanation clauses (including exactly-one domain reasoning).
     pub lemmas: Vec<CpLemma>,
     /// Graph explanation clauses (path/cut/cycle lemmas over retained
-    /// graph statements — plain graph registrations and FSM products).
+    /// graph statements – plain graph registrations and FSM products).
     pub graph_lemmas: Vec<GraphLemma>,
     /// Additional independently checked EUF/linear-arithmetic clauses.
     pub theory_lemmas: Vec<Vec<(TermId, bool)>>,

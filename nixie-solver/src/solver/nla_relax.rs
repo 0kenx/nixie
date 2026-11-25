@@ -10,7 +10,7 @@ impl Solver {
     /// Run the NIA-over-LP relaxation engine over the assertions.
     ///
     /// Slotted *after* the cell-decomposition dispatch (so no CAD verdict can
-    /// move — the wiring is a completeness gain, not a parity risk) and
+    /// move – the wiring is a completeness gain, not a parity risk) and
     /// *before* the two sat-only model searches (it can derive `unsat`;
     /// they cannot). `Unsat` is proof-backed: `nla` produces it only from an
     /// LP infeasibility closure over consequences over `Z` of the input, with
@@ -50,8 +50,8 @@ impl Solver {
     /// Install an exact `Interpretation` witness as this solver's model.
     ///
     /// Returns `false` (installing nothing) when a value cannot be
-    /// represented in the term language — an Int-sorted term with a
-    /// fractional witness, or a real with no exact `Rational64` narrowing —
+    /// represented in the term language – an Int-sorted term with a
+    /// fractional witness, or a real with no exact `Rational64` narrowing –
     /// which leaves the verdict to the caller rather than publishing a model
     /// that was not re-checked.
     fn adopt_interpretation(

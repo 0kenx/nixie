@@ -756,7 +756,7 @@ fn test_structural_hash_is_pinned() {
     // Re-pinned 2026-09 for the finite-field `TermKind` variants
     // (`FfConst`/`FfAdd`/`FfMul`/`FfNeg`/`FfBitsum`): they are declared
     // before `Apply`/`Forall`/`Let`/`Match`, so the *later* variants'
-    // `core::mem::discriminant` ordinals — which the hash feeds on — moved
+    // `core::mem::discriminant` ordinals – which the hash feeds on – moved
     // by five. Only `mixed` and `matched` (the two cases containing kinds
     // that sort after the insertion point) re-pinned; the other six are
     // byte-identical, which is itself the evidence that the algorithm
@@ -1312,7 +1312,7 @@ fn test_deep_nested_forall_alpha_equivalent_on_small_stack() {
 /// `bag.map` / `bag.filter` carry their function/predicate symbol as a
 /// payload (`bag.fold`'s discipline): two maps under different functions
 /// are different terms, and the bag operand compares as a child.  These
-/// kinds used to sit in the unary-operator list with the symbol ignored —
+/// kinds used to sit in the unary-operator list with the symbol ignored –
 /// `unary_arg` refuses them (they are not unary), so EVERY comparison of
 /// two such terms returned a conservative `false` (the optimization-loss
 /// note in the fold handover; the consumers are the rewrite/cache layers
@@ -1326,7 +1326,7 @@ fn bag_map_and_filter_shape_equality() {
     let c = manager.mk_var("c", bag_sort);
 
     // Same content interns once (hash-consing): the identity fast path
-    // answers before the walk — the fix matters for the WALK, when the
+    // answers before the walk – the fix matters for the WALK, when the
     // bag operand pair recurses.
     let m1 = manager.mk_bag_map("f", elem, b);
     let m2 = manager.mk_bag_map("f", elem, b);

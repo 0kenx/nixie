@@ -23,7 +23,7 @@ use num_bigint::BigInt;
 use smallvec::SmallVec;
 
 /// Fuel for one `ctx_simplify` call: every recursive step decrements;
-/// zero means "return unsimplified" — the pass degrades to the identity,
+/// zero means "return unsimplified" – the pass degrades to the identity,
 /// never to a wrong answer.
 const CTX_FUEL_BUDGET: u32 = 200_000;
 /// The growth guard's multiplier: a result beyond this multiple of the
@@ -31,12 +31,12 @@ const CTX_FUEL_BUDGET: u32 = 200_000;
 const CTX_GROWTH_LIMIT: usize = 4;
 /// Fuel for one guard-equality solve (`eq_ite_rules`): every worklist
 /// step decrements; zero means "stop applying rules, finish with the
-/// plain equality" — the solve degrades to the identity, never to a
+/// plain equality" – the solve degrades to the identity, never to a
 /// wrong answer.
 const SOLVE_EQ_FUEL: u32 = 100_000;
 
 /// The value kinds of [`TermKind`]: constants for which `mk_eq` decides
-/// (folds to `true`/`false`) — the "is a value" test of z3's
+/// (folds to `true`/`false`) – the "is a value" test of z3's
 /// `try_ite_value`.
 fn is_value_kind(kind: &TermKind) -> bool {
     matches!(
@@ -52,10 +52,10 @@ fn is_value_kind(kind: &TermKind) -> bool {
 
 /// The ctx walk's native-recursion budget: `ctx_walk`/`ctx_walk_inner`
 /// are mutually-recursive native code, and the walk's depth is NOT the
-/// input's term depth — the Eq arm's solve expands a shallow chain into
+/// input's term depth – the Eq arm's solve expands a shallow chain into
 /// a deep and/or form and re-enters on it, so a ≤512-deep input (the
 /// entry gate's contract) can walk thousands of levels.  Past the
-/// budget the walk returns the node unchanged (identity — sound
+/// budget the walk returns the node unchanged (identity – sound
 /// degradation, like the fuel budget).
 const CTX_WALK_RECURSION_LIMIT: u32 = 1024;
 
@@ -75,7 +75,7 @@ impl TermManager {
     /// Re-share a term for PRINTING: the DAG's multiply-referenced
     /// compound subtrees are lifted into `let` bindings, so printing the
     /// body and the bindings (with the stock printer) produces
-    /// `let`-shared SMT-LIB text instead of tree-unfolding the sharing —
+    /// `let`-shared SMT-LIB text instead of tree-unfolding the sharing –
     /// which is exponential for fan-out chains (the nec-smt residual:
     /// 662 DAG nodes whose tree unfolding never finishes printing;
     /// `2026-09-19-smt-perf-gap-attribution.md`'s printer addendum).
@@ -92,7 +92,7 @@ impl TermManager {
     /// * **Only compound subtrees bind** (size ≥
     ///   `MIN_SHARED_SUBTREE_SIZE`): shared leaves (variables,
     ///   constants) keep their plain spelling, so small terms print
-    ///   exactly as before — the pass engages only where the unfolding
+    ///   exactly as before – the pass engages only where the unfolding
     ///   would actually repeat real content.
     pub fn share_for_printing(&mut self, root: TermId) -> (Vec<(String, TermId)>, TermId) {
         /// A subtree smaller than this is never let-bound: re-printing a
@@ -103,7 +103,7 @@ impl TermManager {
         /// naturally DAG-linear (one binding per shared compound node),
         /// so the real bound is the input's DAG size; the previous
         /// hard 1 000 cap truncated the SMALLEST candidates (ascending
-        /// size order) and left the largest compounds unbound — their
+        /// size order) and left the largest compounds unbound – their
         /// tree unfolding then exploded the print exponentially (the
         /// large nec-smt members hung in `write_term_at_depth` on a
         /// residual z3 prints with 11 k+ bindings).  100 000 keeps a
@@ -116,20 +116,20 @@ impl TermManager {
         let mut refs: FxHashMap<TermId, usize> = FxHashMap::default();
         let mut size: FxHashMap<TermId, usize> = FxHashMap::default();
         // Post-order index (the Combine insertion order): a STRICT
-        // topological order — every child combines before its parent —
+        // topological order – every child combines before its parent –
         // used as the sort's tie-break.  Saturating sizes TIE at
         // `usize::MAX` for every huge compound, and a size-only sort can
         // then place a parent BEFORE its saturated child, leaving the
-        // child unnamed when the parent's RHS is rebuilt — the inline
+        // child unnamed when the parent's RHS is rebuilt – the inline
         // explosion (376 M printed nodes on one member) this pass
         // exists to prevent.
         let mut post_order: FxHashMap<TermId, usize> = FxHashMap::default();
         let mut vocab: FxHashSet<crate::interner::Spur> = FxHashSet::default();
         // DAG walk, two-phase (Expand/Combine) so sizes combine in TRUE
-        // post-order — children's sizes are always inserted before their
+        // post-order – children's sizes are always inserted before their
         // parents read them.  (A reversed pre-order is NOT post-order:
         // this analysis's first version combined parents first, reading
-        // `unwrap_or(1)` for not-yet-sized children — every size was
+        // `unwrap_or(1)` for not-yet-sized children – every size was
         // undercounted, the candidate order was not topological, and the
         // bindings' RHS kept un-cut shared subtrees whose printing
         // exploded.  The bug's signature: a 407-DAG-node RHS printing
@@ -169,7 +169,7 @@ impl TermManager {
                     let children = crate::ast::traversal::get_children(&data.kind);
                     // Saturating: the TREE size of a shared DAG grows
                     // exponentially with fan-out (the nec-smt large
-                    // members exceed 2^64 nodes) — the sizes only gate
+                    // members exceed 2^64 nodes) – the sizes only gate
                     // the share threshold and binding count, so clamping
                     // at `usize::MAX` is semantically exact ("huge")
                     // where a plain `+` would overflow-panic.
@@ -191,7 +191,7 @@ impl TermManager {
         // explodes the printed text (the large nec-smt members' RHS
         // loop hung exactly there).  Binding every compound whose TREE
         // size passes `BIG_INLINE_TREE` makes the binding set a DAG
-        // PARTITION — every inline piece is small, so the total printed
+        // PARTITION – every inline piece is small, so the total printed
         // text is linear in the DAG.
         /// Tree size at (or beyond) which a compound binds even when
         /// referenced only once.
@@ -219,7 +219,7 @@ impl TermManager {
             return (Vec::new(), root);
         }
 
-        // ---- 3. Name minting against the vocabulary's complement. ----
+        // ======== 3. Name minting against the vocabulary's complement. ========
         let mut names: FxHashMap<TermId, TermId> = FxHashMap::default();
         let mut bindings: Vec<(String, TermId)> = Vec::new();
         let mut counter = 1u32;
@@ -233,17 +233,17 @@ impl TermManager {
                 }
             };
             // The binding's RHS: the candidate with its already-named
-            // (smaller) candidate children replaced by their names —
+            // (smaller) candidate children replaced by their names –
             // rebuilt DIRECTLY from the node (children-first candidate
             // order means every shared-compound child is already named,
             // so a one-level child remap is the full substitution).  The
             // previous per-candidate `substitute` call cloned the whole
-            // growing `names` map per iteration — O(n²) on the 8k+
+            // growing `names` map per iteration – O(n²) on the 8k+
             // binding residuals, 43 s on the large nec-smt members.
             let (sort, kind) = match self.get(cand).cloned() {
                 Some(data) => (data.sort, data.kind),
                 // A missing node cannot be rebuilt; substitute the plain
-                // way (the degenerate path — candidates came from get).
+                // way (the degenerate path – candidates came from get).
                 None => {
                     let rhs = self.substitute(cand, &names);
                     let sort = self.sorts.bool_sort;
@@ -310,20 +310,20 @@ impl TermManager {
         cache.get(&id).copied().unwrap_or(id)
     }
 
-    /// `true` when `t` is a value constant ([`is_value_kind`]) — the
+    /// `true` when `t` is a value constant ([`is_value_kind`]) – the
     /// "is a value" test of z3's `try_ite_value`.
     fn is_value(&self, t: TermId) -> bool {
         self.get(t).is_some_and(|d| is_value_kind(&d.kind))
     }
 
     /// z3 `are_equal` for the solve rules: structural identity or value
-    /// equality — delegated to `mk_eq`'s constant folding (which decides
+    /// equality – delegated to `mk_eq`'s constant folding (which decides
     /// every value pair exactly, including mixed `Int`/`Real`).
     fn rw_are_equal(&mut self, a: TermId, b: TermId) -> bool {
-        // Structural identity first; then the VALUE pair only — z3's
+        // Structural identity first; then the VALUE pair only – z3's
         // `are_equal` never decides non-value exprs, and gating on
         // `is_value` keeps `mk_eq` on its constant-folding arms (a
-        // non-value probe would INTERN an `Eq` node per call — the
+        // non-value probe would INTERN an `Eq` node per call – the
         // interning flood that hung the large nec-smt members' walks,
         // 30 % HashMap::insert + 17 % rehash in the profile).
         a == b || (self.is_value(a) && self.is_value(b) && self.mk_eq(a, b) == self.true_id)
@@ -331,22 +331,22 @@ impl TermManager {
 
     /// z3 `are_distinct`: provably different values.  Only ever true for
     /// a value pair (hash-consing makes distinct ids distinct terms, and
-    /// `mk_eq` folds every value pair) — the kind gate is both the z3
+    /// `mk_eq` folds every value pair) – the kind gate is both the z3
     /// semantics and the no-interning guarantee (see `rw_are_equal`).
     fn rw_are_distinct(&mut self, a: TermId, b: TermId) -> bool {
         a != b && self.is_value(a) && self.is_value(b) && self.mk_eq(a, b) == self.false_id
     }
 
-    /// Guard-equality elimination — the `solve_eqs` family proper (z3
+    /// Guard-equality elimination – the `solve_eqs` family proper (z3
     /// `bool_rewriter::mk_eq_core`'s ite rule set: `try_ite_eq`,
     /// `try_ite_value`, and the ite×ite case; the parameter sweep of
     /// `2026-09-19-smt-perf-gap-attribution.md` named this family as one
     /// of the three individually necessary for the nec-smt fold).
     ///
     /// Solves `(= lhs rhs)` when an ite sits on a side into a formula
-    /// over the ite's CONDITIONS — the guards are EXTRACTED as literals
+    /// over the ite's CONDITIONS – the guards are EXTRACTED as literals
     /// (`(= v (ite c t e))` with `t ≠ v` becomes `(and (= e v) ¬c)`),
-    /// which the conjunction context then absorbs — instead of being
+    /// which the conjunction context then absorbs – instead of being
     /// CASE-SPLIT, which is the measured fuel cost (the ninth session's
     /// memo: distinct split paths carry distinct signatures by
     /// construction, so no memo can catch them).
@@ -362,7 +362,7 @@ impl TermManager {
         // later visit (the ctx walk visits the same `(ite, value)` pair
         // under many split signatures; the bottom-up and ctx passes
         // re-visit each other's solved output).  `None` results are
-        // cached too — the no-rule probe is the repeated work.
+        // cached too – the no-rule probe is the repeated work.
         let key = if lhs.0 <= rhs.0 {
             (lhs, rhs)
         } else {
@@ -376,7 +376,7 @@ impl TermManager {
         out
     }
 
-    /// [`Self::eq_ite_rules`] before the pair memo — the rule body.
+    /// [`Self::eq_ite_rules`] before the pair memo – the rule body.
     fn eq_ite_rules_uncached(&mut self, lhs: TermId, rhs: TermId) -> Option<TermId> {
         let l_kind = self.get(lhs).map(|d| d.kind.clone());
         let r_kind = self.get(rhs).map(|d| d.kind.clone());
@@ -420,10 +420,10 @@ impl TermManager {
         None
     }
 
-    /// z3 `bool_rewriter::try_ite_value` — the guard-extraction core —
+    /// z3 `bool_rewriter::try_ite_value` – the guard-extraction core –
     /// as an explicit worklist (z3 re-enters its rewriter via
     /// `BR_REWRITE2`; the worklist is the re-entry, without native
-    /// recursion over the chain — the AGENTS.md stack rule).
+    /// recursion over the chain – the AGENTS.md stack rule).
     ///
     /// Rules on `(= (ite c t e) v)`, `v` a value, in z3's order:
     /// * `try_ite_eq` re-check (the rewriter re-runs it per rewrite);
@@ -436,11 +436,11 @@ impl TermManager {
     /// * R7 every leaf of the ite is a value `≠ v` → `false`.
     ///
     /// Fuel-bounded: on exhaustion the pending equality is finished as
-    /// the plain (equivalent) `mk_eq` and no further rules fire — the
+    /// the plain (equivalent) `mk_eq` and no further rules fire – the
     /// solve degrades to the identity, never to a wrong answer.
     fn solve_ite_value(&mut self, ite: TermId, val: TermId) -> Option<TermId> {
         // The no-progress guard: when NO rule ever fires, the worklist's
-        // terminal is the plain `mk_eq(ite, val)` — which the caller
+        // terminal is the plain `mk_eq(ite, val)` – which the caller
         // would re-feed to `eq_ite_rules` on its next visit (the ctx
         // walk re-enters on the solved term), an infinite cycle.  Solve
         // only when something was actually rewritten.
@@ -455,7 +455,7 @@ impl TermManager {
         /// One accumulated combinator: the and/or rules collect their
         /// guard literals and carry exactly one pending equality; the
         /// ite rules (R5/R6) carry two pending equalities (the solved
-        /// branch, then the plain sibling — z3's rewriter descends into
+        /// branch, then the plain sibling – z3's rewriter descends into
         /// the sibling on its next pass, so both are solved here).
         type SolveKey = (TermId, TermId);
         /// The id-ordered cache key for one pending equality.
@@ -465,10 +465,10 @@ impl TermManager {
         /// One accumulated combinator: the and/or rules collect their
         /// guard literals and carry exactly one pending equality; the
         /// ite rules (R5/R6) carry two pending equalities (the solved
-        /// branch, then the plain sibling — z3's rewriter descends into
+        /// branch, then the plain sibling – z3's rewriter descends into
         /// the sibling on its next pass, so both are solved here).
         /// Every frame carries its OWNING equality key so the assembled
-        /// result memoizes into `eq_solve_cache` — the R5/R6 branch-outs
+        /// result memoizes into `eq_solve_cache` – the R5/R6 branch-outs
         /// make the solve TREE exponentially bigger than the DAG unless
         /// intermediate pairs are solved exactly once.
         enum Frame {
@@ -496,7 +496,7 @@ impl TermManager {
             if let Some((x, v)) = pending.take() {
                 // Sub-solve memo: an intermediate pair already solved
                 // (in this call, an earlier call, or the bottom-up pass)
-                // resolves without re-descending its whole subtree —
+                // resolves without re-descending its whole subtree –
                 // this is what keeps the R5/R6 solve TREE linear in the
                 // DAG.  A cached `None` (no rule) means the plain
                 // equality, which re-interns to the existing id.
@@ -517,7 +517,7 @@ impl TermManager {
                 fuel -= 1;
                 let kind = self.get(x).map(|d| d.kind.clone());
                 let Some(TermKind::Ite(c, t, e)) = kind.as_ref() else {
-                    // Terminal: a value (folds) or an unsolvable term —
+                    // Terminal: a value (folds) or an unsolvable term –
                     // the plain equality IS the solved form.
                     let terminal = self.mk_eq(x, v);
                     self.eq_solve_cache.insert(key, Some(terminal));
@@ -571,10 +571,10 @@ impl TermManager {
                     });
                     pending = Some((t, v));
                 } else if self.ite_with_value_leaves(e).is_some() {
-                    // R6: `(ite c (= t v) solve(= e v))` — the THEN hole
+                    // R6: `(ite c (= t v) solve(= e v))` – the THEN hole
                     // is the plain t-side, the ELSE hole the solved
                     // e-side (the frame's `else_side` names the ELSE
-                    // hole's term — `e`, never `t`: solving the t-side
+                    // hole's term – `e`, never `t`: solving the t-side
                     // twice silently dropped the else-branch, a
                     // false-`unsat` shape the equivalence fuzzer
                     // isolated).
@@ -609,7 +609,7 @@ impl TermManager {
                         // HERE (z3's mk_and is the REWRITER's absorbing
                         // one): a chain solved down to `(and (= x v) ¬c)`
                         // refutes exactly when some level's condition `c`
-                        // reappears against the default's equality — the
+                        // reappears against the default's equality – the
                         // member folds only if this conjunction absorbs
                         // complements.
                         parts.push(r);
@@ -655,7 +655,7 @@ impl TermManager {
         }
     }
 
-    /// `(c, t, e)` when `t` is an ite whose DIRECT branches are values —
+    /// `(c, t, e)` when `t` is an ite whose DIRECT branches are values –
     /// z3's progress guard for the recursive rules R5/R6 (the sub-solve
     /// is guaranteed to fire its first step).
     fn ite_with_value_leaves(&self, t: TermId) -> Option<(TermId, TermId, TermId)> {
@@ -666,14 +666,14 @@ impl TermManager {
     }
 
     /// z3 `simplify_eq_ite`: every leaf of the ite (recursively through
-    /// nested ites, DAG-safe) is a value distinct from `v` — then the
+    /// nested ites, DAG-safe) is a value distinct from `v` – then the
     /// whole `(= ite v)` is `false`.  Iterative with a seen-set.
     fn ite_leaves_all_distinct(&mut self, root: TermId, v: TermId) -> bool {
         /// Budget on the leaf scan: R7 fires at every level whose other
         /// rules stalled, and an unbounded scan over the level's whole
         /// subtree is quadratic on stalling chains (the large nec-smt
         /// members' ~40k-level select spines burned ~90 s in these scans
-        /// alone).  Past the budget the rule declines — sound (no
+        /// alone).  Past the budget the rule declines – sound (no
         /// rewrite), and z3's own caller only reaches it after R1–R6
         /// all failed, so deep stalled subtrees lose nothing it would
         /// have decided.
@@ -709,7 +709,7 @@ impl TermManager {
     /// z3's ite×ite case (`mk_eq_core`'s `m_ite_extra_rules` block): two
     /// ites whose four branches are values cross into a four-clause
     /// conjunction over the conditions (a case-split-free exhaustive
-    /// sign matrix — every leaf equality folds, being value-vs-value).
+    /// sign matrix – every leaf equality folds, being value-vs-value).
     fn solve_ite_ite(&mut self, l: TermId, r: TermId) -> Option<TermId> {
         let l_kind = self.get(l).map(|d| d.kind.clone());
         let r_kind = self.get(r).map(|d| d.kind.clone());
@@ -745,7 +745,7 @@ impl TermManager {
     /// identical branches, and the Boolean connections (a Boolean ite
     /// with constant branches connects to and/or/iff, `m_elim_ite`
     /// default true).  The tail block carries z3's `m_ite_extra_rules`
-    /// cross-branch merges (default true) — the structural normal form
+    /// cross-branch merges (default true) – the structural normal form
     /// that lets two selects with shared leaves fuse into one.
     fn rewrite_ite(&mut self, mut c: TermId, mut t: TermId, mut e: TermId) -> TermId {
         loop {
@@ -893,7 +893,7 @@ impl TermManager {
     }
 
     /// Context-dependent simplification (z3's `ctx-simplify` shape, the
-    /// pass the nec-smt let-chain goals need — see
+    /// pass the nec-smt let-chain goals need – see
     /// `2026-09-19-smt-perf-gap-attribution.md`'s parameter-sweep
     /// addendum: `push_ite` + `ite_extra_rules` + `solve_eqs` are each
     /// necessary, and the LOCAL subset alone is a measured dead end; the
@@ -905,12 +905,12 @@ impl TermManager {
     ///   conjunct IS true in this context) and the remaining conjuncts
     ///   simplify under it;
     /// * at an `Or`, a FALSE literal is dropped (modus ponens on the
-    ///   path — one disjunct known false removes it);
+    ///   path – one disjunct known false removes it);
     /// * at a `Not`, the polarity flips;
     /// * at an `Ite` whose condition the context decides, prune to the
     ///   selected branch; otherwise descend BOTH branches under
     ///   `c` / `¬c` (the case split that reaches through `or`/`not`
-    ///   nesting — the piece the one-level And-context prune lacked);
+    ///   nesting – the piece the one-level And-context prune lacked);
     /// * at `Eq`/comparisons of a constant against an `Ite`, push into
     ///   the branches (fuel-bounded) so constant-vs-constant branches
     ///   decide.
@@ -922,14 +922,14 @@ impl TermManager {
     /// rewrite would exceed `CTX_GROWTH_LIMIT` × the input's DAG size.
     pub fn ctx_simplify(&mut self, root: TermId) -> TermId {
         // DEPTH CONTRACT (the assert path's caller-side contract, moved
-        // INTO the pass so every caller — the `simplify` command, the
-        // tactics, the assert fold — is protected by construction):
+        // INTO the pass so every caller – the `simplify` command, the
+        // tactics, the assert fold – is protected by construction):
         // `ctx_walk` is mutually-recursive NATIVE code, and a deep spine
         // overflows the process stack (the large nec-smt members' ~2500+
         // residuals did, the moment the pair-memo made the walk fast
         // enough to reach their depth).  512 matches the proven envelope
         // (`term_exceeds_encode_depth` gates the same walk on the 128 KiB
-        // encode threads); a too-deep input returns UNCHANGED — the
+        // encode threads); a too-deep input returns UNCHANGED – the
         // identity is sound, the caller keeps the bottom-up result.
         // `term_depth` is itself an explicit-stack walk.
         const CTX_WALK_DEPTH_LIMIT: usize = 512;
@@ -940,7 +940,7 @@ impl TermManager {
         // The per-subtree Boolean-atom sets (the memo's relevance
         // domains): the walk of `t` can only consult context entries for
         // atoms OCCURRING in `t`'s subtree, so results memoize per
-        // (term, relevant-atoms signature) — without this, shared
+        // (term, relevant-atoms signature) – without this, shared
         // subchains re-walk multiplicatively (the nec-smt member burned
         // the whole 200k-step fuel on a 662-node term).
         let sub_atoms = self.subtree_bool_atoms(root);
@@ -963,7 +963,7 @@ impl TermManager {
 
     /// Boolean-sorted atom sets per subtree, bottom-up over the DAG
     /// (children's sets unioned; a node's own id included when it is
-    /// Boolean-sorted — any Boolean node can serve as a context atom
+    /// Boolean-sorted – any Boolean node can serve as a context atom
     /// key).  `None` for a node whose set exceeds
     /// [`MAX_MEMO_ATOM_SET`]: such subtrees simply do not memoize (the
     /// walk stays correct, only slower).
@@ -980,11 +980,11 @@ impl TermManager {
         root: TermId,
     ) -> FxHashMap<TermId, Option<std::sync::Arc<AtomSet>>> {
         /// Beyond this many distinct atoms a subtree's set is stored as
-        /// `None` (no memoization for it) — the set itself would cost
+        /// `None` (no memoization for it) – the set itself would cost
         /// more than the re-walk it saves on typical inputs.
         const MAX_MEMO_ATOM_SET: usize = 1024;
         /// Two-pointer union of two ascending-sorted id slices into
-        /// `dst` (duplicates dropped — the ids are a set).
+        /// `dst` (duplicates dropped – the ids are a set).
         fn merge_sorted_union(dst: &mut AtomSet, src: &[TermId]) {
             use std::cmp::Ordering;
             if src.is_empty() {
@@ -1019,7 +1019,7 @@ impl TermManager {
         }
         let mut out: FxHashMap<TermId, Option<std::sync::Arc<AtomSet>>> = FxHashMap::default();
         // Two-phase Expand/Combine (children's sets exist before the
-        // parent unions them — the post-order trap the share-for-printing
+        // parent unions them – the post-order trap the share-for-printing
         // pass already recorded once).
         enum Frame {
             Expand(TermId),
@@ -1044,7 +1044,7 @@ impl TermManager {
                 }
                 Frame::Combine(t) => {
                     // Cache first: a shared prefix computed by an earlier
-                    // assertion is reused as-is (the Arc clone — no
+                    // assertion is reused as-is (the Arc clone – no
                     // merge, no allocation).  Per-access borrows: a miss
                     // inserts into the same RefCell below.
                     if let Some(hit) = self.subtree_atom_cache.borrow().get(&t) {
@@ -1068,7 +1068,7 @@ impl TermManager {
                             }
                             // Oversized or absent child set: this subtree
                             // does not memoize (stays `None` whatever the
-                            // remaining children say — break early).
+                            // remaining children say – break early).
                             _ => {
                                 set = None;
                                 break;
@@ -1093,7 +1093,7 @@ impl TermManager {
 
     /// The memo signature for walking `t` under `ctx`: a hash of the
     /// context's entries restricted to `t`'s relevant atoms.  Two
-    /// contexts agreeing on those entries walk `t` identically — the
+    /// contexts agreeing on those entries walk `t` identically – the
     /// walk consults nothing else.
     fn ctx_signature(
         &self,
@@ -1104,7 +1104,7 @@ impl TermManager {
         let relevant = sub_atoms.get(&t)?;
         let set = relevant.as_ref()?;
         // Iterate the CONTEXT (small: it grows only along the walk's
-        // case-split/conjunct path) and test subtree membership — the
+        // case-split/conjunct path) and test subtree membership – the
         // intersection is what the walk can consult.  Membership in the
         // sorted set is a binary search.
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -1310,7 +1310,7 @@ impl TermManager {
             TermKind::Eq(l, r) => {
                 // Guard-equality elimination FIRST (z3 `mk_eq_core`'s ite
                 // rules): the conditions are extracted as literals for
-                // the context walk instead of case-split — the memo
+                // the context walk instead of case-split – the memo
                 // proved the splits, not sharing, were the fuel cost
                 // (the ninth session of the perf-gap study).
                 if let Some(solved) = self.eq_ite_rules(l, r) {
@@ -1337,13 +1337,13 @@ impl TermManager {
     ) -> TermId {
         // Each conjunct asserts its atom's polarity; the REST simplify
         // under it.  The extensions unwind exactly: an entry a parent had
-        // set is restored, a FRESH entry is removed — a conjunct's
+        // set is restored, a FRESH entry is removed – a conjunct's
         // polarity is not valid outside the conjunction.  (The first
         // version of this unwind only restored overwritten entries and
-        // skipped fresh ones — the leak survived the conjunction's end
+        // skipped fresh ones – the leak survived the conjunction's end
         // and poisoned every later sibling walk in the enclosing scope:
         // the Or arm's next disjunct walked under a conjunct's polarity
-        // and `(or (and p q) p)` simplified to `true` — a live
+        // and `(or (and p q) p)` simplified to `true` – a live
         // false-simplify on main, caught by the solve-rules equivalence
         // fuzzer.)
         /// Unwind one extension: restore the previous polarity, or
@@ -1395,17 +1395,17 @@ impl TermManager {
 
     /// z3 `bool_rewriter::mk_nflat_and_core`/`mk_nflat_or_core` parity,
     /// at the SIMPLIFIER layer (z3's absorption lives in its rewriter,
-    /// never in `ast_manager`'s constructors — builder-level folding here
+    /// never in `ast_manager`'s constructors – builder-level folding here
     /// perturbed the solver's term shapes and broke MBQI's convergence
     /// pins, so the rule is harness-only): over the flattened `args`, a
     /// duplicate literal drops and a literal meeting its negation
-    /// decides the connective (`X ∧ ¬X ≡ false`, `X ∨ ¬X ≡ true` —
+    /// decides the connective (`X ∧ ¬X ≡ false`, `X ∨ ¬X ≡ true` –
     /// classical, for ANY `X`).  Returns the folded term.
     fn absorb_literals(&mut self, args: SmallVec<[TermId; 4]>, conjunction: bool) -> TermId {
         // Flatten same-connective children FIRST (z3's
         // `mk_flat_and_core` → `mk_nflat_and_core` pipeline): complements
         // hidden across nested levels (`And(And(X Y) ¬X)`) are visible
-        // only in the flattened view — absorbing per level without
+        // only in the flattened view – absorbing per level without
         // flattening misses them (the large nec-smt member's top-level
         // and-tree is nested binary).
         let mut flat: SmallVec<[TermId; 4]> = SmallVec::with_capacity(args.len());
@@ -1800,7 +1800,7 @@ impl TermManager {
     /// * the `e`-numeral case is symmetric (`¬c` / `c`).
     ///
     /// The branches were already simplified bottom-up when this fires
-    /// (the residual is built with the plain `mk_*` constructors — no
+    /// (the residual is built with the plain `mk_*` constructors – no
     /// re-descent, no native recursion over the chain: the 724 KB
     /// nec-smt members nest selects thousands deep).
     /// `None` when no branch is decidable.
@@ -1840,7 +1840,7 @@ impl TermManager {
         None
     }
 
-    /// Decide `a ⊙ b` when both sides are integer numerals — the exact
+    /// Decide `a ⊙ b` when both sides are integer numerals – the exact
     /// constant fold the comparison simplifiers perform (no descent:
     /// callers pass already-simplified branches).
     fn cmp_decide(&self, op: CmpOp, a: TermId, b: TermId) -> Option<bool> {

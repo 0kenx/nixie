@@ -77,7 +77,7 @@ impl Trail {
             // +4 bytes of zero padding: the kernel's AVX2 block filter
             // dword-gathers values[code..code+4) (little-endian low-byte
             // extract), and the highest literal's gather would read past
-            // the end without it.  Zeros read as "unassigned" — semantically
+            // the end without it.  Zeros read as "unassigned" – semantically
             // inert for literals beyond the domain (never queried).
             values: vec![0; num_vars * 2 + 4],
             var_info: vec![VarInfo::default(); num_vars],
@@ -131,7 +131,7 @@ impl Trail {
     /// Raw per-literal truth value: `+1` true, `-1` false, `0` undefined.
     /// The hottest BCP lookup – a single byte load indexed by literal code
     /// (no enum match, no sign branch). The solver maintains `values` at
-    /// length `2 * num_vars` (grown only by `resize`, never shrunk — see
+    /// length `2 * num_vars` (grown only by `resize`, never shrunk – see
     /// `unassign`), so `lit.code()` is always in range and the direct index
     /// skips the `Option` bounds-check dance the `.get()` version paid on
     /// every watch visit.
@@ -147,7 +147,7 @@ impl Trail {
     /// **Documented `unsafe` exception** (the crate denies `unsafe_code`;
     /// this is the single scoped escape in `trail.rs`, mirroring
     /// `memory.rs`'s module-level exception with its safety model): the
-    /// index is in-bounds by construction — `values` is sized to cover
+    /// index is in-bounds by construction – `values` is sized to cover
     /// every encodable literal by [`Self::resize`], and `Lit::code()` is
     /// `2·var + sign` with `var < num_vars` for every literal the solver
     /// constructs.  The elided bounds check was measured as part of the
@@ -158,7 +158,7 @@ impl Trail {
     #[inline]
     pub fn lit_val_hot(&self, lit: Lit) -> i8 {
         debug_assert!((lit.code() as usize) < self.values.len());
-        // SAFETY: see the doc comment — `resize` guarantees the capacity.
+        // SAFETY: see the doc comment – `resize` guarantees the capacity.
         unsafe { *self.values.get_unchecked(lit.code() as usize) }
     }
 
@@ -483,7 +483,7 @@ impl Trail {
     pub fn resize(&mut self, num_vars: usize) {
         // Slack-grown (the WatchLists::resize rationale): the propagation
         // session indexes `values`/var info by live literal/var directly,
-        // so `len` must cover `num_vars` — but per-call single-element
+        // so `len` must cover `num_vars` – but per-call single-element
         // extension into cold arrays was the per-var cache-miss storm.
         // Overshoot so the usual call is a bounds check; slack rows read
         // as unassigned.
@@ -583,7 +583,7 @@ impl Trail {
     /// (`vivify` / failed-literal probing / `inprocess`) opened decision
     /// levels: a watch only ever fires when its literal is *newly* falsified,
     /// so a clause that becomes unit under an assignment already on the trail
-    /// has no future event to fire on — a "hanging unit" that silently loses
+    /// has no future event to fire on – a "hanging unit" that silently loses
     /// an implication (and a probe's `propagate()` drains still-pending
     /// level-0 literals *at the probe level*, whose backtrack then discards
     /// the consequences).  Re-propagating a literal that is still assigned is

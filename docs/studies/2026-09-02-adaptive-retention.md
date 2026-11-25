@@ -1,10 +1,10 @@
 # Adaptive retention signal: rank by glue only when glue ranks usage (2026-09-02, pre-registered)
 
-> ## RESULT (2026-09-02): gates NOT met — T/N geomean 1.0125 on the sound
+> ## RESULT (2026-09-02): gates NOT met – T/N geomean 1.0125 on the sound
 > binary; both switches stay default-off
 >
 > The first run of this study measured T/N 0.6706 with 8/11 families
-> ≤ 0.95 — a spectacular pass — **entirely due to the two wrong-UNSAT
+> ≤ 0.95 – a spectacular pass – **entirely due to the two wrong-UNSAT
 > leaks this study's arm exposed** (O(1) `lits[0]` reason check missing
 > BIG-propagated binaries; binary deletion without BIG-edge purge; fixed
 > in `3993905`). Wrong-unsat terminations scored as fast solves on the
@@ -14,7 +14,7 @@
 
 Follow-up to `2026-09-02-retention-signal.md`: usage-ranked reduce is
 ~47× on the 6s167 class but 1.4–1.7× *worse* on mrpp/summle. Hypothesis:
-**the glue signal's informativeness varies by instance** — where
+**the glue signal's informativeness varies by instance** – where
 low-glue clauses are no more reused than high-glue ones, ranking by glue
 is ranking by noise (or anti-signal), and usage should rank instead.
 
@@ -22,7 +22,7 @@ is ranking by noise (or anti-signal), and usage should rank instead.
 
 `NIXIE_REDUCE_ADAPT=1` (implies the cadical-reduce schedule): at each
 reduction, after tier protection, compute one signal over the candidate
-set —
+set –
 
 * sort candidates by glue (asc), take the best-glue quartile (the ones
   glue-ranking would KEEP) and the worst-glue quartile (the ones it would
@@ -36,7 +36,7 @@ deletion counts, target %) is identical to both prior arms.
 ## Matched null
 
 `NIXIE_REDUCE_ADAPT_NULL=1`: the *same* signal computation, same threshold,
-same code path and same two rankings — but the choice is **inverted**
+same code path and same two rankings – but the choice is **inverted**
 (`glue_informative → rank by usage`). Identical physical operations and
 per-instance decision counts, opposite semantic correlation. If the
 signal carries information, treat < null; under chaos they are
@@ -54,7 +54,7 @@ unchanged base for context. Metric: median conflicts-to-verdict, CRN via
   switches stay `doc(hidden)` default-off.
 * Sanity: on a 6s167 spot-check the adaptive arm must pick usage-ranking
   on early rounds (the class where usage measured 0.28 vs null), and on
-  mrpp it must pick glue-ranking — the signal must fire as designed
+  mrpp it must pick glue-ranking – the signal must fire as designed
   before its effect is believed.
 
 ## Prior
@@ -77,9 +77,9 @@ null = `NIXIE_REDUCE_ADAPT_NULL`, 12 × 10 seeds, verdict-checked)
 | constraints_17 | 37 829 | 28 435 | 1.330 | | si2-b03m | 41 967 | 41 854 | 1.003 |
 | mrpp_4x4 | 1 474 586 | 1 371 477 | 1.075 | | Break_unsat_06_07 | 61 414 | 60 891 | 1.009 |
 | qwh.50.1250 | 85 805 | 116 116 | 0.739 | | barman-pfile06 | 1 202 | 1 448 | 0.830 |
-| summle_X4044 | 219 829 | 136 777 | 1.607 | | g2-ak128booth | 0 | 0 | — |
+| summle_X4044 | 219 829 | 136 777 | 1.607 | | g2-ak128booth | 0 | 0 | – |
 
-**T/N geomean 1.0125, verdicts correct everywhere — drop per
+**T/N geomean 1.0125, verdicts correct everywhere – drop per
 pre-registration.** The glue-informativeness signal does not separate
 treatment from its inverted null once deletion is sound (the contaminated
 run's "wins" were the leaks). The adaptive-retention thread closes here;

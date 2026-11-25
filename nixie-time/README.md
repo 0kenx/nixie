@@ -5,7 +5,7 @@ Wasm-safe drop-in replacements for the parts of `std::time` Nixie uses.
 ## Why This Crate Exists
 
 `std::time::Instant::now()` and `std::time::SystemTime::now()` **abort the
-process on `wasm32-unknown-unknown`** — that target has no clock at all, so
+process on `wasm32-unknown-unknown`** – that target has no clock at all, so
 the standard library's implementation is a hard `unreachable!()`. Because the
 wasm release profile is `panic = "abort"`, this is a trap, not an unwind: the
 `Solver` / `Context` object that was mid-call is left borrowed, and every
@@ -30,7 +30,7 @@ workspace depends on it.
 | `SystemTimeError` | re-export of `std::time::SystemTimeError` | stub with the same `duration()` / `Display` / `Error` surface |
 
 `wasm32-wasip1` and `wasm32-unknown-emscripten` do have working clocks and
-keep the real types — the stub is scoped to `wasm32-unknown-unknown`
+keep the real types – the stub is scoped to `wasm32-unknown-unknown`
 specifically. Off that one target, `Instant` and `SystemTime` are not
 wrappers; they are the literal `std::time` types, so native timing behaviour
 and precision are bit-identical to using `std::time` directly.
@@ -47,7 +47,7 @@ use nixie_time::{Duration, Instant};
 let start = Instant::now();
 // ... do work ...
 if start.elapsed() > Duration::from_millis(500) {
-    // budget exceeded — never observed on `wasm32-unknown-unknown`, where
+    // budget exceeded – never observed on `wasm32-unknown-unknown`, where
     // the clock is frozen and `elapsed()` always reads `Duration::ZERO`
 }
 
@@ -60,8 +60,8 @@ if nixie_time::IS_FROZEN {
 ## Feature Flags
 
 - **`std`** (default): selects the real `std::time` re-exports on every
-  target that has a working clock. Turning it off — or building for
-  `wasm32-unknown-unknown`, which has no clock regardless of this flag —
+  target that has a working clock. Turning it off – or building for
+  `wasm32-unknown-unknown`, which has no clock regardless of this flag –
   selects the frozen stubs instead.
 
 ## `wasm32-unknown-unknown` and Timeouts
@@ -69,9 +69,9 @@ if nixie_time::IS_FROZEN {
 On the frozen clock, nothing ever traps, but a wall-clock deadline can never
 expire: `(set-option :timeout N)` / `Solver::set_timeout_ms(N)` becomes a
 no-op there, and any duration Nixie reports (statistics, per-theory timings)
-reads `0`. Bound a wasm search a different way instead — `(set-option
+reads `0`. Bound a wasm search a different way instead – `(set-option
 :max-conflicts N)` / `Solver::set_max_conflicts`, or by terminating the Web
-Worker running it — and measure wall time from JavaScript around the call if
+Worker running it – and measure wall time from JavaScript around the call if
 you need it.
 
 ## License

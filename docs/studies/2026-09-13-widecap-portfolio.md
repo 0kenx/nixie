@@ -17,7 +17,7 @@ references at 600 s).  Records under
 `default-300s`, `def60-comb240`, `def120-comb180`); runner committed at
 `docs/studies/assets/inproc-amplitude-2026-09-12/sc24f-widecap-portfolio-runner.py`.
 
-## Result: the premise dissolves — default alone converts the class
+## Result: the premise dissolves – default alone converts the class
 
 | arm | files with ≥1 Sat | Sat cells (of 65) |
 |---|---|---|
@@ -27,7 +27,7 @@ references at 600 s).  Records under
 
 Every file except `170058440` (the one cadical itself does not solve
 in 600 s) produces `Sat` verdicts at 300 s **on the plain default
-path** — including circuit_64in64out (5/5; it simply needs >60 s on
+path** – including circuit_64in64out (5/5; it simply needs >60 s on
 default) and all three summle files (5/5 each, ≤33 s single-shot on
 re-verification).  The "0/5-at-60 s class" was overwhelmingly a *cap
 artifact*, not an algorithmic gap.  The portfolio arms add nothing and
@@ -35,7 +35,7 @@ subtract a little: combined-crypto1 loses 1-2 cells (5/5 default vs
 3/5, 4/5) because the comb restart burns budget the default trajectory
 was going to use.
 
-**Verdict: the portfolio route at 300 s is dead** — there is no
+**Verdict: the portfolio route at 300 s is dead** – there is no
 conversion residue for a late arm to capture.  Item 1 of the round-10
 handoff closes negative.  (The comb arms' 60 s circuit-class wins from
 the 2026-09-12 program remain real, but they are speed, not
@@ -44,7 +44,7 @@ conversions, at any cap ≥300 s.)
 ## The screen's real finding: 138 model-check failures (fixed in 32c88866)
 
 138 of the 195 cells finished with `result=Sat` whose printed models
-failed the harness model check — across summle×3, j3037, si2,
+failed the harness model check – across summle×3, j3037, si2,
 circuit_48×2, crypto1, 64_25, g2-slp (9-10 files; every one
 cadical-confirmed SAT; 0 verdict disagreements).  Root cause and fix:
 `2026-09-13-extstack-reconstruction.md` (the `bve_def` positive-side
@@ -56,12 +56,12 @@ models.
 Two measurement-integrity notes for future screens:
 
 1. The 2026-09-12 baseline cells already contained this bug's
-   fingerprints as silently-downgraded unknowns — summle_X4053 seed 2
+   fingerprints as silently-downgraded unknowns – summle_X4053 seed 2
    was recorded 0/5-class while solving in 6.5 s.  Any class
    definition built on downgraded cells inherits the corruption.
 2. Model-check failures are loud events (`!!! MODEL CHECK FAILED …
    investigate` in the runner) and must be accounted before conversion
-   claims — a downgrade is for the record's schema, not for the
+   claims – a downgrade is for the record's schema, not for the
    narrative.
 
 ## Residual state for the next session
@@ -70,7 +70,7 @@ Two measurement-integrity notes for future screens:
   (soundness-netted, default-off, bit-identical); their *value* is
   confined to sub-60 s budgets on the circuit class.
 - `170058440` remains the only genuinely-unsolved sc24f file at 300 s
-  (cadical 600 s ref: unknown) — an endurance file, not a class.
+  (cadical 600 s ref: unknown) – an endurance file, not a class.
 - Handoff item 2 (Timetable elimination schedule: phase-timing
   restructure / saturated-occurrence gating) and item 3 (CSR watch
   lists) are untouched by this screen; the elimination-side

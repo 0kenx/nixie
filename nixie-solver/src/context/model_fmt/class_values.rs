@@ -1,9 +1,9 @@
 //! The one canonical *congruence class → value* map every model printer reads
 //! (`#P2b-34`).
 //!
-//! `(get-model)` reports a model through four renderers — the constant list,
+//! `(get-model)` reports a model through four renderers – the constant list,
 //! the `define-fun` interpretation of each declared function, the `store`
-//! chain of each array, and `(get-value …)` — and every one of them needs the
+//! chain of each array, and `(get-value …)` – and every one of them needs the
 //! same answer to the same question: *what value does this model give the
 //! equivalence class of this term?*  Each used to answer it for itself, and
 //! the answers disagreed:
@@ -13,7 +13,7 @@
 //!   with `(distinct a b)` printed `a = @uc_U_0`, `b = @uc_U_1`;
 //! * `get_func_interp_raw`'s own class walk had no such synthesis, so `b`'s
 //!   class looked *valueless*, the entry for `f(a)` was dropped, and `f` fell
-//!   back to the return sort's default `@uc_U_0` — printing `f = @uc_U_0`
+//!   back to the return sort's default `@uc_U_0` – printing `f = @uc_U_0`
 //!   beside `b = @uc_U_1` while the assertion says `f(a) = b`.  The printed
 //!   model falsified the assertions it was a model of.
 //!
@@ -29,8 +29,8 @@ use nixie_core::ast::TermManager;
 /// A congruence class's identity, as a single integer.
 ///
 /// Terms the congruence closure interned key by their class representative;
-/// terms it never saw — the pure-equality fast path decides some formulas
-/// without running EUF at all — key by their own term id, in a disjoint
+/// terms it never saw – the pure-equality fast path decides some formulas
+/// without running EUF at all – key by their own term id, in a disjoint
 /// numbering (the high bit) so a representative id and a term id can never
 /// collide.
 pub(in crate::context) type ClassKey = u64;
@@ -56,7 +56,7 @@ impl ClassValues {
 }
 
 impl Context {
-    /// The congruence class key of `term` — see [`ClassKey`].
+    /// The congruence class key of `term` – see [`ClassKey`].
     pub(super) fn class_key(&self, term: TermId) -> ClassKey {
         match self.solver.euf_class_representative(term) {
             Some(rep) => (1u64 << 32) | u64::from(rep),
@@ -118,13 +118,13 @@ impl Context {
         // Without this the class of an `Apply` result had no value at all:
         // `class_value_string` answered `None`, `func_interp_from` dropped the
         // entry, and the interpretation fell back to the return sort's default
-        // — so `(declare-sort U 0) (declare-fun g (U) U) (assert (distinct
+        // – so `(declare-sort U 0) (declare-fun g (U) U) (assert (distinct
         // (g p) (g q)))` answered `sat` and printed `(define-fun g ((x!0 U)) U
         // @uc_U_0)` beside `p = @uc_U_0` and `q = @uc_U_1`, making
         // `(g p) = (g q) = @uc_U_0` and falsifying the one assertion the model
         // claimed to satisfy.  An uninterpreted sort has as many elements as
         // it needs, so a fresh witness per class is always a legitimate
-        // reading — and it is the *only* one that keeps distinct classes
+        // reading – and it is the *only* one that keeps distinct classes
         // distinct.
         //
         // Walked in term-id order, which is the order the terms were interned:
@@ -166,7 +166,7 @@ impl Context {
     }
 }
 
-/// Whether `term` is a literal value of its sort — a term that *is* its own
+/// Whether `term` is a literal value of its sort – a term that *is* its own
 /// model value, so a class containing one needs no lookup.
 fn is_value_term(term: TermId, manager: &TermManager) -> bool {
     manager.get(term).is_some_and(|t| {
@@ -188,7 +188,7 @@ impl Context {
     ///
     /// `(get-model)` reaches here only for a datatype constant the solver's own
     /// reconstruction (`model_builder::extract_datatype_model`) could not
-    /// build — most often because the formula decided no tester literal, so
+    /// build – most often because the formula decided no tester literal, so
     /// there was nothing to reconstruct *from*.  The fall-through used to be
     /// [`Context::default_value`], a constructor whose every field is its
     /// sort's default; and a default is exactly what the script's own
@@ -201,7 +201,7 @@ impl Context {
     /// The fields are read out of the one canonical class → value map every
     /// other renderer quotes, so the two commands now describe one model.  A
     /// field the script never mentions has no selector application to read and
-    /// keeps its sort default, which is a legitimate witness there — the
+    /// keeps its sort default, which is a legitimate witness there – the
     /// formula does not constrain it.
     ///
     /// `None` when the sort is not a datatype, its declaration is not in scope,
@@ -239,7 +239,7 @@ impl Context {
             fields.push(read.unwrap_or_else(|| self.default_value(field_sort)));
         }
         // Not one field was read from the model: this is the sort default with
-        // extra steps, and `Context::default_value` is where that is built —
+        // extra steps, and `Context::default_value` is where that is built –
         // under the expansion budget that keeps an ill-founded datatype from
         // unfolding forever.  Answering here instead prepended one constructor
         // level to that budget's output, which is how a `?`-truncated default

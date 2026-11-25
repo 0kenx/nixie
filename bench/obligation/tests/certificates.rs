@@ -1,5 +1,5 @@
 //! Certificate tests: every family, many seeds, both parities/variants.
-//! These run without any solver — they verify the generator's own math
+//! These run without any solver – they verify the generator's own math
 //! (witnesses, Hall deficits, modular obstructions, permutation
 //! compositions, array-history simulations, Euclidean semantics).
 
@@ -129,7 +129,7 @@ fn gap_small_instance_is_really_integer_infeasible() {
                 break;
             }
         }
-        assert!(!ok, "found an integer solution — certificate is wrong");
+        assert!(!ok, "found an integer solution – certificate is wrong");
     }
 }
 
@@ -228,7 +228,7 @@ fn registry_generates_all_families_with_verified_shapes() {
                     inst.expected.len()
                 );
             }
-            // Answer must be decided (never Unknown) — we only emit
+            // Answer must be decided (never Unknown) – we only emit
             // certified instances.
             assert!(
                 inst.expected.iter().all(|a| *a != Answer::Unknown),
@@ -282,7 +282,7 @@ fn fpboundary_oracle_pins() {
     let ms = 1u128; // one min-subnormal unit at 2^-1074
     let e = -1074i32;
     // Exact subnormal arithmetic stays exact: -2ms - 3ms = -5ms (RNA must
-    // NOT round an exact grid value — the oracle bug this pins).
+    // NOT round an exact grid value – the oracle bug this pins).
     assert_eq!(round_exact(true, 5, e, Rm::Rna), 0x8000_0000_0000_0005);
     // Directed underflow corners: the exact product of the two smallest
     // subnormals is ~2^-2148, far below the grid.
@@ -293,7 +293,7 @@ fn fpboundary_oracle_pins() {
     assert_eq!(round_exact(true, prod, pe, Rm::Rtz), 0x8000_0000_0000_0000);
     assert_eq!(round_exact(true, prod, pe, Rm::Rne), 0x8000_0000_0000_0000);
     // Halfway tie at 1.0: 1.0 + 2^-53 as an exact value is
-    // (2^53 + 1)·2^-52 + 2^-53 = (2^54 + 3)·2^-53 — halfway between
+    // (2^53 + 1)·2^-52 + 2^-53 = (2^54 + 3)·2^-53 – halfway between
     // (2^54 + 0) and (2^54 + 2) cells at 2^-52… simpler: use num = 3 at
     // 2^-52 relative to the grid cell 2^-52 around [1, 2): 1.5 cells.
     // The instance-level pins below carry the mode table; here pin the

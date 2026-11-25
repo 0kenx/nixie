@@ -203,7 +203,7 @@ class Gen:
         return "(and %s %s)" % (self.form(d + 1), self.form(d + 1))
 
     def quantified(self):
-        """One quantified assertion over Int whose body holds datatype terms —
+        """One quantified assertion over Int whose body holds datatype terms –
         a tester / equality over an `ite`, or a term only the body names (a
         selector chain of a constant, a constructor over the bound variable)."""
         body = Gen(self.rng, bound="n")

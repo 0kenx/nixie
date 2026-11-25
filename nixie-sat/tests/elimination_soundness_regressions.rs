@@ -50,7 +50,7 @@ fn eliminated_variable_is_never_a_fallback_decision() {
         // disable it so the substitution path is actually exercised.
         enable_lucky: false,
         // Conflict scheduling (the default) fires ELS on the elimination
-        // clock, which this two-conflict instance never reaches — the fold
+        // clock, which this two-conflict instance never reaches – the fold
         // mechanism under test here is the pre-search one.
         presearch_collapse: true,
         ..SolverConfig::default()

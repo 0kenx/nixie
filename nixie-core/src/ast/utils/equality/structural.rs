@@ -131,7 +131,7 @@ pub fn structurally_equal(lhs: TermId, rhs: TermId, manager: &TermManager) -> bo
                         }
                     }
                     // A field numeral's identity is its (normalized)
-                    // residue and its field — both interned, so the pair
+                    // residue and its field – both interned, so the pair
                     // decides equality.
                     TermKind::FfConst {
                         value: v1,
@@ -236,7 +236,7 @@ pub fn structurally_equal(lhs: TermId, rhs: TermId, manager: &TermManager) -> bo
                     // predicate symbol is part of the identity (the same
                     // discipline as `bag.fold`); the bag compares as a
                     // child.  These used to sit in the unary-operator list
-                    // with the symbol ignored — but `unary_arg` refuses
+                    // with the symbol ignored – but `unary_arg` refuses
                     // them (they are not unary), so every comparison
                     // returned a conservative `false`: two textually
                     // identical maps never compared equal, and the

@@ -87,7 +87,7 @@ entries were excluded.
 |---|---:|---:|---:|---:|
 | circuit | 0.751848 | 0.663210 | 0.851525 | 1.025102 |
 | j3037 | 0.700129 | 0.693838 | 0.818610 | 1.009030 |
-| Geometric mean | **0.725528** | **0.678351** | — | — |
+| Geometric mean | **0.725528** | **0.678351** | – | – |
 
 This fixed-search comparison confirms a substantial implementation cost:
 27.45% fewer instructions and 32.16% fewer cycles/conflict in geometric mean.

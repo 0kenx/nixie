@@ -154,7 +154,7 @@ fn tuple_index_out_of_range_is_rejected() {
     ));
 }
 
-/// `Len` demands a sequence, and a tuple is one — so a homogeneous tuple
+/// `Len` demands a sequence, and a tuple is one – so a homogeneous tuple
 /// passes and the components are equated.
 #[test]
 fn tuple_unifies_with_seq_when_homogeneous() {
@@ -250,7 +250,7 @@ fn self_containing_set_is_rejected() {
     assert!(matches!(err_of(&src, "A"), TypeError::Occurs { .. }));
 }
 
-/// `CASE` with no matching arm is TLA+-undefined — the bottom of the lattice.
+/// `CASE` with no matching arm is TLA+-undefined – the bottom of the lattice.
 /// It must fit wherever it lands rather than forcing a type.
 #[test]
 fn case_with_no_match_constrains_nothing() {
@@ -299,7 +299,7 @@ fn deep_nesting_does_not_overflow() {
         return;
     };
     let mut inf = Inference::new();
-    // Must return, either way — what must not happen is a stack overflow.
+    // Must return, either way – what must not happen is a stack overflow.
     let _ = inf.infer(&k);
 }
 

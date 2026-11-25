@@ -1,4 +1,4 @@
-//! `nixie-obligation` — certificate-carrying generator of hard-by-construction
+//! `nixie-obligation` – certificate-carrying generator of hard-by-construction
 //! SMT-LIB2 / DIMACS instances.
 //!
 //! A grammar fuzzer samples the *syntactic* space of a logic and mostly
@@ -12,10 +12,10 @@
 //! The grammar is layered:
 //!
 //! * **Obligation productions** (what makes an instance hard):
-//!   - `parity`: a graph-parity obstruction — every proper subset of the
+//!   - `parity`: a graph-parity obstruction – every proper subset of the
 //!     constraints is satisfiable, the contradiction needs all of them.
 //!   - `capacity`: competition for insufficient resources (Hall deficit).
-//!   - `gap`: an abstraction gap — rational-feasible, integer-infeasible
+//!   - `gap`: an abstraction gap – rational-feasible, integer-infeasible
 //!     linear systems with a modular infeasibility certificate.
 //!   - `reconverge`: two provably equivalent computations with different
 //!     structure (Shannon tree vs ANF; extract/concat bit-permutation
@@ -23,7 +23,7 @@
 //!   - `memory`: alias-ambiguous array write histories (storecomm-shaped).
 //!   - `boundary`: exact div/mod/rounding boundary distinctions.
 //! * **Theory realizations**: each production is realized in Bool/CNF,
-//!   LIA, BV, arrays or UF — and, for parity, mixed within one instance so
+//!   LIA, BV, arrays or UF – and, for parity, mixed within one instance so
 //!   the obstruction must be reconciled *across* theories.
 //! * **Representation stress** (semantics-preserving): deep term chains,
 //!   duplicated clauses, scaled constants.
@@ -31,8 +31,8 @@
 //!   own derived expected answer.
 //!
 //! Every generated [`Instance`] carries `expected: Vec<Answer>` (one entry
-//! per `check-sat`), a human-readable certificate, and — for satisfiable
-//! instances — a witness. `obligation-run` checks a solver against the
+//! per `check-sat`), a human-readable certificate, and – for satisfiable
+//! instances – a witness. `obligation-run` checks a solver against the
 //! certificate and cross-checks the *generator itself* with Z3 (and
 //! CaDiCaL for CNF), so a generator bug is reported separately from a
 //! solver bug.
@@ -186,7 +186,7 @@ fn json_str(s: &str) -> String {
     out
 }
 
-/// Deterministic PRNG (SplitMix64) — same construction as
+/// Deterministic PRNG (SplitMix64) – same construction as
 /// `bench/z3_parity`'s generator. Dependency-free on purpose so a seed
 /// always reproduces the same corpus.
 #[derive(Debug, Clone)]

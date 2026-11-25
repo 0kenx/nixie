@@ -289,7 +289,7 @@ impl Solver {
                 // by the arithmetic solver and model values are extracted
                 // correctly.
                 // Finite sets: children are walked, but nothing is interned
-                // into the arithmetic solver — `set.card` produces an `Int`
+                // into the arithmetic solver – `set.card` produces an `Int`
                 // that no theory constrains yet, and interning it would let
                 // the tableau treat it as an ordinary free column.
                 TermKind::SetUnion(a, b)
@@ -302,7 +302,7 @@ impl Solver {
                     stack.push(*b);
                     stack.push(*a);
                 }
-                // Finite bags: walked like the set binaries — `bag.count`
+                // Finite bags: walked like the set binaries – `bag.count`
                 // and `bag.card` produce `Int`s no theory constrains yet,
                 // and interning them would let the tableau treat them as
                 // ordinary free columns.
@@ -331,7 +331,7 @@ impl Solver {
                 TermKind::SetEmpty(_) | TermKind::SetUniv(_) => {}
                 TermKind::BagEmpty(_) => {}
                 // Finite fields: children are walked so nested structure is
-                // seen, but nothing is interned — the FF procedure is an
+                // seen, but nothing is interned – the FF procedure is an
                 // eager whole-problem dispatch (see `check_ff.rs`), and a
                 // field element must never become a free arithmetic column.
                 // The walk *is* the honesty tripwire: an FF term seen here

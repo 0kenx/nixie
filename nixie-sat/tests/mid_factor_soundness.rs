@@ -173,17 +173,17 @@ fn mid_factor_differential_soundness() {
     assert_eq!(invalid, 0, "models violating original clauses (see stderr)");
     assert!(
         introduced_seen,
-        "generator never triggered an introduction — the fuzz is vacuous"
+        "generator never triggered an introduction – the fuzz is vacuous"
     );
 }
 
 /// The pre-search one-shot under every schedule arm must agree with the
 /// off arm (the `NIXIE_FACTOR_SCHED` knob only moves fresh variables in
-/// the decision order — never the verdict).
+/// the decision order – never the verdict).
 #[test]
 fn factor_presearch_verdict_across_schedule_arms() {
     // Env vars are process-global; this test pins the default (kissat
-    // `back`) arm only — the arms share the rewrite, which is what the
+    // `back`) arm only – the arms share the rewrite, which is what the
     // verdict depends on (the differential above covers it end to end).
     let mut seed: u64 = 0xC0FF_EE01;
     for _ in 0..2000 {
@@ -207,7 +207,7 @@ fn factor_presearch_verdict_across_schedule_arms() {
 }
 
 /// Regression: the delay gate must not starve the pass on small instances
-/// (log10(active) ≤ rounds + 4 holds from round 1 for ≤ 100k variables —
+/// (log10(active) ≤ rounds + 4 holds from round 1 for ≤ 100k variables –
 /// every realistic formula factors immediately).
 #[test]
 fn factor_delay_never_starves_small_formulas() {

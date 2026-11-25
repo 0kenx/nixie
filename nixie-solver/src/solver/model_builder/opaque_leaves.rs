@@ -2,14 +2,14 @@
 //!
 //! An array read is a *leaf* of every theory that reasons about it: the
 //! bit-blaster gives `(select arr i)` a free bit-vector, the tableau gives it a
-//! column, EUF gives it an application node — and the search then **chooses** a
+//! column, EUF gives it an application node – and the search then **chooses** a
 //! value for it, exactly as it chooses one for a declared variable.  That
 //! choice is part of the model, and until this module it was published only
 //! when the read happened to be a direct operand of a theory atom.
 //!
 //! The gap was visible wherever the read sat under an operator:
-//! `(= (bvadd (select arr i) #x01) #x06)` answered `sat` — which is right,
-//! `arr[i] = 5` satisfies it — and then printed `i = #x00` with
+//! `(= (bvadd (select arr i) #x01) #x06)` answered `sat` – which is right,
+//! `arr[i] = 5` satisfies it – and then printed `i = #x00` with
 //! `arr = ((as const …) #x00)`, a model in which the assertion reads
 //! `0 + 1 = 6`.  `(get-value ((select arr i)))` echoed the term back instead of
 //! answering `#x05`.  Nothing was unsound (the verdict came from the circuit,
@@ -19,7 +19,7 @@
 //!
 //! So: every `select` the ground assertions (and the array lemmas derived from
 //! them) mention gets its chosen value published, from whichever theory decided
-//! it — the circuit for bit-vectors, the tableau for `Int`/`Real`, the
+//! it – the circuit for bit-vectors, the tableau for `Int`/`Real`, the
 //! congruence class for an uninterpreted sort.  `model_fmt` then renders the
 //! array itself as the `store` chain over those reads, so the array's printed
 //! value and its reads can no longer contradict each other.
@@ -61,7 +61,7 @@ impl Solver {
             // model is a set of (index, value) pairs, so a read whose index the
             // model leaves blank names no position and cannot appear in the
             // printed array at all.  `(= (bvadd (select arr i) #x01) #x06)` is
-            // the case — `i` occurs nowhere but under the read, so no theory
+            // the case – `i` occurs nowhere but under the read, so no theory
             // ever gave it a column, and the model completed it to the sort
             // default only at *print* time, where the array renderer could not
             // see it.  Publishing the same value the completion would report
@@ -79,15 +79,15 @@ impl Solver {
             // A *compound* index is not a leaf and must not be published as
             // one (`#P2b-34`).  `(select arr (bvadd k #b10))` gives the
             // bit-blaster a node for `(bvadd k #b10)` but no defining clauses
-            // — nothing in the formula constrains it — so its bits read as
+            // – nothing in the formula constrains it – so its bits read as
             // zero and `chosen_leaf_value` answered `#b00` for an index term
             // whose operand `k` the same model prints as `#b00`: the write
             // landed at the value of the index *variable* instead of the
             // value of the index *term*, `(get-value ((bvadd k #b10)))`
             // answered `#b00`, and the printed array falsified the assertion
-            // it satisfied.  The circuit pass above already states the rule —
+            // it satisfied.  The circuit pass above already states the rule –
             // "a compound node is *derived* from its operands and stays out:
-            // it is evaluated wherever it is read" — and this is the same
+            // it is evaluated wherever it is read" – and this is the same
             // rule, applied where the array model reads its indices.
             let is_leaf = manager
                 .get(index)
@@ -95,7 +95,7 @@ impl Solver {
             if !is_leaf {
                 // Fold it instead: publish the leaves it is built from, so the
                 // evaluation has something to read, and then publish the value
-                // they determine.  No value means no entry — an index the
+                // they determine.  No value means no entry – an index the
                 // model cannot place names no position in the array, which is
                 // the honest answer and the one the renderer already handles.
                 self.publish_index_leaves(index, model, manager);
@@ -125,8 +125,8 @@ impl Solver {
     /// so [`Solver::model_value_in`] can fold the index itself.
     ///
     /// Same two sources as the index path above, in the same order: the value
-    /// the search chose for the leaf, and — for a plain variable the search
-    /// never constrained — the sort default `Context::get_model` reports for
+    /// the search chose for the leaf, and – for a plain variable the search
+    /// never constrained – the sort default `Context::get_model` reports for
     /// it.  An *application* leaf gets no default: its value belongs to the
     /// printed interpretation of its function, and inventing one here would be
     /// a second, contradicting reading of the same model.
@@ -170,7 +170,7 @@ impl Solver {
     /// lemmas asserted for them, outside any binder.
     ///
     /// The lemma instances are walked too because a read-over-write consequent
-    /// introduces the base read `(select base j)` — a term the user never wrote
+    /// introduces the base read `(select base j)` – a term the user never wrote
     /// but whose value the printed array model has to agree with.
     fn collect_ground_reads(&self, manager: &TermManager) -> Vec<TermId> {
         let mut reads: Vec<TermId> = Vec::new();
@@ -259,7 +259,7 @@ impl Solver {
     }
 }
 
-/// Whether a term of this kind is an *opaque leaf* — a term whose value the
+/// Whether a term of this kind is an *opaque leaf* – a term whose value the
 /// search chooses outright, rather than deriving it from operands.
 ///
 /// The same three shapes the circuit publication pass in `model_builder`

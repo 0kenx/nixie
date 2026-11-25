@@ -49,7 +49,7 @@ fn nonlinear_body_under_qf_lia_is_rejected() {
 ///    parity), not differ by header.
 ///
 /// The instance is one the NL backend actually refutes under an explicit
-/// `QF_NIA` header — the test's object is routing parity, not NLSAT
+/// `QF_NIA` header – the test's object is routing parity, not NLSAT
 /// coverage (plenty of nonlinear instances are honestly `unknown` under
 /// every header; those cannot distinguish routes).
 #[test]
@@ -127,7 +127,7 @@ fn linear_body_under_qf_nia_still_solves() {
 ///    logic nor leaves a partially changed engine configuration.
 #[test]
 fn invented_logic_name_is_rejected_without_state_change() {
-    // "QF_LINIA" contains "NIA" as a substring — the old router would have
+    // "QF_LINIA" contains "NIA" as a substring – the old router would have
     // installed the nonlinear backend.  It must simply be rejected, and a
     // subsequent valid set-logic must work (no partial reconfiguration).
     let err = run_err(
@@ -184,7 +184,7 @@ fn broad_headers_agree_on_verdict() {
 }
 
 /// The SMT-LIB benchmark catalog (89 logics, smt-lib.org bench listing) must
-/// be ACCEPTED at the command surface — every one, no exceptions.  A missing
+/// be ACCEPTED at the command surface – every one, no exceptions.  A missing
 /// registry entry rejects valid input at `set-logic` (measured live: `UFNIA`
 /// before the completion).  Grammar decode semantics are pinned by the
 /// in-module unit tests (`smt_lib_catalog_decodes_grammar_semantics`).

@@ -4,7 +4,7 @@
 //! used to throw it away: `Outcome::Violation` carried a step number and
 //! nothing else. That left the one hop in the pipeline with no independent
 //! check on it. Parsing is measured against SANY, lowering against TLC, the
-//! encoding against the evaluator — and the verdict itself was taken on the
+//! encoding against the evaluator – and the verdict itself was taken on the
 //! solver's word.
 //!
 //! Replaying closes that loop. The states behind a `Sat` are decoded into TLA+
@@ -64,7 +64,7 @@ Inv  == x < 3
 ====
 ";
 
-// ---- the trace is the behaviour ----
+// ======== the trace is the behaviour ========
 
 /// The counterexample to `x < 3` is `0, 1, 2, 3`: four states, three steps,
 /// and every value pinned.
@@ -140,7 +140,7 @@ Inv  == x # N
     }
 }
 
-// ---- values of every shape the decoder handles ----
+// ======== values of every shape the decoder handles ========
 
 #[test]
 fn a_record_valued_variable_decodes() {
