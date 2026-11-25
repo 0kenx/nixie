@@ -17,6 +17,7 @@ use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 
 use super::{Context, RawFuncInterp};
+use witness_names::WitnessNames;
 mod array_model;
 mod candidate_model;
 mod certified_numeric;
@@ -30,6 +31,7 @@ mod printed_check;
 mod printed_eval;
 mod projected_functions;
 mod published;
+mod witness_names;
 pub(super) use published::PublishedModel;
 
 /// Render a nonlinear-real exact value as SMT-LIB2 text.
@@ -584,42 +586,6 @@ impl Context {
 
     fn published_model_withheld(&self) -> bool {
         self.uncertified_model_error().is_some()
-    }
-
-    /// Quote the entire witness symbol, rather than embedding a quoted sort
-    /// token inside a simple symbol.
-    fn format_uninterpreted_witness(&self, sort: SortId, index: usize) -> String {
-        let rendered = self.format_sort_name(sort);
-        let name = rendered
-            .strip_prefix('|')
-            .and_then(|s| s.strip_suffix('|'))
-            .unwrap_or(&rendered);
-        // User @ symbols are legal in Nixie. Number only fresh spellings so
-        // declaring @uc_U_0 cannot turn an abstract value into a self-reference.
-        // Consider declarations, never parse-back artifacts in the term arena:
-        // repeated get-model/get-value calls must retain the same numbering.
-        let prefix = format!("@uc_{name}_");
-        let mut occupied: Vec<u128> = self
-            .declared_consts
-            .iter()
-            .map(|d| d.name.as_str())
-            .chain(self.declared_funs.iter().map(|d| d.name.as_str()))
-            .filter_map(|symbol| {
-                let suffix = symbol.strip_prefix(&prefix)?;
-                let number = suffix.parse::<u128>().ok()?;
-                (number.to_string() == suffix).then_some(number)
-            })
-            .collect();
-        occupied.sort_unstable();
-        occupied.dedup();
-        let mut candidate = index as u128;
-        for reserved in occupied {
-            if reserved > candidate {
-                break;
-            }
-            candidate += 1;
-        }
-        nixie_core::smtlib::format_symbol(&format!("{prefix}{candidate}"))
     }
 
     /// Get the model (if SAT)
@@ -1294,7 +1260,7 @@ impl Context {
                     // a standalone fallback emit the zero-th witness for
                     // the sort.
                     SortKind::Uninterpreted(_) => {
-                        break self.format_uninterpreted_witness(sort, 0);
+                        break WitnessNames::default().nth(self, sort, 0);
                     }
                     // Sort parameters and unapplied parametric sorts have
                     // no ground values.

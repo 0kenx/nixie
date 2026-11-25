@@ -1200,3 +1200,41 @@ fn control_uninterpreted_and_array_defaults_are_unchanged() {
     assert!(model.contains("((as const (Array Int Int)) 0)"), "{model}");
     assert!(!model.contains('?'), "{model}");
 }
+
+/// A declared name reserves a witness number only when spelled exactly like
+/// one.  `@uc_U_0` is the script's own first element of `U`, so the model's
+/// first free witness is `@uc_U_1`; `@uc_U_00` merely ends in digits and
+/// reserves nothing – it takes the second free witness, and on `V`, where it
+/// is the only declaration, the zero-th.  `model_fmt::witness_names` mints
+/// these names from one walk of the declarations; this is the user-visible
+/// half of the check that they are the per-witness scan's names.
+#[test]
+fn a_declared_witness_spelling_reserves_its_number_but_a_lookalike_does_not() {
+    let output = run(r#"
+        (set-logic QF_UF)
+        (declare-sort U 0)
+        (declare-sort V 0)
+        (declare-const @uc_U_0 U)
+        (declare-const @uc_U_00 U)
+        (declare-const u U)
+        (declare-const @uc_V_00 V)
+        (declare-const v V)
+        (assert (distinct @uc_U_0 @uc_U_00 u))
+        (assert (distinct @uc_V_00 v))
+        (check-sat)
+        (get-model)
+        (get-value (u v))
+    "#);
+    assert_eq!(output[0], "sat");
+    let model = &output[1];
+    for row in [
+        "(define-fun @uc_U_0 () U @uc_U_1)",
+        "(define-fun @uc_U_00 () U @uc_U_2)",
+        "(define-fun u () U @uc_U_3)",
+        "(define-fun @uc_V_00 () V @uc_V_0)",
+        "(define-fun v () V @uc_V_1)",
+    ] {
+        assert!(model.contains(row), "{row} missing from:\n{model}");
+    }
+    assert_eq!(output[2], "((u @uc_U_3)\n (v @uc_V_1))");
+}
