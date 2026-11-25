@@ -71,6 +71,8 @@ use super::{EvalVal, Solver};
 
 mod finite_domains;
 use finite_domains::{build_cardinality_refutations, enumerable_index_values};
+mod store_pairs;
+use store_pairs::build_store_congruence;
 
 /// Safety valve on the number of distinct array-axiom instances asserted across
 /// a single `check`.  Deduplication is the real termination mechanism; this cap
@@ -1775,106 +1777,17 @@ fn row_implications(
     (row1, row2)
 }
 
+struct ReadCongruence<'a> {
+    pairs: &'a FxHashSet<(TermId, TermId)>,
+    euf: Option<&'a nixie_theories::euf::EufSolver>,
+}
+
 /// Build extensionality and select-congruence instances for every collected
 /// array-sorted equality atom.  Returns the candidate lemmas and the set of
 /// arrays that a *complete* finite-disjunction clause settles – reads on those
 /// arrays need not be eagerly unfolded (the clause decides them), which is the
 /// lever that makes a depth-60 `storecomm` chain one flat clause instead of a
 /// 60-deep unfolding.
-/// One instance of the store congruence axiom per pair of distinct `store`
-/// applications: `(= b1 b2) ∧ (= i1 i2) ∧ (= v1 v2) → (= S1 S2)`.
-fn build_store_congruence(
-    manager: &mut TermManager,
-    collected: &ArrayStructure,
-    candidates: &mut Vec<TermId>,
-    numeric_premise_pairs: &mut Vec<(TermId, TermId)>,
-) {
-    const MAX_STORE_PAIRS: usize = 512;
-    let mut apps = collected.store_apps.clone();
-    apps.sort_unstable_by_key(|t| t.raw());
-    apps.dedup();
-    // Emission filter (measured 2026-08-29: the unrestricted O(n^2) family
-    // cost the differential canary 12 net solves – deep `storecomm`/`pp_sf`
-    // chains carry dozens of stores and saturated the refinement loop with
-    // hundreds of pairwise implications).  A pair can matter only when the
-    // formula already relates the two stores: either their bases are the
-    // SAME term (the permutation shape), or the pair's own equality atom is
-    // present as an input equality (the goal compares the chains directly).
-    // Both are O(n) in practice and cover the store-commutativity shapes
-    // exactly; cross-level pairs with distinct bases and no equality atom
-    // never close a refutation the other families do not already carry.
-    let input_pairs: FxHashSet<(TermId, TermId)> = collected
-        .eq_pairs
-        .iter()
-        .map(|(a, b)| if a < b { (*a, *b) } else { (*b, *a) })
-        .collect();
-    let mut pairs = 0usize;
-    for w in 0..apps.len() {
-        for v in (w + 1)..apps.len() {
-            if pairs >= MAX_STORE_PAIRS {
-                return;
-            }
-            let (s1, s2) = (apps[w], apps[v]);
-            let same_base = |x: TermId, y: TermId| match (
-                manager.get(x).map(|n| n.kind.clone()),
-                manager.get(y).map(|n| n.kind.clone()),
-            ) {
-                (Some(TermKind::Store(bx, _, _)), Some(TermKind::Store(by, _, _))) => bx == by,
-                _ => false,
-            };
-            let key = if s1 < s2 { (s1, s2) } else { (s2, s1) };
-            if !same_base(s1, s2) && !input_pairs.contains(&key) {
-                continue;
-            }
-            pairs += 1;
-            let (Some(TermKind::Store(b1, i1, v1)), Some(TermKind::Store(b2, i2, v2))) = (
-                manager.get(s1).map(|n| n.kind.clone()),
-                manager.get(s2).map(|n| n.kind.clone()),
-            ) else {
-                continue;
-            };
-            let mut eqs: Vec<TermId> = Vec::new();
-            for (l, r) in [(b1, b2), (i1, i2), (v1, v2)] {
-                // Numeric premise pairs are reported so the caller emits
-                // their trichotomy: when the core commits such a premise
-                // FALSE, the arithmetic solver owes a strict split it never
-                // learns otherwise, and the model collides the two sides
-                // (the store-commutativity candidates kept `x = y` for
-                // exactly this reason).
-                let numeric_pair = |t: &TermId| {
-                    manager.get(*t).is_some_and(|n| {
-                        n.sort == manager.sorts.int_sort || n.sort == manager.sorts.real_sort
-                    })
-                };
-                if numeric_pair(&l) && numeric_pair(&r) && l != r {
-                    let key = if l < r { (l, r) } else { (r, l) };
-                    if !numeric_premise_pairs.contains(&key) {
-                        numeric_premise_pairs.push(key);
-                    }
-                }
-                let e = manager.mk_eq(l, r);
-                let trivial = manager
-                    .get(e)
-                    .is_some_and(|n| matches!(n.kind, TermKind::True));
-                if !trivial {
-                    eqs.push(e);
-                }
-            }
-            if eqs.is_empty() {
-                continue;
-            }
-            let antecedent = manager.mk_and(eqs);
-            let conclusion = manager.mk_eq(s1, s2);
-            candidates.push(manager.mk_implies(antecedent, conclusion));
-        }
-    }
-}
-
-struct ReadCongruence<'a> {
-    pairs: &'a FxHashSet<(TermId, TermId)>,
-    euf: Option<&'a nixie_theories::euf::EufSolver>,
-}
-
 #[allow(clippy::too_many_arguments)]
 fn build_extensionality_and_congruence(
     manager: &mut TermManager,
