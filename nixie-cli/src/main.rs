@@ -2167,6 +2167,11 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
 struct ProfDump {
     guard: pprof::ProfilerGuard<'static>,
     path: std::path::PathBuf,
+    /// `NIXIE_PPROF_TEXT=<path>`: also write the sampled stacks as
+    /// collapsed text (`root;...;leaf <samples>`, one stack per line,
+    /// most-sampled first) — the form `awk`/`sort` can attribute without
+    /// reading an SVG. Opt-in, so the default dump stays a single file.
+    text_path: Option<std::path::PathBuf>,
 }
 
 #[cfg(feature = "pprof-signal")]
@@ -2179,7 +2184,53 @@ impl ProfDump {
                 .build()
                 .expect("start profiler"),
             path: path.into(),
+            text_path: std::env::var_os("NIXIE_PPROF_TEXT").map(std::path::PathBuf::from),
         }
+    }
+
+    /// The report's stacks as collapsed text (see `text_path`). Inlined
+    /// frames of one frame join with `->`, outermost first, exactly as the
+    /// unwinder reports them.
+    #[cfg(feature = "pprof-signal")]
+    fn collapsed_stacks(report: &pprof::Report) -> String {
+        use std::fmt::Write as _;
+        let mut rows: Vec<(&pprof::Frames, isize)> =
+            report.data.iter().map(|(f, n)| (f, *n)).collect();
+        rows.sort_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then_with(|| a.0.frames.len().cmp(&b.0.frames.len()))
+        });
+        let mut out = String::new();
+        for (frames, count) in rows {
+            let mut first = true;
+            for frame in &frames.frames {
+                if !first {
+                    out.push(';');
+                }
+                first = false;
+                let mut sym_first = true;
+                for sym in frame {
+                    if !sym_first {
+                        out.push_str("->");
+                    }
+                    sym_first = false;
+                    let name = sym.name.as_deref().unwrap_or(b"?");
+                    let name = String::from_utf8_lossy(name);
+                    let _ = write!(out, "{name}");
+                    // Source position of this (possibly inlined) frame:
+                    // `basename:line`, so a text consumer can attribute
+                    // samples to lines without reading an SVG/protobuf.
+                    if let (Some(file), Some(line)) = (sym.filename.as_deref(), sym.lineno) {
+                        let file = file.to_string_lossy();
+                        if let Some(base) = file.rsplit('/').next() {
+                            let _ = write!(out, "@{base}:{line}");
+                        }
+                    }
+                }
+            }
+            let _ = writeln!(out, " {count}");
+        }
+        out
     }
 }
 
@@ -2192,6 +2243,18 @@ impl Drop for ProfDump {
                 && report.flamegraph(&mut file).is_err()
             {
                 eprintln!("[pprof] flamegraph write failed");
+            }
+            if let Some(text_path) = &self.text_path {
+                let text = Self::collapsed_stacks(&report);
+                if let Some(dir) = text_path.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                if std::fs::write(text_path, text).is_err() {
+                    eprintln!(
+                        "[pprof] collapsed-stack write failed: {}",
+                        text_path.display()
+                    );
+                }
             }
         }
     }
