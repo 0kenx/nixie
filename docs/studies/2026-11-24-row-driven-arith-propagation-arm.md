@@ -98,22 +98,36 @@ the propagation, not the clause the core learns from it.
 
 ## 4. What the sound arm measures (armed vs `3f6f83b9`, single deterministic counters)
 
-| cell | base | armed | conflicts | decisions | instructions |
+First cut of the touched-row drain (big-rational arithmetic per derived
+bound, a full `slack_forms` scan per equality pin): wisa conflicts 0.72–0.76×,
+decisions 0.38–0.45×, **instructions 1.69–1.83×** (wall 2.0 → 4.4 s on
+xs-10-18), UFIDL 4.1×. The cost slice that followed (`3b6c8e92` → this
+commit): `i64`-checked narrow arithmetic (`checked_scale_add`; overflow
+declines the row) instead of `BigRational`, and a `variable → single-term
+atom rows` index rebuilt only when `slack_forms` grows, instead of the
+per-pin rescan. Counters are unchanged on every cell (the index keeps the
+scan's visit order); the cost moved:
+
+| cell | base | armed | conflicts | decisions | instructions (before → after) |
 |---|---|---|---:|---:|---:|
-| QF_UFLIA Wisa xs-10-18-2-2-5-3 | `unsat` 4 337 / 273 577 | `unsat` 3 273 / 105 076 | **0.755** | 0.384 | 1.76 |
-| QF_UFLIA wisas xs_8_13 | `unsat` 3 357 / 181 972 | `unsat` 2 417 / 68 127 | **0.720** | 0.374 | 1.69 |
-| QF_UFLIA wisas xs_10_20 | `unsat` 8 751 / 344 239 | `unsat` 6 261 / 155 910 | **0.715** | 0.453 | 1.83 |
-| QF_ANIA avg20_true-unreach-call.i_0 | `unknown` (283 / 21 096) | **`sat`** 463 / 79 744 — z3 `sat` | — | — | 1.07 |
-| QF_UFIDL vlsat3_f30 (budget 3 000) | 3 000 / 128 296 | 3 000 / 117 243 | 1.000 | 0.914 | **4.11** |
-| QF_AUFLIA dlx-pc (budget 2 000) | 2 000 / 3 611 781 | 2 000 / 2 252 764 | 1.000 | 0.624 | 1.08 |
-| QF_LIA ring_2exp4_6vars_2ite (`unsat`) | `unknown` @60 s | `unknown` @60 s (664 conflicts @3 000-budget) | — | — | — |
-| QF_LIA nec-smt prp-2-26, bofill ex24800 | `unknown` | `unknown` | — | — | 0.93 / 0.80 of the base work in 60 s |
+| QF_UFLIA Wisa xs-10-18-2-2-5-3 | `unsat` 4 337 / 273 577 | `unsat` 3 273 / 105 076 | **0.755** | 0.384 | 1.76 → **1.15** |
+| QF_UFLIA wisas xs_8_13 | `unsat` 3 357 / 181 972 | `unsat` 2 417 / 68 127 | **0.720** | 0.374 | 1.69 → **1.15** |
+| QF_UFLIA wisas xs_10_20 | `unsat` 8 751 / 344 239 | `unsat` 6 261 / 155 910 | **0.715** | 0.453 | 1.83 → **1.42** |
+| QF_ANIA avg20_true-unreach-call.i_0 | `unknown` (283 / 21 096) | **`sat`** 463 / 79 744 — z3 `sat` | — | — | 1.05 |
+| QF_UFIDL vlsat3_f30 (budget 3 000) | 3 000 / 128 296 | 3 000 / 117 243 | 1.000 | 0.914 | 4.11 → **3.87** |
+| QF_AUFLIA dlx-pc (budget 2 000) | 2 000 / 3 611 781 | 2 000 / 2 252 764 | 1.000 | 0.624 | 2.94 |
+| QF_LIA ring_2exp4_6vars_2ite (`unsat`) | `unknown` @60 s | `unknown` (664 conflicts at the 3 000 budget, 0.24× the work) | — | — | — |
+| QF_LIA nec-smt prp-2-26, bofill ex24800 | `unknown` | `unknown` | — | — | 0.83 / 0.51 of the base work in 60 s |
 | QF_LIA CAV 25/40-vars, slacks ×2, dillig (sat, 0 conflicts); QF_UF PEQ020; QF_IDL vlsat3_c60; QF_ANIA `8` | identical counters | | 1.000 | 1.000 | ≤ 1.005 |
 
-Verdicts agree with z3 on every cell either solver decides. **Cost is the
-problem**: +70–80 % instructions on the wisa cells (wall 2.0 → 4.4 s despite
-the search shrink), 4× on UFIDL — big-rational arithmetic per derived bound,
-and the equality-pin pass rescans `slack_forms` per pinned row.
+Verdicts agree with z3 on every cell either solver decides. The search
+benefit is real but modest (25–28 % of the wisa conflicts; one ANIA
+`unknown → sat`), and the cost is still positive everywhere the arm has
+work to do: +15 % on the wisa class, 3–4× on UFIDL and the AUFLIA budget
+cell (many two-term rows go stale per assertion there; the equality-pin pass
+iterates every single-term row on the pinned variable). Wall on a quiet core
+would be roughly break-even on wisa and a regression elsewhere — not a
+landing candidate as is.
 
 ## 5. Verdict on this slice, and what the z3 gap actually is
 
@@ -140,10 +154,18 @@ cannot close it:
 
 ### Next slices (pre-registration sketch, in order)
 
-1. **Cost first** (`Rational64` checked arithmetic instead of `BigRational`
-   per term; an index `variable → single-term atom rows` built once per
-   search instead of the per-pin rescan). The arm must cost < 1.05× on the
-   non-gap probe cells before any search claim is readable.
+1. **Cost, second round.** The first round landed (`Rational64` checked
+   arithmetic; the `variable → single-term atom rows` index): wisa +15 %.
+   Still open: UFIDL / AUFLIA 3–4× — every two-term assertion stales every
+   row through both of its variables, each stale row pays `defining_row`
+   (an `Int`-form row materializes on read: one gcd per term) and two
+   `effective_bound` pair lookups per term; and the equality-pin pass walks
+   every single-term row on the pinned variable. Candidates: skip rows whose
+   variables are all unbounded in the needed direction before materializing
+   (a `has_any_bound` pre-filter per column), memoize the materialized narrow
+   row per dirty round, and bound the pin pass per assertion. The arm must
+   cost < 1.05× on the non-gap probe cells before any search claim is
+   readable.
 2. **A4** — `make_feasible` + the propagation drain at each BCP fixpoint on
    the arith atoms (z3 `propagate()`), behind `NIXIE_APROP_ROW=lp`: the leaf
    refutations become partial-assignment conflicts. Prerequisite: the
@@ -165,7 +187,10 @@ run predated its last edit); `cargo nextest run --release` for the two crates
 **5 291 passed** (the two documented pre-existing HEAD failures excluded);
 `bench/z3_parity/run_parity.sh` **171 Correct / 0 Wrong / 6 Inconclusive**
 (z3 4.16.0); `bench/perf_gate/smt_probe_ab.sh` unarmed vs `3f6f83b9`:
-counters identical on all 17 cells, instructions 1.0014.
+counters identical on all 17 cells, instructions 1.0014. The cost slice
+(on top of `3b6c8e92`): same suite, clippy clean, `smt_probe_ab.sh` unarmed
+vs `3b6c8e92` identical counters, 1.0002; armed counters identical to the
+first cut on every cell above.
 
 ## 7. Traps recorded
 

@@ -266,6 +266,13 @@ pub struct ArithSolver {
     /// bound re-homing sweep (`rehome_stranded_row_bounds`) uses it to
     /// rebuild a lost row and re-attach its bounds.
     slack_forms: FxHashMap<VarId, SlackForm>,
+    /// `variable -> slacks of the SINGLE-term inequality atom rows on it`, the
+    /// equality-pin pass's lookup (see `implied_from_eq_pin`), with the
+    /// `slack_forms` length it was built for: entries are never removed
+    /// outside `reset` (which clears it), so only a grown table needs a
+    /// rebuild. Refreshed by the two pass entry points, before any row borrow.
+    single_term_rows: FxHashMap<VarId, SmallVec<[VarId; 4]>>,
+    single_term_rows_for: usize,
     /// Real-atom reason ids seen in any LP conflict during the current
     /// branch-and-bound / cut search.  When the search refutes the integer
     /// problem, this set (not the full reason list) is the unsat core: each
@@ -557,7 +564,7 @@ impl ArithSolver {
     /// [`Self::implied_atom_polarities`] plus the bookkeeping that says how
     /// much of the atom table it could see.
     #[cfg(feature = "std")]
-    pub fn debug_implied_atom_polarities(&self) -> ApropCensus {
+    pub fn debug_implied_atom_polarities(&mut self) -> ApropCensus {
         let mut census = ApropCensus {
             forms: self.slack_forms.len(),
             ..ApropCensus::default()
@@ -603,11 +610,11 @@ impl ArithSolver {
     /// The caller owns the remaining z3 halves: "is the atom still
     /// unassigned" (`bound_is_interesting`), the polarity translation through
     /// the atom's type, and the explanation clause.
-    pub fn implied_atom_polarities(&self) -> Vec<ImpliedAtom> {
+    pub fn implied_atom_polarities(&mut self) -> Vec<ImpliedAtom> {
         let mut out: Vec<ImpliedAtom> = Vec::new();
-        out.clear();
-        for (&slack, form) in self.slack_forms.iter() {
-            self.implied_for_row(slack, form, &mut out);
+        self.refresh_single_term_index();
+        for &slack in self.slack_forms.keys() {
+            self.implied_for_row(slack, &mut out);
         }
         out
     }
@@ -625,10 +632,9 @@ impl ArithSolver {
     /// until a write re-marks it — completeness only.
     pub fn drain_implied_atom_polarities(&mut self, out: &mut Vec<ImpliedAtom>) {
         out.clear();
+        self.refresh_single_term_index();
         while let Some(basic) = self.simplex.take_dirty_row() {
-            if let Some(form) = self.slack_forms.get(&basic) {
-                self.implied_for_row(basic, form, out);
-            }
+            self.implied_for_row(basic, out);
         }
     }
 
@@ -664,7 +670,10 @@ impl ArithSolver {
     /// One row's contribution to [`Self::implied_atom_polarities`]: the
     /// interval of the row defining `slack` (when `slack` is basic with a
     /// live narrow row) and the polarities of the recorded form it forces.
-    fn implied_for_row(&self, slack: VarId, form: &SlackForm, out: &mut Vec<ImpliedAtom>) {
+    fn implied_for_row(&self, slack: VarId, out: &mut Vec<ImpliedAtom>) {
+        let Some(form) = self.slack_forms.get(&slack) else {
+            return;
+        };
         if form.exact {
             return;
         }
@@ -787,16 +796,19 @@ impl ArithSolver {
         }
         let le_zero = |v: &DeltaRational| v.real < Rational64::zero() || v.real.is_zero();
         let ge_zero = |v: &DeltaRational| v.real > Rational64::zero() || v.real.is_zero();
-        for (&s2, f2) in self.slack_forms.iter() {
-            if s2 == slack || f2.exact || f2.dir == SlackDir::Eq || f2.reason == form.reason {
-                continue;
-            }
-            let [(t2, c2)] = f2.lhs.as_slice() else {
+        let Some(slacks) = self.single_term_rows.get(&x) else {
+            return;
+        };
+        for &s2 in slacks.iter() {
+            let Some(f2) = self.slack_forms.get(&s2) else {
                 continue;
             };
-            if self.term_to_var.get(t2) != Some(&x) {
+            if s2 == slack || f2.reason == form.reason {
                 continue;
             }
+            let [(_, c2)] = f2.lhs.as_slice() else {
+                continue;
+            };
             let Some(v) = checked_mul_r64(xval, *c2).and_then(|v| checked_sub_r64(v, f2.rhs))
             else {
                 continue;
@@ -845,6 +857,28 @@ impl ArithSolver {
                 });
             }
         }
+    }
+
+    /// Bring [`Self::single_term_rows`] up to date with `slack_forms`.
+    /// Iteration order is `slack_forms`'s, so the pin pass visits a
+    /// variable's rows in the order the full scan did.
+    fn refresh_single_term_index(&mut self) {
+        if self.single_term_rows_for == self.slack_forms.len() {
+            return;
+        }
+        self.single_term_rows.clear();
+        for (&s2, f2) in self.slack_forms.iter() {
+            if f2.exact || f2.dir == SlackDir::Eq {
+                continue;
+            }
+            let [(t2, _)] = f2.lhs.as_slice() else {
+                continue;
+            };
+            if let Some(&x) = self.term_to_var.get(t2) {
+                self.single_term_rows.entry(x).or_default().push(s2);
+            }
+        }
+        self.single_term_rows_for = self.slack_forms.len();
     }
 
     /// The tightest bound a derivation may rely on for `var` in direction
@@ -902,10 +936,12 @@ impl ArithSolver {
         }
     }
 
-    /// The Dutertre–de Moura interval bound of `expr` (same arithmetic as
-    /// `Simplex::derive_bound_exact`: big-rational accumulation, narrow-width
-    /// decline) with every consumed bound's antecedents. Outer `None` when a
-    /// contributing bound is missing; declines a crossed window (a
+    /// The Dutertre–de Moura interval bound of `expr` — `Σ coefⱼ·boundⱼ +
+    /// constant`, each term taking the bound its coefficient's sign needs for
+    /// the requested direction — with every consumed bound's antecedents.
+    /// `i64`-checked narrow arithmetic (`checked_scale_add`): `None` when a
+    /// contributing bound is missing, on any overflow (a wide value is the
+    /// wide-LP machinery's, not this channel's), or on a crossed window (a
     /// contradictory bound set is the crossing channel's to report, not a
     /// propagation source).
     fn derive_bound_with_reasons(
@@ -913,20 +949,7 @@ impl ArithSolver {
         expr: &LinExpr,
         lower: bool,
     ) -> Option<(DeltaRational, SmallVec<[Antecedent; 8]>)> {
-        let big = |r: &Rational64| -> num_rational::BigRational {
-            num_rational::BigRational::new(
-                num_bigint::BigInt::from(*r.numer()),
-                num_bigint::BigInt::from(*r.denom()),
-            )
-        };
-        let narrow = |r: &num_rational::BigRational| -> Option<Rational64> {
-            Some(Rational64::new(
-                num_traits::ToPrimitive::to_i64(r.numer())?,
-                num_traits::ToPrimitive::to_i64(r.denom())?,
-            ))
-        };
-        let mut real = big(&expr.constant);
-        let mut delta = num_rational::BigRational::zero();
+        let mut acc = DeltaRational::from_rational(expr.constant);
         let mut ant: SmallVec<[Antecedent; 8]> = SmallVec::new();
         for (v, c) in &expr.terms {
             let lo = self.effective_bound(*v, true);
@@ -939,21 +962,14 @@ impl ArithSolver {
             let positive = *c > Rational64::zero();
             let want_lower = if lower { positive } else { !positive };
             let (value, src) = (if want_lower { lo } else { hi })?;
-            real += big(&value.real) * &big(c);
-            delta += big(&value.delta) * &big(c);
+            acc = checked_scale_add(acc, value, *c)?;
             for a in src {
                 if !ant.contains(&a) {
                     ant.push(a);
                 }
             }
         }
-        Some((
-            DeltaRational {
-                real: narrow(&real)?,
-                delta: narrow(&delta)?,
-            },
-            ant,
-        ))
+        Some((acc, ant))
     }
 
     /// The z3 `cheap_eq_on_nbase` fixed-table candidate set: term-backed
@@ -1164,6 +1180,8 @@ impl ArithSolver {
             atom_rows: FxHashMap::default(),
             atom_slack: FxHashMap::default(),
             slack_forms: FxHashMap::default(),
+            single_term_rows: FxHashMap::default(),
+            single_term_rows_for: 0,
         }
     }
 
@@ -4905,6 +4923,8 @@ impl Theory for ArithSolver {
         self.atom_rows.clear();
         self.atom_slack.clear();
         self.slack_forms.clear();
+        self.single_term_rows.clear();
+        self.single_term_rows_for = 0;
         self.int_vars.clear();
         // `int_terms` is deliberately KEPT: a term's integer-valuedness is a
         // structural fact (its sort), not search state, and the replay that
