@@ -1357,23 +1357,6 @@ impl Context {
         crate::solver::model_builder::ground_default_term(&mut self.terms, sort)
     }
 
-    /// The value string [`Context::get_model`] reports for `term`, when `term`
-    /// is a declared constant that the model left unassigned.
-    ///
-    /// `(get-value ...)` and `(get-model)` must never disagree about the same
-    /// constant, and `get_model`'s uninterpreted-sort witnesses (`@uc_S_n`) are
-    /// numbered across the whole declaration list – so the answer is read back
-    /// out of `get_model` itself rather than recomputed.
-    fn unassigned_const_value(&self, term: TermId, model: &crate::solver::Model) -> Option<String> {
-        let index = self.declared_consts.iter().position(|d| d.term == term)?;
-        // A constant the model *did* assign keeps the ordinary evaluation path.
-        if model.get(term).is_some() {
-            return None;
-        }
-        let (_, _, value) = self.get_model()?.into_iter().nth(index)?;
-        Some(value)
-    }
-
     /// Answer a `(get-value (t1 .. tn))` request.
     ///
     /// SMT-LIB 2.6 §4.1.1: the command is available only in `sat` mode, so a
@@ -1413,8 +1396,9 @@ impl Context {
         // survives evaluation unreduced and echoes back, which is the same
         // honest non-answer this path already gives for anything else it
         // cannot fold. (A bare `(get-value (x))` never reaches the completion
-        // at all: `unassigned_const_value` answers it from `get_model` below,
-        // which is where the `root-obj` rendering lives.)
+        // at all: `ModelRows::unassigned_const_value` answers it from the one
+        // `get_model` rendering the whole request shares, which is where the
+        // `root-obj` rendering lives.)
         let unassigned: Vec<(TermId, SortId)> = self
             .declared_consts
             .iter()
@@ -1545,8 +1529,9 @@ impl Context {
         }
 
         let mut values = Vec::with_capacity(terms.len());
+        let mut rows = get_value::ModelRows::default();
         for (&term, term_str) in terms.iter().zip(keys) {
-            let value_str = if let Some(value) = self.unassigned_const_value(term, &model) {
+            let value_str = if let Some(value) = rows.unassigned_const_value(self, term, &model) {
                 // A bare unconstrained constant: report exactly what
                 // `(get-model)` reports for it, witnesses included.
                 value
