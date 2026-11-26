@@ -121,6 +121,30 @@ pub enum Outcome {
     AssumptionsUnsatisfiable,
 }
 
+/// `NIXIE_TLA_TIMES=1`: the wall-clock time of each phase of a check, on
+/// stderr – which phase a slow check spends its time in, which is what
+/// issue #45 asked of a depth-0 check. Wall-clock, so it moves with the
+/// machine's load: a pointer for a profile, never a measurement.
+struct Times(Option<std::time::Instant>);
+
+impl Times {
+    fn start() -> Self {
+        Self(
+            std::env::var_os("NIXIE_TLA_TIMES")
+                .is_some()
+                .then(std::time::Instant::now),
+        )
+    }
+
+    /// Print the time since the last lap, and restart the clock.
+    fn lap(&mut self, what: &str) {
+        if let Some(t) = self.0 {
+            eprintln!("[nixie-tla time] {what}: {:?}", t.elapsed());
+            self.0 = Some(std::time::Instant::now());
+        }
+    }
+}
+
 /// The result of one step's deadlock question.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DeadlockSearch {
@@ -1416,10 +1440,12 @@ impl Bmc {
             }
         }
 
+        let mut times = Times::start();
         let init = self
             .encoder
             .encode_at(&self.init, 0, tm)
             .map_err(|e| named("Init", &e))?;
+        times.lap("encode Init");
         // One extra transition when there are action invariants: they are
         // checked over the pair `(s_j, s_{j+1})`, so the last one needs
         // `Next@depth`, which the state-invariant queries never assert.
@@ -1436,6 +1462,7 @@ impl Bmc {
                 .map_err(|e| named("Next", &e))?;
             transitions.push(t);
         }
+        times.lap(&format!("encode Next x{unroll_to}"));
 
         // **One solver for the whole unrolling.** `Init` and `Trans_k`
         // persist; each depth's `~Inv_j` is asserted under `push`/`pop`, so
@@ -1513,6 +1540,7 @@ impl Bmc {
                 solver.assert(sides[side_sent], tm);
                 side_sent += 1;
             }
+            times.lap(&format!("step {j}: transitions, constraints"));
 
             // `--inv=A,B` is conjunctive over the invariants, so the
             // counterexample condition is the disjunction of their negations.
@@ -1547,7 +1575,7 @@ impl Bmc {
                 solver.assert(sides[side_sent], tm);
                 side_sent += 1;
             }
-
+            times.lap(&format!("step {j}: encode invariants"));
             // The frame containment obligation (issue #20, step 6), behind
             // `--paranoid`: with the transition into this step asserted,
             // ask whether any member of a framed variable can lie outside
@@ -1572,6 +1600,7 @@ impl Bmc {
                     solver.assert(*c, tm);
                 }
                 let answer = solver.check(tm);
+                times.lap(&format!("step {j}: invariant query -> {answer:?}"));
                 // `NIXIE_TLA_DUMP_QUERY=<dir>`: every depth's query as a
                 // standalone SMT-LIB file — the assertions, with their free
                 // variables declared — so a surprising answer can be replayed
@@ -1803,6 +1832,7 @@ impl Bmc {
         // state has no encoded successor, and "no transition leaves the last
         // state of the unrolling" is a statement about the *bound*, not the
         // specification.
+        times.lap("invariant sweep done");
         if self.check_deadlocks {
             // Its own incremental solver, built step by step: the probe at
             // step `j` must see exactly the prefix through `j` transitions,
@@ -1845,6 +1875,7 @@ impl Bmc {
                 }
             }
         }
+        times.lap("deadlock pass done");
 
         // With deadlock checking off, "no violation" is only the whole answer
         // when behaviours of the full length exist: a specification whose
