@@ -1051,3 +1051,37 @@ fn fairness_in_a_temporal_property_is_declined_by_name() {
     assert!(r.err.contains("fairness"), "{}", r.err);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Issue #44: a temporal check does not look for deadlocks unless asked.
+/// The lasso encoding's "state with no successor" is a question about the
+/// encoding's variables — and on a spec with a ranged variable the search
+/// for one is the hardest query of the run (seconds to minutes per depth
+/// against microseconds for the property itself). `--deadlock` turns it
+/// back on.
+#[test]
+fn a_temporal_check_skips_the_deadlock_search_unless_asked() {
+    let dir = scratch("lasso-nodeadlock");
+    let spec = write_spec(
+        &dir,
+        "Ranged",
+        r"
+---- MODULE Ranged ----
+EXTENDS Integers
+VARIABLE x
+Range == {v \in Int: v >= 0 /\ v <= 50}
+Init == x \in Range
+Next == x' = IF x >= 50 THEN x ELSE x + 1
+P == [](x <= 50)
+====
+",
+    );
+    let r = run(&[
+        "check",
+        "--temporal=P",
+        "--length=6",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 0, "stderr: {}", r.err);
+    assert!(r.out.contains("no lasso of 6 step(s)"), "{}", r.out);
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -3387,6 +3387,31 @@ impl Solver {
         if self.trail.decision_level() != 0 || self.lrat {
             return;
         }
+        // Not inside a `push` scope (issue #44). Every pass in a round
+        // assumes the base formula is fixed: a retirement or strengthening
+        // is justified by clauses that must **stay**, a failed literal is
+        // justified by the binary graph as it **stands**, and the rewatching
+        // and re-propagation afterwards assume the level-0 trail is the
+        // base trail. Under a scope none of that holds: scope-owned clauses
+        // (the incremental query's own encoding) sit in the same database
+        // and the same binary graph, the scope's level-0 units are on the
+        // trail, and the theory's atom view is scoped too. Gating the
+        // individual passes on scope ownership — excluding scope-owned
+        // subsumers in the subsumption round, scope-owned edges in
+        // transitive reduction — left the wrong answer in place; skipping
+        // the subsumption or the vivification pass alone removed it. The
+        // interaction is not clause-local (the final database and the
+        // level-0 trail were both verified consistent), so the round is
+        // confined to the base scope, as cadical confines inprocessing to
+        // a fixed formula (it never runs under assumptions). Rounds still
+        // run between queries, where the base formula is what they see.
+        // Found by the lasso encoding (#29): its negated invariant under
+        // `push` supplies ~1400 scope-owned clauses, and the depth-8 query
+        // came back a wrong `unsat` from the theory's final check after an
+        // in-scope round.
+        if self.assertion_levels.len() > 1 {
+            return;
+        }
 
         // Pass-attribution telemetry (2026-09-04 gating follow-up): snapshot
         // the per-pass cumulative counters around each pass so the round trace

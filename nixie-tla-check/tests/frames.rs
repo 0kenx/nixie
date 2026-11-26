@@ -496,3 +496,25 @@ Next == x' = x
         assert!(msg.contains(needle), "`{prop}` names `{needle}`: {msg}");
     }
 }
+
+/// Issue #44, end to end: the lasso encoding's depth-8 query on a bounded
+/// counter was answered a wrong `unsat` by the in-process solver — an
+/// inprocessing round ran inside the `push` scope and its retirements
+/// rested on scope-owned clauses. With the round confined to the base
+/// scope (and inprocessing **on**, the shipped default), the lasso is
+/// found at depth 8 and replayed.
+#[test]
+fn a_lasso_is_found_with_inprocessing_on() {
+    let src = r#"
+---- MODULE MBC ----
+EXTENDS Integers
+VARIABLE x
+Init == x = 0
+Next == x' = IF x >= 7 THEN x ELSE x + 1
+W == <>(x = 999)
+====
+"#;
+    assert_eq!(lasso(src, "W", 8), Outcome::Violation { step: 8 });
+    // And nothing within 7: s0..s7 are distinct, so no shorter lasso exists.
+    assert_eq!(lasso(src, "W", 7), Outcome::NoViolationWithin(7));
+}

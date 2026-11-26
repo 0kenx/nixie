@@ -86,6 +86,9 @@ struct Args {
     /// `--no-deadlock`: do not look for deadlocks. Apalache's default is to
     /// look; a `.cfg`'s `CHECK_DEADLOCK FALSE` says the same thing.
     no_deadlock: bool,
+    /// `--deadlock`: look for deadlocks under `--temporal` too (off by
+    /// default there — see `run`).
+    deadlock: bool,
     /// `--seed=N`: the simulation PRNG's seed. Deterministic by design –
     /// the same seed gives byte-identical sampled behaviour, where
     /// Apalache's is not reproducible.
@@ -136,6 +139,10 @@ OPTIONS:
     --out-dir=DIR       where to write violation<N>.itf.json
     --seed=N            the simulation PRNG seed         [default: 0]
     --max-conflicts=N   per-query solver budget; exhausted = Unknown (deterministic)
+    --no-deadlock       do not look for deadlocks (default: look)
+    --deadlock          look for deadlocks under --temporal too (off there by
+                        default: a lasso has none by construction, and the
+                        search for one is the hardest query of the run)
     --output-traces     write example<k>.itf.json (simulate)
     --no-cfg            accepted, no effect (a .cfg is not read by default)
     -h, --help          this text
@@ -202,6 +209,7 @@ fn parse_args() -> Result<Args, String> {
         out_dir: None,
         config: None,
         no_deadlock: false,
+        deadlock: false,
         run_dir: None,
         temporal: None,
         max_conflicts: None,
@@ -259,6 +267,7 @@ fn parse_args() -> Result<Args, String> {
                 "out-dir" => a.out_dir = Some(PathBuf::from(need(value)?)),
                 "config" => a.config = Some(PathBuf::from(need(value)?)),
                 "no-deadlock" => a.no_deadlock = true,
+                "deadlock" => a.deadlock = true,
                 "paranoid" => a.paranoid = true,
                 // Accepted, no effect: a `.cfg` is not read by default any
                 // more (see `run`), so there is nothing left to turn off.
@@ -848,6 +857,15 @@ fn run(args: &Args) -> u8 {
             return exit_for(&e);
         }
     };
+    // A temporal check does not look for deadlocks unless asked (issue
+    // #29/#44): the lasso encoding's "state with no successor" is a
+    // question about the **encoding's** variables — a loop state has a
+    // successor by construction, and the prefix's is the ordinary
+    // checker's question — while the search for one is, on a lasso spec
+    // with a ranged variable, the hardest query of the whole run (the
+    // `Range == {v \in Int : 0 <= v <= 50}` liveness cells spent 0.5 s,
+    // 8 s, 11 s per depth on it, against < 1 ms on the property itself).
+    let check_deadlocks = check_deadlocks && (args.temporal.is_none() || args.deadlock);
     bmc.set_check_deadlocks(check_deadlocks);
     bmc.set_paranoid(args.paranoid);
     if let Some(n) = args.max_conflicts {

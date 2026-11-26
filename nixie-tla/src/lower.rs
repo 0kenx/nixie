@@ -227,11 +227,10 @@ fn skolemize_walk(
         /// Visit a term at a polarity.
         Visit(&'a KeraRef, bool),
         /// All children visited; rebuild this node from the `n` rewritten
-        /// children sitting on the value stack.
-        Rebuild(&'a KeraRef, bool, usize),
-        /// Insert a marker into the value stack (so children of different
-        /// parents cannot interleave when a rewrite drops or adds pieces).
-        Mark(usize),
+        /// children sitting on the value stack, which must be exactly the
+        /// `base` entries the frame recorded plus those `n` — one value per
+        /// child, nothing left below disturbed.
+        Rebuild(&'a KeraRef, bool, usize, usize),
     }
 
     let mut seen: std::collections::HashMap<(*const Kera, bool), KeraRef> =
@@ -300,18 +299,27 @@ fn skolemize_walk(
                     values.push(Rc::clone(t));
                     continue;
                 }
-                stack.push(Frame::Rebuild(t, pos, n));
-                stack.push(Frame::Mark(values.len()));
+                stack.push(Frame::Rebuild(t, pos, n, values.len()));
                 for (child, polarity) in children_with_polarity(t, pos).into_iter().rev() {
                     stack.push(Frame::Visit(child, polarity));
                 }
             }
-            Frame::Mark(m) => {
-                // The value stack must hold exactly `m` entries below the
-                // children this frame produced.
-                debug_assert_eq!(values.len(), m);
-            }
-            Frame::Rebuild(t, pos, n) => {
+            Frame::Rebuild(t, pos, n, base) => {
+                // The stack discipline: every child of this node — whether
+                // it was a leaf, a memo hit, a rewrite, or a descent of its
+                // own — pushed exactly one value, and nothing below `base`
+                // was touched. This is what makes the `split_off` below
+                // take exactly this node's children and no more. (The
+                // original `Mark` frame asserted the pre-children length
+                // *after* the children had pushed — an invariant no
+                // non-leaf node can satisfy, so every debug build with a
+                // set-valued variable tripped it; found while running the
+                // paranoid tests in debug for #44.)
+                debug_assert_eq!(
+                    values.len(),
+                    base + n,
+                    "each child must push exactly one value"
+                );
                 let kids: Vec<KeraRef> = values.split_off(values.len() - n);
                 // Preserve sharing: if every child is the *same* `Rc` it was,
                 // the node is unchanged and the original is returned – not a

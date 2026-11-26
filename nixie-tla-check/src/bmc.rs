@@ -1717,7 +1717,7 @@ impl Bmc {
         // saying "no error" would misread a bound past the specification's
         // lifetime. Apalache's outcome name and exit code (0) are used as
         // they are; the message carries the distinction.
-        if !self.check_deadlocks {
+        if !self.check_deadlocks && self.lasso.is_none() {
             solver.push();
             let answer = solver.check(tm);
             solver.pop();
