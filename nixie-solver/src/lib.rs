@@ -133,6 +133,10 @@ pub use nixie_theories::{EqualityNotification, TheoryCombination};
 /// can print them without a direct dependency edge.
 pub use nixie_theories::graph::{TRACE as GRAPH_TRACE, TraceKind as GraphTraceKind};
 
+/// The arithmetic simplex's slice-6 candidate-scan counters (diagnosis; see
+/// [`S6ScanKind`]), re-exported for the same reason as [`GRAPH_TRACE`].
+pub use nixie_theories::arithmetic::{S6_SCAN_TRACE, S6ScanKind};
+
 // Phase 2 enhancements
 pub mod combination;
 pub mod conflict;

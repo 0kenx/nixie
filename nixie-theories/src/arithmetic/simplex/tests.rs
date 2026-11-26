@@ -2782,3 +2782,210 @@ fn delta_evaluation_keeps_overflow_and_partial_accumulation_contract() {
         }
     }
 }
+
+/// The slice-6 candidate scan's skip (see `Simplex::propagate_bounds_in`).
+#[cfg(test)]
+mod s6_scan_tests {
+    use super::*;
+    use num_traits::{One, Zero};
+
+    /// A tableau of `rows` narrow rows `s_i = 1 - x_i - y_i` with
+    /// `x_i, y_i` in `[0, 10]`: the first bounds each pass stores mark the
+    /// rows that read them, so the tableau converges in a few passes.
+    fn tableau(rows: usize) -> (Simplex, Vec<VarId>) {
+        let mut sx = Simplex::new();
+        let mut xs = Vec::new();
+        let mut reason = 0u32;
+        for _ in 0..rows {
+            let x = sx.new_var();
+            let y = sx.new_var();
+            for v in [x, y] {
+                sx.set_lower(v, Rational64::zero(), reason);
+                reason += 1;
+                sx.set_upper(v, Rational64::from_integer(10), reason);
+                reason += 1;
+            }
+            let mut e = LinExpr::new();
+            e.add_term(x, Rational64::one());
+            e.add_term(y, Rational64::one());
+            e.add_constant(-Rational64::one());
+            sx.add_le(e, reason);
+            reason += 1;
+            xs.push(x);
+        }
+        (sx, xs)
+    }
+
+    const PASSES: usize = S6ScanKind::Passes as usize;
+    const SCANS: usize = S6ScanKind::Scans as usize;
+    const SKIPPED: usize = S6ScanKind::RowsSkipped as usize;
+
+    #[test]
+    fn a_pass_with_nothing_marked_and_unchanged_inputs_does_not_walk_the_tableau() {
+        let rows = 1_000u64;
+        let (mut sx, xs) = tableau(rows as usize);
+        let ints = rustc_hash::FxHashSet::default();
+
+        // To the fixpoint: every pass so far scans (the first is `all`, each
+        // later one reads the marks the previous pass's stores left).
+        let mut storing = 0u64;
+        loop {
+            let stored = sx.propagate_bounds_in(&ints);
+            if stored == 0 {
+                break;
+            }
+            storing += 1;
+            assert!(storing < 16, "the tableau must settle");
+        }
+        assert_eq!(storing, 1, "one pass derives each row's two bounds");
+        let census = sx.s6_scan_census();
+        assert_eq!(census[PASSES], storing + 1);
+        assert_eq!(
+            census[SCANS], census[PASSES],
+            "a pass that stores marks rows for the next"
+        );
+        assert_eq!(census[SKIPPED], 0);
+
+        // Inputs unchanged, no row marked: 1,000 passes, none stored, none
+        // walked – the rows they would have visited are counted.
+        for _ in 0..1_000 {
+            assert_eq!(0, sx.propagate_bounds_in(&ints));
+        }
+        let settled = sx.s6_scan_census();
+        assert_eq!(settled[PASSES], census[PASSES] + 1_000);
+        assert_eq!(settled[SCANS], census[SCANS]);
+        assert_eq!(settled[SKIPPED], 1_000 * rows);
+
+        // A bound write marks the rows that read it: exactly the next pass
+        // walks, then the skip resumes.
+        sx.set_lower(xs[7], Rational64::from_integer(2), 4_242);
+        let stored = sx.propagate_bounds_in(&ints);
+        let after_write = sx.s6_scan_census();
+        assert_eq!(
+            after_write[SCANS],
+            settled[SCANS] + 1,
+            "the write marks one row: one scan"
+        );
+        // Its store marks that row again: one more scan, then quiet.
+        let mut quiet = 0;
+        for _ in 0..50 {
+            if sx.propagate_bounds_in(&ints) == 0 {
+                quiet += 1;
+            }
+        }
+        let after_settle = sx.s6_scan_census();
+        assert!(stored > 0, "the tightened row stores a bound");
+        assert_eq!(
+            after_settle[SCANS],
+            settled[SCANS] + 2,
+            "the write's own scan and the scan that reads its store"
+        );
+        assert!(quiet >= 48);
+        for _ in 0..200 {
+            assert_eq!(0, sx.propagate_bounds_in(&ints));
+        }
+        let idle = sx.s6_scan_census();
+        assert_eq!(idle[SCANS], after_settle[SCANS]);
+        assert_eq!(idle[SKIPPED], after_settle[SKIPPED] + 200 * rows);
+
+        // A pop restores bounds, which marks the rows that read them too.
+        // A pop restores bounds, which marks the rows that read them too
+        // (the row is `s = x + y - 1`, asserted `s <= 0`: a lower bound on
+        // x tightens s's derived lower bound, an upper one derives nothing).
+        sx.push();
+        sx.set_lower(xs[3], Rational64::from_integer(1), 4_243);
+        assert!(
+            sx.propagate_bounds_in(&ints) > 0,
+            "the scoped write stores a bound"
+        );
+        assert_eq!(0, sx.propagate_bounds_in(&ints));
+        for _ in 0..48 {
+            let _ = sx.propagate_bounds_in(&ints);
+        }
+        let scoped = sx.s6_scan_census();
+        assert_eq!(
+            (scoped[SCANS], scoped[SKIPPED]),
+            (idle[SCANS] + 2, idle[SKIPPED] + 48 * rows),
+            "the scoped write costs two scans, then the skip resumes"
+        );
+        sx.pop();
+        let _ = sx.propagate_bounds_in(&ints);
+        assert_eq!(
+            sx.s6_scan_census()[SCANS],
+            scoped[SCANS] + 1,
+            "the pop restore marks rows"
+        );
+
+        // `reset` makes the next pass visit everything.
+        sx.reset();
+        assert_eq!(0, sx.propagate_bounds_in(&ints));
+        let census = sx.s6_scan_census();
+        sx.reset();
+        let _ = sx.propagate_bounds_in(&ints);
+        assert_eq!(sx.s6_scan_census()[SCANS], census[SCANS] + 1);
+    }
+
+    #[test]
+    fn a_wide_row_still_derives_and_crosses_while_the_narrow_scan_is_skipped() {
+        use num_bigint::BigInt;
+        use num_rational::BigRational;
+        // The skip is the narrow scan alone: the wide-row loop and the
+        // pending-crossing handling run on every pass.
+        let (mut sx, xs) = tableau(50);
+        let ints = rustc_hash::FxHashSet::default();
+        loop {
+            if sx.propagate_bounds_in(&ints) == 0 {
+                break;
+            }
+        }
+        // A wide basic `w = 2^80 * x0` (as `wide_dependent_bound_change_
+        // flags_staleness` builds one).
+        let w = sx.new_var();
+        let big = BigRational::from_integer(BigInt::from(2).pow(80));
+        sx.wide_rows.insert(
+            w,
+            BigLinExpr {
+                terms: vec![(xs[0], big)],
+                constant: BigRational::zero(),
+            },
+        );
+        sx.column_push_known(xs[0], w);
+        sx.basic.resize(w as usize + 1, false);
+        sx.basic[w as usize] = true;
+        sx.set_lower(xs[0], Rational64::from_integer(1), 7);
+        sx.set_upper(xs[0], Rational64::from_integer(3), 8);
+        // Settle: the wide row derives its (wide) bounds; a later pass
+        // stores nothing.
+        for _ in 0..8 {
+            let _ = sx.propagate_bounds_in(&ints);
+        }
+        let settled = sx.s6_scan_census();
+        assert_eq!(0, sx.propagate_bounds_in(&ints));
+        assert_eq!(
+            sx.s6_scan_census()[SKIPPED],
+            settled[SKIPPED] + 50,
+            "the narrow scan is skipped"
+        );
+        assert_eq!(sx.bound_crossing_conflict(), None);
+
+        // A bound on the WIDE basic alone marks no narrow row, and derives
+        // a crossing with the wide row: the pass that finds it is one whose
+        // narrow scan is skipped.
+        sx.set_upper(w, Rational64::zero(), 9);
+        let before = sx.s6_scan_census();
+        let _ = sx.propagate_bounds_in(&ints);
+        let after = sx.s6_scan_census();
+        assert_eq!(
+            after[SCANS], before[SCANS],
+            "no narrow row was marked: no scan"
+        );
+        assert_eq!(after[SKIPPED], before[SKIPPED] + 50);
+        let crossing = sx
+            .bound_crossing_conflict()
+            .expect("the wide loop must still run on a pass whose narrow scan is skipped");
+        assert!(crossing.contains(&7), "the crossing cites x0's lower bound");
+        // (Consuming it re-arms the derivations: the next pass is `all`.)
+        let _ = sx.propagate_bounds_in(&ints);
+        assert_eq!(sx.s6_scan_census()[SCANS], after[SCANS] + 1);
+    }
+}

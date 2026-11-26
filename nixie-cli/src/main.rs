@@ -2105,6 +2105,21 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
                         g(GraphTraceKind::EmitTopo),
                         g(GraphTraceKind::EmitNoCycle),
                     );
+                    {
+                        use nixie_solver::{S6_SCAN_TRACE, S6ScanKind};
+                        let c = |k: S6ScanKind| {
+                            S6_SCAN_TRACE[k as usize].load(std::sync::atomic::Ordering::Relaxed)
+                        };
+                        // The simplex's slice-6 bound pass: passes run, passes
+                        // that walked the narrow tableau for marked rows, and
+                        // the rows the skipped walks would have visited.
+                        eprintln!(
+                            "; stats s6: passes={} scans={} rows_skipped={}",
+                            c(S6ScanKind::Passes),
+                            c(S6ScanKind::Scans),
+                            c(S6ScanKind::RowsSkipped)
+                        );
+                    }
                 }
             }
 

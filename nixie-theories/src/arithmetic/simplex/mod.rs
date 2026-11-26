@@ -23,6 +23,37 @@ fn slice6_pinned_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var("NIXIE_S6_PINNED").map_or(true, |v| v != "0"))
 }
 
+/// Diagnosis counters of the slice-6 candidate scan
+/// ([`Simplex::propagate_bounds_in`]), printed by the CLI's `--stats`
+/// (`; stats s6: ...`): how often a pass ran, how often it had to walk the
+/// narrow tableau for marked rows, and how many rows the walks that were
+/// skipped would have visited.  Plain atomics, bumped once per pass (a
+/// final-check-round cadence – never a bound write); the enum indexes the
+/// array.
+#[derive(Clone, Copy)]
+pub enum S6ScanKind {
+    /// Passes run.
+    Passes,
+    /// Passes that walked the narrow tableau (a global input changed, or a
+    /// row had been marked since the previous pass).
+    Scans,
+    /// Tableau rows the skipped walks would have visited.
+    RowsSkipped,
+    /// Sentinel: the number of counter kinds.
+    KindCount,
+}
+
+/// The slice-6 scan counters themselves (see [`S6ScanKind`]).
+pub static S6_SCAN_TRACE: [core::sync::atomic::AtomicU64; S6ScanKind::KindCount as usize] =
+    [const { core::sync::atomic::AtomicU64::new(0) }; S6ScanKind::KindCount as usize];
+
+/// Add `n` to a [`S6ScanKind`] counter.
+#[inline]
+fn s6_scan_trace_add(kind: S6ScanKind, n: u64) {
+    use core::sync::atomic::Ordering;
+    S6_SCAN_TRACE[kind as usize].fetch_add(n, Ordering::Relaxed);
+}
+
 use super::delta::{BigDeltaRational, BoundValue, DeltaRational};
 use crate::config::SimplexConfig;
 #[allow(unused_imports)]
@@ -1569,6 +1600,16 @@ pub struct Simplex {
     s6_mark: Vec<bool>,
     s6_all: bool,
     s6_last_globals: Option<(u64, u64, usize)>,
+    /// Whether any row has been marked since the previous pass consumed
+    /// the marks.  The candidate scan walks the whole `tableau` to FIND the
+    /// marked rows; with the global inputs unchanged and this clear there
+    /// is none to find, and the walk is skipped (see `propagate_bounds_in`).
+    /// Raised by `s6_mark_rows_of` when it marks a row – a bound change on
+    /// a variable no row reads raises nothing, and the next pass skips.
+    s6_any_marked: bool,
+    /// This tableau's candidate-scan census (see [`S6ScanKind`]; the same
+    /// counts as the process-wide [`S6_SCAN_TRACE`], per instance).
+    s6_census: [u64; S6ScanKind::KindCount as usize],
     /// Number of original variables
     num_vars: usize,
     /// Number of slack variables
@@ -1750,6 +1791,8 @@ impl Simplex {
             s6_mark: Vec::new(),
             s6_all: true,
             s6_last_globals: None,
+            s6_any_marked: false,
+            s6_census: [0; S6ScanKind::KindCount as usize],
             assignment: Vec::new(),
             lower: Vec::new(),
             upper: Vec::new(),
@@ -6059,6 +6102,30 @@ impl Simplex {
         if all {
             self.s6_mark.clear();
         }
+        // The scan below walks the whole `tableau` to FIND the marked rows,
+        // and a pass that finds none stores nothing: with the global inputs
+        // unchanged and no row marked since the previous pass consumed the
+        // marks, its two candidate lists come out empty, so it is skipped.
+        // (The flag is the disjunction of the marks every marking site set
+        // since; a row cannot gain or lose tableau membership without a
+        // `rows_ver` bump, which makes the next pass `all`.)  The wide-row
+        // loop and the pending-crossing handling further down run either
+        // way.  Measured on a tableau whose rows' inputs had settled
+        // (paired instruction counts, 2026-11-26): the walked pass executed
+        // 20 thousand instructions at 1,000 rows and 319 thousand at 16,000;
+        // the skipped one executes 166 whatever the size.
+        let scan_narrow = all || self.s6_any_marked;
+        self.s6_any_marked = false;
+        self.s6_count(S6ScanKind::Passes, 1);
+        if !scan_narrow {
+            debug_assert!(
+                !self.s6_any_tableau_row_marked(),
+                "a narrow row is marked but the scan flag is clear"
+            );
+            self.s6_count(S6ScanKind::RowsSkipped, self.tableau.len() as u64);
+        } else {
+            self.s6_count(S6ScanKind::Scans, 1);
+        }
         let ndir2_all = slice6_ndir2_enabled();
         let pinned_basic = |v: &VarId| -> bool {
             let i = *v as usize;
@@ -6087,18 +6154,20 @@ impl Simplex {
         // historical `narrow_keys` / `all_keys`), consuming the marks.
         let mut dir2_cands: Vec<VarId> = Vec::new();
         let mut dir1_cands: Vec<VarId> = Vec::new();
-        for (&var, entry) in self.tableau.iter() {
-            let marked = self.s6_mark.get(var as usize).is_some_and(|&m| m);
-            if !all && !marked {
-                continue;
+        if scan_narrow {
+            for (&var, entry) in self.tableau.iter() {
+                let marked = self.s6_mark.get(var as usize).is_some_and(|&m| m);
+                if !all && !marked {
+                    continue;
+                }
+                if let Some(m) = self.s6_mark.get_mut(var as usize) {
+                    *m = false;
+                }
+                if entry.terms_len() <= 8 && (ndir2_all || (pinned_dir2 && pinned_basic(&var))) {
+                    dir2_cands.push(var);
+                }
+                dir1_cands.push(var);
             }
-            if let Some(m) = self.s6_mark.get_mut(var as usize) {
-                *m = false;
-            }
-            if entry.terms_len() <= 8 && (ndir2_all || (pinned_dir2 && pinned_basic(&var))) {
-                dir2_cands.push(var);
-            }
-            dir1_cands.push(var);
         }
         // Materialize the candidates' `Int` rows in place first (the
         // historical `row_lin` did this for every visited row), so the
@@ -7014,6 +7083,7 @@ impl Simplex {
         self.s6_mark.clear();
         self.s6_all = true;
         self.s6_last_globals = None;
+        self.s6_any_marked = false;
     }
     /// Current decision-level depth of the bound trail (number of live push
     /// scopes); `0` at the assertion/base level.
@@ -7756,18 +7826,43 @@ impl Simplex {
         self.on_nonbasic_bound_change(idx);
     }
 
+    /// Whether any row of the narrow tableau is marked (the debug check
+    /// behind the scan skip: a skipped pass finds this clear by construction).
+    fn s6_any_tableau_row_marked(&self) -> bool {
+        self.tableau
+            .keys()
+            .any(|var| self.s6_mark.get(*var as usize).is_some_and(|&m| m))
+    }
+
+    /// Count one scan event, here and in the process-wide census.
+    #[inline]
+    fn s6_count(&mut self, kind: S6ScanKind, n: u64) {
+        self.s6_census[kind as usize] += n;
+        s6_scan_trace_add(kind, n);
+    }
+
+    /// This tableau's slice-6 candidate-scan census, in [`S6ScanKind`]
+    /// order: passes run, passes that walked the narrow tableau, and the
+    /// tableau rows the skipped walks would have visited.  Resets never.
+    #[must_use]
+    pub fn s6_scan_census(&self) -> [u64; S6ScanKind::KindCount as usize] {
+        self.s6_census
+    }
+
     /// Mark every narrow row whose slice-6 derivation stamp reads `var`'s
     /// bound version: its own row when `var` is basic, and the rows of the
     /// basics in its column. A superset by construction of the rows whose
     /// stamp the bump can change (the column index is the exact set of
     /// narrow rows referencing `var`).
     fn s6_mark_rows_of(&mut self, var: VarId) {
-        let mark = |basic: VarId, marked: &mut Vec<bool>| {
+        let any_marked = &mut self.s6_any_marked;
+        let mut mark = |basic: VarId, marked: &mut Vec<bool>| {
             let bi = basic as usize;
             if bi >= marked.len() {
                 marked.resize(bi + 1, false);
             }
             marked[bi] = true;
+            *any_marked = true;
         };
         if self.tableau.contains_key(&var) {
             mark(var, &mut self.s6_mark);
