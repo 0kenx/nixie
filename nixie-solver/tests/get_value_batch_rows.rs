@@ -287,3 +287,70 @@ fn the_legacy_query_path_answers_a_batch_from_the_model_rows() {
     }
     assert_eq!(rows["s"], "(as set.empty (Set Int))");
 }
+
+/// A Set-sorted term in the batch routes the whole request to the legacy
+/// path; that must not change what the other terms answer.  Before the
+/// legacy path read uninterpreted-sort terms from the class map, a constant
+/// the model had an entry for echoed itself (`(u0 u0)`), one the assertions
+/// made equal to it answered the other's name (`(u2 u0)`), and an
+/// application echoed (`((f u0) (f u0))`) – beside a `(get-model)` printing
+/// the three witnesses, and beside the witnesses the same terms answered
+/// when asked without the set term.
+#[test]
+fn a_set_sorted_term_in_the_batch_does_not_change_the_uninterpreted_sort_answers() {
+    let script = "(set-logic ALL)
+         (declare-sort U 0)
+         (declare-const u0 U)
+         (declare-const u1 U)
+         (declare-const u2 U)
+         (assert (distinct u0 u1))
+         (assert (= u2 u0))
+         (declare-fun f (U) U)
+         (assert (distinct (f u0) (f u1)))
+         (declare-const k Int)
+         (declare-const s (Set Int))
+         (assert (= (card s) 0))
+         (check-sat)
+         (get-model)
+         (get-value (u0 u1 u2 (f u0) (f u1) k))
+         (get-value (u0 u1 u2 (f u0) (f u1) k s))";
+    let output = run(script);
+    assert_eq!(output[0], "sat");
+    let rows: BTreeMap<String, String> = model_rows(&output[1]).into_iter().collect();
+    assert_eq!(rows["u0"], "@uc_U_0");
+    assert_eq!(rows["u1"], "@uc_U_1");
+    assert_eq!(rows["u2"], "@uc_U_0", "u2 is asserted equal to u0");
+
+    let structural = get_value_entries(&output[2]);
+    let legacy = get_value_entries(&output[3]);
+    assert_eq!(
+        legacy.len(),
+        structural.len() + 1,
+        "one more term in the batch"
+    );
+    for (key, value) in &structural {
+        assert_eq!(
+            legacy
+                .iter()
+                .find(|(asked, _)| asked == key)
+                .map(|(_, answer)| answer.as_str()),
+            Some(value.as_str()),
+            "the set-sorted term changed the answer for {key}"
+        );
+    }
+    let answer = |key: &str| {
+        legacy
+            .iter()
+            .find(|(asked, _)| asked == key)
+            .map(|(_, value)| value.as_str())
+            .unwrap_or_else(|| panic!("no answer for {key}: {legacy:?}"))
+    };
+    for key in ["u0", "u1", "u2"] {
+        assert_eq!(answer(key), rows[key], "{key}");
+    }
+    // The applications take the witnesses the printed interpretation of `f` gives them.
+    assert_eq!(answer("(f u0)"), "@uc_U_2");
+    assert_eq!(answer("(f u1)"), "@uc_U_3");
+    assert_eq!(answer("k"), rows["k"]);
+    assert_eq!(answer("s"), "(as set.empty (Set Int))");
+}

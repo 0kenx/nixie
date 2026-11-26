@@ -1494,10 +1494,28 @@ impl Context {
             model.set(t, v);
         }
 
+        // The one canonical class → value map `(get-model)` prints from –
+        // the arm the structural path has and this one lacked.  An
+        // uninterpreted-sort term was answered from its model entry instead,
+        // and the solver's entry for a constant of such a sort is a stand-in
+        // term that spells like the constant: a batch holding one Set-sorted
+        // term – which is what routes a request here – answered `(u0 u0)`,
+        // `(u2 u0)` and `((f u0) (f u0))` beside a `(get-model)` printing
+        // `u0 = @uc_U_0`, `u2 = @uc_U_0`, `(f u0) = @uc_U_2`; the same terms
+        // asked without the set term answered the witnesses.  Built once per
+        // request, after the set/bag completions above have settled `model`.
+        let class_values = self.build_class_values(&model);
         let mut values = Vec::with_capacity(terms.len());
         let mut rows = get_value::ModelRows::default();
         for (&term, term_str) in terms.iter().zip(keys) {
-            let value_str = if let Some(value) = rows.unassigned_const_value(self, term, &model) {
+            let value_str = if self
+                .terms
+                .get(term)
+                .is_some_and(|t| self.is_uninterpreted_sort(t.sort))
+                && let Some(value) = class_values.get(self.class_key(term))
+            {
+                value.to_string()
+            } else if let Some(value) = rows.unassigned_const_value(self, term, &model) {
                 // A bare unconstrained constant: report exactly what
                 // `(get-model)` reports for it, witnesses included.
                 value
