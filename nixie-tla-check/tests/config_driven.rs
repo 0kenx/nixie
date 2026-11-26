@@ -531,3 +531,307 @@ Inv  == x = 0
         Outcome::NoViolationWithin(2)
     );
 }
+
+// ======== `SPECIFICATION` (issue #46) ========
+
+/// `SPECIFICATION Spec` checks what `INIT Init` / `NEXT Next` check: the
+/// decomposition names the two roles and the rest of the preparation is
+/// unchanged – same verdict, for a configuration more than half the corpus
+/// is written in.
+#[test]
+fn a_specification_is_prepared_as_its_init_and_next() {
+    const S: &str = r"
+---- MODULE S ----
+EXTENDS Integers
+CONSTANT N
+VARIABLE x
+Init == x = 0
+Next == x' = IF x = N THEN 0 ELSE x + 1
+Spec == Init /\ [][Next]_x
+Inv  == x \in 0..N
+Bad  == x < N
+====
+";
+    let parsed = nixie_tla_syntax::parse_file(S).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("has a root module");
+    let config =
+        parse_config("CONSTANT N = 2\nSPECIFICATION Spec\nINVARIANT Inv\n").expect("config parses");
+    let nixie_tla_syntax::BehaviorSpec::Temporal(name) = &config.behavior else {
+        panic!("the config names a specification");
+    };
+    let form =
+        nixie_tla_syntax::safety_form(&spec, module, &nixie_tla_syntax::check_spec(&spec), name)
+            .expect("decomposes");
+    assert_eq!((form.init.as_str(), form.next.as_str()), ("Init", "Next"));
+    assert!(std::ptr::eq(form.home, module));
+
+    let mut tm = TermManager::new();
+    let scope = nixie_tla_check::bmc::Scope {
+        root: module,
+        home: form.home,
+    };
+    let mut bmc = Bmc::prepare_with_config_in(
+        &spec,
+        scope,
+        roles!(&form.init, &form.next, "Inv"),
+        &config,
+        &mut tm,
+    )
+    .expect("prepares");
+    assert_eq!(
+        bmc.check(3, &mut tm).expect("checks"),
+        Outcome::NoViolationWithin(3)
+    );
+    // And the answer is the answer `INIT Init` / `NEXT Next` gives.
+    let config = parse_config("CONSTANT N = 2\nINIT Init\nNEXT Next\nINVARIANT Inv\n")
+        .expect("config parses");
+    let mut tm = TermManager::new();
+    let mut bmc = Bmc::prepare_with_config(
+        &spec,
+        module,
+        roles!("Init", "Next", "Inv"),
+        &config,
+        &mut tm,
+    )
+    .expect("prepares");
+    assert_eq!(
+        bmc.check(3, &mut tm).expect("checks"),
+        Outcome::NoViolationWithin(3)
+    );
+}
+
+/// A scratch directory holding a set of modules, removed on drop.
+struct Scratch(std::path::PathBuf);
+
+impl Scratch {
+    fn new(tag: &str, files: &[(&str, &str)]) -> Self {
+        let dir = std::env::temp_dir().join(format!(
+            "nixie-tla-cfg-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        for (name, body) in files {
+            std::fs::write(dir.join(name), body).expect("write module");
+        }
+        Self(dir)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// The model-file shape: `MC.tla` EXTENDS the specification; the roles, the
+/// formula and the constants all live in the extended module; and the roles
+/// a `SPECIFICATION` names are read **there**. `MC.tla`'s own `Init`
+/// override is what `INIT Init` names and not what `Spec` says – two
+/// configurations, two specifications, two verdicts.
+#[test]
+fn a_specification_in_an_extended_module_is_read_in_that_module() {
+    let s = Scratch::new(
+        "spec-extends",
+        &[
+            (
+                "Base.tla",
+                r"
+---- MODULE Base ----
+EXTENDS Integers
+CONSTANT N
+VARIABLE x
+Init == x = 0
+Next == x' = IF x = N THEN 0 ELSE x + 1
+Spec == Init /\ [][Next]_x
+Inv  == x \in 0..N
+====
+",
+            ),
+            (
+                "MC.tla",
+                r"
+---- MODULE MC ----
+EXTENDS Base
+CONSTANT N
+ASSUME N \in Nat
+Init == x = 100
+====
+",
+            ),
+        ],
+    );
+    let spec = nixie_tla_syntax::Loader::new()
+        .load(&s.0.join("MC.tla"))
+        .expect("loads");
+    let module = spec.root_module().expect("root");
+    let reports = nixie_tla_syntax::check_spec(&spec);
+    let form = nixie_tla_syntax::safety_form(&spec, module, &reports, "Spec").expect("decomposes");
+    assert_eq!(form.home.name.name, "Base");
+
+    let config =
+        parse_config("CONSTANT N = 2\nSPECIFICATION Spec\nINVARIANT Inv\n").expect("config parses");
+    let mut tm = TermManager::new();
+    let mut bmc = Bmc::prepare_with_config_in(
+        &spec,
+        nixie_tla_check::bmc::Scope {
+            root: module,
+            home: form.home,
+        },
+        roles!(&form.init, &form.next, "Inv"),
+        &config,
+        &mut tm,
+    )
+    .expect("prepares");
+    assert_eq!(
+        bmc.check(3, &mut tm).expect("checks"),
+        Outcome::NoViolationWithin(3),
+        "`Spec` starts at Base's `Init`, x = 0"
+    );
+
+    // `INIT Init` names MC's override: x = 100 is outside `0..2`.
+    let config = parse_config("CONSTANT N = 2\nINIT Init\nNEXT Next\nINVARIANT Inv\n")
+        .expect("config parses");
+    let mut tm = TermManager::new();
+    let mut bmc = Bmc::prepare_with_config(
+        &spec,
+        module,
+        roles!("Init", "Next", "Inv"),
+        &config,
+        &mut tm,
+    )
+    .expect("prepares");
+    assert_eq!(
+        bmc.check(3, &mut tm).expect("checks"),
+        Outcome::Violation { step: 0 },
+        "the root's `Init` override, x = 100"
+    );
+}
+
+/// A role defined in an extended module resolves through `INIT`/`NEXT` too,
+/// with the configuration's constants and replacements applied inside it.
+#[test]
+fn roles_in_an_extended_module_resolve_with_the_configuration_applied() {
+    let s = Scratch::new(
+        "roles-extends",
+        &[
+            (
+                "Spec.tla",
+                r#"
+---- MODULE Spec ----
+EXTENDS Integers
+CONSTANT Nodes
+VARIABLE x
+Init == x \in Nodes
+Next == x' \in Nodes
+Max  == CHOOSE n \in Nodes : \A m \in Nodes : m <= n
+TypeInv == x \in Nodes
+Inv == x <= Max
+Low == x <= 2
+====
+"#,
+            ),
+            (
+                "MC.tla",
+                r#"
+---- MODULE MC ----
+EXTENDS Spec
+CONSTANT Nodes
+Small == {1, 2, 3}
+====
+"#,
+            ),
+        ],
+    );
+    let spec = nixie_tla_syntax::Loader::new()
+        .load(&s.0.join("MC.tla"))
+        .expect("loads");
+    let module = spec.root_module().expect("root");
+    // A `.cfg` replacement (`CONSTANT Nodes <- Small`) and a plain assignment
+    // both reach the extended module's bodies: `Max` is the largest node
+    // either way, and `x <= Max` holds over two steps.
+    for cfg in [
+        "CONSTANT Nodes <- Small\nINIT Init\nNEXT Next\nINVARIANT Inv\n",
+        "CONSTANT Nodes = {1, 2, 3}\nINIT Init\nNEXT Next\nINVARIANT Inv\n",
+    ] {
+        let config = parse_config(cfg).expect("config parses");
+        let mut tm = TermManager::new();
+        let mut bmc = Bmc::prepare_with_config(
+            &spec,
+            module,
+            roles!("Init", "Next", "Inv"),
+            &config,
+            &mut tm,
+        )
+        .unwrap_or_else(|e| panic!("{cfg}: {e}"));
+        assert_eq!(
+            bmc.check(2, &mut tm).expect("checks"),
+            Outcome::NoViolationWithin(2),
+            "{cfg}"
+        );
+    }
+    // And the nodes really are `Small`'s: `x <= 2` breaks at step 0, since
+    // `Init` may pick 3.
+    let config = parse_config("CONSTANT Nodes <- Small\nINIT Init\nNEXT Next\nINVARIANT Low\n")
+        .expect("config parses");
+    let mut tm = TermManager::new();
+    let mut bmc = Bmc::prepare_with_config(
+        &spec,
+        module,
+        roles!("Init", "Next", "Low"),
+        &config,
+        &mut tm,
+    )
+    .expect("prepares");
+    assert_eq!(
+        bmc.check(2, &mut tm).expect("checks"),
+        Outcome::Violation { step: 0 }
+    );
+}
+
+/// Levels are read with `EXTENDS` followed: an **action** invariant defined
+/// in an extended module is checked over step pairs. Classified by an
+/// untrusted level it was taken for a state invariant, and a state-invariant
+/// query asserts no transition into the step it tests – so the free next
+/// state satisfied the negated action and the checker reported a violation
+/// the specification cannot produce.
+#[test]
+fn an_action_invariant_in_an_extended_module_is_checked_over_step_pairs() {
+    let s = Scratch::new(
+        "action-inv-extends",
+        &[
+            (
+                "Base.tla",
+                r"
+---- MODULE Base ----
+EXTENDS Integers
+VARIABLE x
+Init == x = 0
+Next == x' = x + 1
+NoJump == x' <= x + 1
+====
+",
+            ),
+            ("MC.tla", "---- MODULE MC ----\nEXTENDS Base\n====\n"),
+        ],
+    );
+    let spec = nixie_tla_syntax::Loader::new()
+        .load(&s.0.join("MC.tla"))
+        .expect("loads");
+    let module = spec.root_module().expect("root");
+    let mut tm = TermManager::new();
+    let mut bmc = Bmc::prepare_with_config(
+        &spec,
+        module,
+        roles!("Init", "Next", "NoJump"),
+        &nixie_tla_syntax::TlcConfig::default(),
+        &mut tm,
+    )
+    .expect("prepares");
+    assert_eq!(
+        bmc.check(3, &mut tm).expect("checks"),
+        Outcome::NoViolationWithin(3)
+    );
+}

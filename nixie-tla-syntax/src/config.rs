@@ -174,6 +174,9 @@ pub enum BehaviorSpec {
         next: String,
     },
     /// `SPECIFICATION s`, where `s` is usually `Init /\ [][Next]_vars /\ …`.
+    ///
+    /// The names a formula, not two roles; [`crate::behavior::safety_form`]
+    /// reads it for them.
     Temporal(String),
 }
 

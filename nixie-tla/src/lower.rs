@@ -1573,8 +1573,11 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Lower the body of the named top-level definition – a unit of this
-    /// module, or a member of one of its **unnamed** instances (visible
-    /// unprefixed, which is what a role names).
+    /// module, a member of one of its **unnamed** instances (visible
+    /// unprefixed, which is what a role names), or a definition of a module it
+    /// transitively extends (`MC.tla` EXTENDS the specification, and the
+    /// `.cfg` beside it says `INIT Init` / `SPECIFICATION Spec`: every role
+    /// lives in the extended module).
     ///
     /// # Errors
     ///
@@ -1603,21 +1606,139 @@ impl<'a> Lowerer<'a> {
             })
             .map(|ix| self.open_instances[ix].clone());
         if let Some(inst) = inst {
-            let mut stack: Vec<Frame<'a>> = Vec::new();
-            self.push_instance_body(
-                &inst,
-                name,
-                &[],
-                nixie_tla_syntax::Span::default(),
-                &mut stack,
-            )?;
-            return self.run_frames(stack, nixie_tla_syntax::Span::default());
+            return self.lower_member(&inst, name);
+        }
+        // A definition of a module this one extends – in that module's scope;
+        // see [`Self::lower_extended`].
+        if let Some(defining) = self.extends_definer(module, name) {
+            return self.lower_extended(defining, name);
         }
         Err(LowerError::unsupported(
             &format!("`{name}`"),
             "no operator definition with that name in this module (or its open instances)",
             nixie_tla_syntax::Span::default(),
         ))
+    }
+
+    /// [`Self::lower_named`], with the module whose scope `name` is read in.
+    ///
+    /// `module` is the root – the module whose unnamed instances and whose
+    /// `EXTENDS` closure a bare name may resolve through. `home` is the
+    /// module a **`SPECIFICATION` formula** was defined in: when it says
+    /// `Init /\ [][Next]_vars`, those two names mean what they mean *there*,
+    /// which is not what they mean at the root if the root redefines them.
+    /// TLC and Apalache both read the formula in its own module, and a
+    /// checker that resolved `Init` at the root would check the root's
+    /// override against the extended module's `Next`.
+    ///
+    /// A role is read in `home`'s scope: `home`'s own definition, else the
+    /// nearest module `home` extends – never the root's, which may redefine
+    /// the same name.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::lower_named`], when nothing in `home`'s scope defines the
+    /// name.
+    pub fn lower_named_in(
+        &mut self,
+        module: &'a Module,
+        home: &'a Module,
+        name: &str,
+    ) -> Result<KeraRef> {
+        if std::ptr::eq(module, home) {
+            return self.lower_named(module, name);
+        }
+        let own = home
+            .units
+            .iter()
+            .any(|u| matches!(&u.kind, UnitKind::OpDef { name: n, .. } if n.name == name));
+        let defining = if own {
+            Some(home)
+        } else {
+            self.extends_definer(home, name)
+        };
+        match defining {
+            Some(m) => self.lower_extended(m, name),
+            None => {
+                let why = format!(
+                    "no operator definition with that name is visible in module `{}`",
+                    home.name.name
+                );
+                Err(LowerError::unsupported(
+                    &format!("`{name}`"),
+                    &why,
+                    nixie_tla_syntax::Span::default(),
+                ))
+            }
+        }
+    }
+
+    /// Lower `home`'s own definition `name` **in `home`'s scope**: through
+    /// the instance machinery, as an instance of `home` with no `WITH`.
+    ///
+    /// Inside that context a bare name means `home`'s own definition before
+    /// anything a module extending `home` redefines under the same name –
+    /// which is what it means in TLA+. The flat name space alone would
+    /// resolve `Init` inside `Spec == Init /\ [][Next]_vars` to the model
+    /// file's own `Init` override, checking a different specification.
+    ///
+    /// `EXTENDS` re-exports declarations, so each constant and variable
+    /// `home` declares substitutes to itself – or, through `resolve_implicit`,
+    /// to the `.cfg` value pinned or replacement bound for it, exactly as at
+    /// the root's own scope.
+    fn lower_extended(&mut self, home: &'a Module, name: &str) -> Result<KeraRef> {
+        self.lower_module = Some(home);
+        let inst = Instantiation {
+            module: home,
+            source: Some(home),
+            with: Vec::new(),
+            params: Vec::new(),
+        };
+        self.lower_member(&inst, name)
+    }
+
+    /// Lower the member `name` of `inst`'s module through the instance
+    /// machinery: substitution and all, exactly what a bare use of the name
+    /// inside a body does.
+    fn lower_member(&mut self, inst: &Instantiation<'a>, name: &str) -> Result<KeraRef> {
+        let mut stack: Vec<Frame<'a>> = Vec::new();
+        self.push_instance_body(
+            inst,
+            name,
+            &[],
+            nixie_tla_syntax::Span::default(),
+            &mut stack,
+        )?;
+        self.run_frames(stack, nixie_tla_syntax::Span::default())
+    }
+
+    /// The nearest module `module` transitively extends that defines `name`,
+    /// breadth-first so the closest one wins. `None` when nothing it extends
+    /// defines `name`, or when `module` defines it itself – which
+    /// [`Self::lower_named`] has already tried.
+    fn extends_definer(&self, module: &'a Module, name: &str) -> Option<&'a Module> {
+        let defines = |m: &'a Module| {
+            m.units
+                .iter()
+                .any(|u| matches!(&u.kind, UnitKind::OpDef { name: n, .. } if n.name == name))
+        };
+        let mut queue: std::collections::VecDeque<&'a Module> = Default::default();
+        queue.push_back(module);
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        while let Some(cur) = queue.pop_front() {
+            if !seen.insert(cur.name.name.as_str()) {
+                continue;
+            }
+            for e in cur.extends() {
+                if let Some(m) = self.modules.get(&e.name).copied() {
+                    if defines(m) {
+                        return Some(m);
+                    }
+                    queue.push_back(m);
+                }
+            }
+        }
+        None
     }
 
     /// Override the inlining depth budget.

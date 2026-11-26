@@ -258,6 +258,23 @@ pub struct Roles<'r> {
     pub constraints: &'r [&'r str],
 }
 
+/// The modules a check reads its names in.
+///
+/// A struct for the same reason [`Roles`] is one: two `&Module`s of the same
+/// type swap silently, and the swap would check a different specification
+/// while every diagnostic still named the right one.
+#[derive(Debug, Clone, Copy)]
+pub struct Scope<'a> {
+    /// The root module. The invariants, the constraints, a `--view`, and
+    /// every name reached through an unnamed instance resolve here – which
+    /// is where TLC reads a configuration file's names.
+    pub root: &'a Module,
+    /// The module a `SPECIFICATION` formula was defined in (issue #46): its
+    /// `Init` and `Next` mean what they mean *there*. The root itself when
+    /// the configuration says `INIT`/`NEXT`.
+    pub home: &'a Module,
+}
+
 /// What the `--inv` names are: ordinary invariants, or a temporal property
 /// to encode as a lasso.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -442,9 +459,39 @@ impl Bmc {
         config: &TlcConfig,
         tm: &mut TermManager,
     ) -> core::result::Result<Self, SetupError> {
+        Self::prepare_temporal_in(
+            spec,
+            Scope {
+                root: module,
+                home: module,
+            },
+            init,
+            next,
+            temporal,
+            config,
+            tm,
+        )
+    }
+
+    /// [`Self::prepare_temporal`] with `init` and `next` read in
+    /// `scope.home` – see [`Self::prepare_with_config_in`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::prepare_temporal`].
+    pub fn prepare_temporal_in<'a>(
+        spec: &'a LoadedSpec,
+        scope: Scope<'a>,
+        init: &str,
+        next: &str,
+        temporal: &str,
+        config: &TlcConfig,
+        tm: &mut TermManager,
+    ) -> core::result::Result<Self, SetupError> {
         Self::prepare_with_config_kind(
             spec,
-            module,
+            scope.root,
+            scope.home,
             Roles {
                 init,
                 next,
@@ -488,7 +535,49 @@ impl Bmc {
         config: &TlcConfig,
         tm: &mut TermManager,
     ) -> core::result::Result<Self, SetupError> {
-        Self::prepare_with_config_kind(spec, module, roles, config, InvKind::State, tm)
+        Self::prepare_with_config_in(
+            spec,
+            Scope {
+                root: module,
+                home: module,
+            },
+            roles,
+            config,
+            tm,
+        )
+    }
+
+    /// [`Self::prepare_with_config`] with `init` and `next` read in
+    /// `scope.home` rather than `scope.root` (issue #46).
+    ///
+    /// A TLC configuration's `SPECIFICATION Spec` names a formula, and the
+    /// formula names the two roles. Both mean what they mean **where the
+    /// formula is defined**: a model file that `EXTENDS` the specification
+    /// and redefines `Init` does not change what `Spec` says, and resolving
+    /// `Init` at the model file would check the model's `Init` against the
+    /// specification's `Next`. `home` is that defining module; the
+    /// invariants, the constraints and every other name come from `module`
+    /// as before, which is also where TLC reads them.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::prepare_with_config`].
+    pub fn prepare_with_config_in<'a>(
+        spec: &'a LoadedSpec,
+        scope: Scope<'a>,
+        roles: Roles<'_>,
+        config: &TlcConfig,
+        tm: &mut TermManager,
+    ) -> core::result::Result<Self, SetupError> {
+        Self::prepare_with_config_kind(
+            spec,
+            scope.root,
+            scope.home,
+            roles,
+            config,
+            InvKind::State,
+            tm,
+        )
     }
 
     /// [`Self::prepare_with_config`] with the `--inv` names' kind given by
@@ -497,6 +586,7 @@ impl Bmc {
     fn prepare_with_config_kind<'a>(
         spec: &'a LoadedSpec,
         module: &'a Module,
+        home: &'a Module,
         roles: Roles<'_>,
         config: &TlcConfig,
         inv_kind: InvKind,
@@ -586,11 +676,6 @@ impl Bmc {
         for opt in config.unused_options() {
             unapplied.push(opt.to_string());
         }
-        // Level-check before anything else. TLA+ gives `Init` and `Inv` a
-        // maximum level, and a formula above it is malformed rather than
-        // false. The check is deliberately one-sided: `trusted_level_of`
-        // returns `None` when a level depends on a name it could not resolve,
-        // and an unproven level is not grounds for rejection.
         // An `INSTANCE` target that never resolved is a defect in the
         // specification, reported by name with the instance's span – not a
         // silent drop that surfaces much later as a name error at some use.
@@ -603,18 +688,40 @@ impl Bmc {
                 ),
             });
         }
-        let levels = nixie_tla_syntax::check_module(module);
-        let require = |name: &str, role: &'static str, max: nixie_tla_syntax::Level| match levels
-            .trusted_level_of(name)
-        {
-            Some(l) if l > max => Err(SetupError::Level {
-                name: name.to_string(),
-                role,
-                found: format!("a {l:?}-level formula"),
-                wanted: format!("a {max:?}-level formula"),
-            }),
-            _ => Ok(()),
-        };
+        // Level-check before anything else. TLA+ gives `Init` and `Inv` a
+        // maximum level, and a formula above it is malformed rather than
+        // false. The check is deliberately one-sided: `trusted_level_of`
+        // returns `None` when a level depends on a name it could not resolve,
+        // and an unproven level is not grounds for rejection.
+        //
+        // Checked as a **spec**, following `EXTENDS`, and a role's level is
+        // read from the report of the module that **defines** it: a role may
+        // live in a module the root extends (the model-file shape), and a
+        // module's report lists only its own definitions. The distinction is
+        // load-bearing, not tidiness. An action invariant whose level came
+        // back untrusted was classified a state invariant, and a
+        // state-invariant query asserts no transition into the step it tests
+        // – so the free next state satisfied the negated action, and the
+        // replay gate (which refuses to confirm it) turned every such check
+        // into `Unknown`: a correct specification the checker could never
+        // answer for.
+        let reports = nixie_tla_syntax::check_spec(spec);
+        let levels = reports
+            .iter()
+            .find(|(n, _)| n == &spec.root)
+            .map(|(_, r)| r.clone())
+            .unwrap_or_default();
+        let level_of = |name: &str| role_level(spec, module, &reports, name);
+        let require =
+            |name: &str, role: &'static str, max: nixie_tla_syntax::Level| match level_of(name) {
+                Some(l) if l > max => Err(SetupError::Level {
+                    name: name.to_string(),
+                    role,
+                    found: format!("a {l:?}-level formula"),
+                    wanted: format!("a {max:?}-level formula"),
+                }),
+                _ => Ok(()),
+            };
         require(init, "an initial predicate", nixie_tla_syntax::Level::State)?;
         require(next, "a next-state action", nixie_tla_syntax::Level::Action)?;
         // The invariant levels split three ways, and only the temporal one
@@ -623,9 +730,8 @@ impl Bmc {
         // one is a lasso question — answered only when asked for as such
         // (`--temporal`, issue #29), never silently by treating it as a
         // state invariant.
-        let levels = nixie_tla_syntax::check_module(module);
         for inv in roles.inv {
-            let kind = invariant_kind(&levels, inv);
+            let kind = invariant_kind(level_of(inv));
             match (inv_kind, kind) {
                 // `--temporal=P`: the property is encoded as a lasso
                 // (issue #29), whatever its level — a state predicate
@@ -648,8 +754,10 @@ impl Bmc {
         }
 
         let mut lasso_box: Option<crate::temporal::Lasso> = None;
-        let init_k = lower_one(&mut low, module, init)?;
-        let next_k = lower_one(&mut low, module, next)?;
+        // The two roles a `SPECIFICATION` named are read in the formula's
+        // own module (`home`); see [`Self::prepare_with_config_in`].
+        let init_k = lower_one(&mut low, spec, module, home, init)?;
+        let next_k = lower_one(&mut low, spec, module, home, next)?;
         let mut invs = Vec::with_capacity(roles.inv.len());
         for inv in roles.inv {
             if inv_kind == InvKind::Temporal {
@@ -660,14 +768,25 @@ impl Bmc {
                 // with `__InLoop`, the frozen copies and the tableau, and
                 // yields the state invariant a violating lasso falsifies.
                 // The rest of this function sees an ordinary specification.
-                let body = definition_body(module, inv)
-                    .ok_or_else(|| SetupError::NoSuchDefinition((*inv).to_string()))?;
-                let tree =
-                    low.lower_temporal(module, body, &levels)
-                        .map_err(|e| SetupError::Lower {
-                            name: (*inv).to_string(),
-                            why: e.to_string(),
-                        })?;
+                // In the module that defines the property, with that
+                // module's own level report: the state-level leaves resolve
+                // there, and `Spec == Init /\ [][Next]_vars` in an extended
+                // module is checked against the levels of that module.
+                let def = visible_zero_arg(spec, module, inv).map_err(|why| SetupError::Lower {
+                    name: (*inv).to_string(),
+                    why: why.message(),
+                })?;
+                let home = reports
+                    .iter()
+                    .find(|(n, _)| n == &def.module.name.name)
+                    .map(|(_, r)| r)
+                    .unwrap_or(&levels);
+                let tree = low
+                    .lower_temporal(def.module, def.body, home)
+                    .map_err(|e| SetupError::Lower {
+                        name: (*inv).to_string(),
+                        why: e.to_string(),
+                    })?;
                 let lasso = crate::temporal::encode(
                     Rc::clone(&init_k),
                     Rc::clone(&next_k),
@@ -677,7 +796,10 @@ impl Bmc {
                 invs.push(((*inv).to_string(), Rc::clone(&lasso.invariant)));
                 lasso_box = Some(lasso);
             } else {
-                invs.push(((*inv).to_string(), lower_one(&mut low, module, inv)?));
+                invs.push((
+                    (*inv).to_string(),
+                    lower_one(&mut low, spec, module, module, inv)?,
+                ));
             }
         }
         // The rewritten `Init`/`Next` replace the originals from here on;
@@ -764,7 +886,7 @@ impl Bmc {
         // model of the encoded formula and a false alarm about the spec.
         let mut assumptions: Vec<(String, KeraRef)> = Vec::new();
         for name in constraints {
-            let body = lower_one(&mut low, module, name)?;
+            let body = lower_one(&mut low, spec, module, module, name)?;
             assumptions.push((name.to_string(), body));
         }
         // `CONSTRAINT C` bounds the state space TLC explores. Asserting it in
@@ -774,12 +896,12 @@ impl Bmc {
         // intended model.
         let mut state_constraints = Vec::new();
         for name in &config.state_constraints {
-            let t = lower_one(&mut low, module, name)?;
+            let t = lower_one(&mut low, spec, module, module, name)?;
             state_constraints.push(nixie_tla::lower::skolemize_infinite_existentials(&t));
         }
         let mut action_constraints = Vec::new();
         for name in &config.action_constraints {
-            let t = lower_one(&mut low, module, name)?;
+            let t = lower_one(&mut low, spec, module, module, name)?;
             action_constraints.push(nixie_tla::lower::skolemize_infinite_existentials(&t));
         }
         for (i, unit) in module.units.iter().enumerate() {
@@ -1178,6 +1300,24 @@ impl Bmc {
             }
         }
 
+        // The **action** invariants, by level when the defining module's
+        // report establishes it, and otherwise by the lowered term: an
+        // invariant whose kernel form contains `'` constrains a step pair
+        // whatever a level report could not say about it.
+        let action_invariant_names: Vec<String> = roles
+            .inv
+            .iter()
+            .filter(|inv| {
+                let lowered = invs.iter().find(|(n, _)| n == *inv).map(|(_, t)| t);
+                match invariant_kind(level_of(inv)) {
+                    InvariantKind::Action => true,
+                    InvariantKind::State if lowered.is_some_and(mentions_prime) => true,
+                    InvariantKind::State | InvariantKind::Temporal => false,
+                }
+            })
+            .map(|inv| (*inv).to_string())
+            .collect();
+
         Ok(Self {
             frames_done: true,
             lasso: lasso_kept,
@@ -1199,12 +1339,7 @@ impl Bmc {
             verification: None,
             check_deadlocks: true,
             deadlock_step: None,
-            action_invariant_names: roles
-                .inv
-                .iter()
-                .filter(|inv| invariant_kind(&levels, inv) == InvariantKind::Action)
-                .map(|inv| (*inv).to_string())
-                .collect(),
+            action_invariant_names,
             blocked: Vec::new(),
             violated_invariants: Vec::new(),
         })
@@ -2493,13 +2628,35 @@ impl Bmc {
 /// pair, so they are checked over `(s_j, s_{j+1})`; **temporal** ones are a
 /// different kind of question entirely (a lasso, not a state property) and
 /// are refused – Apalache's own exit code for `--inv=<temporal>` is 255.
-fn invariant_kind(levels: &nixie_tla_syntax::LevelReport, name: &str) -> InvariantKind {
+fn invariant_kind(level: Option<nixie_tla_syntax::Level>) -> InvariantKind {
     use nixie_tla_syntax::Level;
-    match levels.trusted_level_of(name) {
+    match level {
         Some(Level::Constant) | Some(Level::State) | None => InvariantKind::State,
         Some(Level::Action) => InvariantKind::Action,
         Some(Level::Temporal) => InvariantKind::Temporal,
     }
+}
+
+/// The trusted level of a role's name, read in the report of the module
+/// that defines it – the root's own, a module it extends, or the target of
+/// one of its unnamed instances.
+///
+/// `None` when nothing visible defines the name (which the role's own
+/// lookup reports), or when its level depends on something unresolved. For
+/// a member reached through an instance this is the level in the
+/// instantiated module, before its `WITH` substitution; a substitution can
+/// raise it, so the term itself is consulted too where it matters.
+fn role_level(
+    spec: &LoadedSpec,
+    module: &Module,
+    reports: &[(String, nixie_tla_syntax::LevelReport)],
+    name: &str,
+) -> Option<nixie_tla_syntax::Level> {
+    let def = nixie_tla_syntax::visible_definition(spec, module, name)?;
+    reports
+        .iter()
+        .find(|(n, _)| n == &def.module.name.name)
+        .and_then(|(_, r)| r.trusted_level_of(name))
 }
 
 /// The kind of one named invariant.
@@ -2514,27 +2671,77 @@ enum InvariantKind {
 }
 
 /// Lower one zero-argument definition, naming what went wrong.
+///
+/// `module` is the root, whose unnamed instances a name may come through;
+/// `home` is the scope the name is read in – the root itself, or the module
+/// a `SPECIFICATION` formula was defined in.
 fn lower_one<'a>(
     low: &mut Lowerer<'a>,
+    spec: &'a LoadedSpec,
     module: &'a Module,
+    home: &'a Module,
     name: &str,
 ) -> core::result::Result<KeraRef, SetupError> {
-    if !has_definition(module, name) && !open_instance_member(low, name) {
-        return Err(SetupError::NoSuchDefinition(name.to_string()));
+    if let Err(why) = visible_zero_arg(spec, home, name) {
+        return Err(match why {
+            Missing::NoSuch => SetupError::NoSuchDefinition(name.to_string()),
+            Missing::Parametrized { arity } => SetupError::Lower {
+                name: name.to_string(),
+                why: format!(
+                    "`{name}` takes {arity} argument(s); this role names a zero-argument definition"
+                ),
+            },
+        });
     }
-    low.lower_named(module, name)
+    low.lower_named_in(module, home, name)
         .map_err(|e| SetupError::Lower {
             name: name.to_string(),
             why: e.to_string(),
         })
 }
 
-/// The body of a zero-argument operator definition, when the module has one.
-fn definition_body<'a>(module: &'a Module, name: &str) -> Option<&'a nixie_tla_syntax::Expr> {
-    module.units.iter().find_map(|u| match &u.kind {
-        UnitKind::OpDef { name: n, body, .. } if n.name == name => Some(body),
-        _ => None,
-    })
+/// Why a role's name does not name a zero-argument definition.
+enum Missing {
+    /// Nothing visible carries the name.
+    NoSuch,
+    /// Something does, with parameters.
+    Parametrized {
+        /// How many.
+        arity: usize,
+    },
+}
+
+impl Missing {
+    fn message(&self) -> String {
+        match self {
+            Self::NoSuch => {
+                "no zero-argument operator definition with that name is visible here".to_string()
+            }
+            Self::Parametrized { arity } => {
+                format!("it is an operator of {arity} argument(s), not a value")
+            }
+        }
+    }
+}
+
+/// The zero-argument definition a role names, wherever a bare name resolves
+/// in `module`'s scope: the module itself, one of its unnamed instances, or a
+/// module it transitively extends. A role that is defined nowhere visible,
+/// or that names a parametrized operator, is refused before lowering sees
+/// it – by name, so the diagnostic is about the role and not about the first
+/// free variable its body happens to leave behind.
+fn visible_zero_arg<'m>(
+    spec: &'m LoadedSpec,
+    module: &'m Module,
+    name: &str,
+) -> core::result::Result<nixie_tla_syntax::VisibleDef<'m>, Missing> {
+    match nixie_tla_syntax::visible_definition(spec, module, name) {
+        Some(d) if d.params.is_empty() => Ok(d),
+        Some(d) => Err(Missing::Parametrized {
+            arity: d.params.len(),
+        }),
+        None => Err(Missing::NoSuch),
+    }
 }
 
 /// The index of the state a lasso trace loops back to (issue #29):
@@ -2604,22 +2811,6 @@ fn collect_unsortable(root: &KeraRef, out: &mut Vec<KeraRef>) {
     }
 }
 
-/// Whether `name` is a member of an **unnamed** instance the lowerer
-/// registered – visible unprefixed, which is what a role names
-/// (`--init=Init` with `INSTANCE y2k WITH …`).
-fn open_instance_member(low: &Lowerer<'_>, name: &str) -> bool {
-    low.open_instances_visible(name)
-}
-
-/// Whether the module defines `name` with no parameters.
-fn has_definition(module: &Module, name: &str) -> bool {
-    module.units.iter().any(|u| {
-        matches!(&u.kind, UnitKind::OpDef { name: n, params, .. }
-            if params.is_empty() && n.name == name)
-    })
-}
-
-/// The `VARIABLE`-declared names of a module.
 /// The `VARIABLE`-declared names of **every** module a specification loads,
 /// not only the root: `test47.tla` EXTENDS `test47a`, which is where `x` is
 /// declared, and a checker that only read the root's declarations would

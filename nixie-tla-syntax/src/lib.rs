@@ -15,6 +15,8 @@
 //!   junction-list layout decided in the parser rather than the lexer.
 //! * [`ast`] – the surface tree, with a span on every node.
 //! * [`level`] – TLA+ level checking (constant / state / action / temporal).
+//! * [`behavior`] – reading a `SPECIFICATION` formula for the `Init`/`Next`
+//!   a bounded check unrolls.
 //! * [`module`] – following `EXTENDS` to load a spec's transitive imports.
 //! * [`config`] – TLC `.cfg` files, which say what a specification's
 //!   constants are and which definitions to check.
@@ -62,6 +64,7 @@
 #![warn(missing_docs)]
 
 pub mod ast;
+pub mod behavior;
 pub mod config;
 pub mod error;
 pub mod level;
@@ -74,6 +77,10 @@ pub mod span;
 pub mod token;
 
 pub use ast::{Expr, ExprKind, Module, Unit, UnitKind};
+pub use behavior::{
+    BehaviorFormError, FairnessClause, SafetyForm, UnsupportedClause, VisibleDef, extends_closure,
+    safety_form, visible_definition,
+};
 pub use config::{
     BehaviorSpec, ConfigError, ConfigErrorKind, ConfigValue, Replacement, TlcConfig, parse_config,
 };

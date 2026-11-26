@@ -61,9 +61,16 @@ up `ConstInit`, `CInit` and `ConstantInit` when present.
 
 TLC's configuration can replace a `CONSTANT` **or a definition**:
 `ConfigReplacements.tla` replaces `Value`. A verdict reached without reading
-the `.cfg` may be about a different specification. Not yet parsed; the harness
-reports when a `.cfg` exists next to a specification whose invariant it found
-violated, so the number is visible rather than silently folded into the total.
+the `.cfg` may be about a different specification. The harness reads it by
+convention when `<Spec>.cfg` sits beside the module (`NIXIE_BMC_NO_CFG=1` is
+the control that ignores it): its constants, its constraints, its roles.
+Since 2026-11-26 (issue #46) that includes `SPECIFICATION Spec` – the formula
+is read for the `Init`/`Next` it names, in the module that defines it, the
+way `nixie-tla check --config=` reads it; a formula with a clause other than
+fairness is blocked by name, and fairness is not assumed (this harness checks
+invariants). An `INVARIANT` the file names resolves wherever a bare name
+does in the module, including through `EXTENDS`. `PROPERTY` lines are not
+acted on by this harness.
 
 ### 4. The function domain an SMT array does not carry
 

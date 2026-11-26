@@ -147,9 +147,41 @@ fn main() {
             Err(_) => None,
         };
         let from_cfg = cfg.as_ref().map(|c| &c.behavior);
+        // A role names a zero-argument definition wherever a bare name
+        // resolves in this module: its own, a member of an unnamed instance,
+        // or one of a module it extends (the model-file shape).
+        let defined_here = |name: &str| {
+            nixie_tla_syntax::visible_definition(&spec, module, name)
+                .is_some_and(|d| d.params.is_empty())
+        };
+        // The scope the two roles are read in: the root, or the module a
+        // `SPECIFICATION` formula was defined in.
+        let mut home: Option<&nixie_tla_syntax::Module> = None;
         let cfg_init_next = match from_cfg {
             Some(nixie_tla_syntax::BehaviorSpec::InitNext { init, next }) => {
                 Some((init.clone(), next.clone()))
+            }
+            // `SPECIFICATION Spec` (issue #46): the formula names the two
+            // roles, and it means them where it is defined. Fairness in it
+            // is not assumed – this harness checks invariants, which a
+            // fairness clause does not touch; a formula with another temporal
+            // clause is blocked by name, as the CLI declines it.
+            Some(nixie_tla_syntax::BehaviorSpec::Temporal(name)) => {
+                let reports = nixie_tla_syntax::check_spec(&spec);
+                match nixie_tla_syntax::safety_form(&spec, module, &reports, name) {
+                    Ok(form) => {
+                        home = Some(form.home);
+                        Some((form.init.clone(), form.next.clone()))
+                    }
+                    Err(e) => {
+                        let key = format!("the .cfg's SPECIFICATION cannot be read: {e}");
+                        if list {
+                            println!("{path}\tblocked\t{key}");
+                        }
+                        *blocked.entry(key).or_default() += 1;
+                        continue;
+                    }
+                }
             }
             _ => None,
         };
@@ -158,7 +190,7 @@ fn main() {
             .map(|c| c.invariants.clone())
             .unwrap_or_default()
             .into_iter()
-            .filter(|i| defined.contains(&i.as_str()))
+            .filter(|i| defined_here(&i.clone()))
             .collect();
 
         let (init, next) = match cfg_init_next {
@@ -192,7 +224,11 @@ fn main() {
             inv: &inv_refs,
             constraints: &constraints,
         };
-        let mut bmc = match Bmc::prepare_with_config(&spec, module, roles, use_cfg, &mut tm) {
+        let scope = nixie_tla_check::bmc::Scope {
+            root: module,
+            home: home.unwrap_or(module),
+        };
+        let mut bmc = match Bmc::prepare_with_config_in(&spec, scope, roles, use_cfg, &mut tm) {
             Ok(mut b) => {
                 // Deterministic, so two runs over the corpus agree; see
                 // `Bmc::set_conflict_limit`. Deadlock checking is ON –

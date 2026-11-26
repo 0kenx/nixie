@@ -41,7 +41,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use nixie_core::TermManager;
-use nixie_tla_check::bmc::{Bmc, Outcome, Roles, SetupError};
+use nixie_tla_check::bmc::{Bmc, Outcome, Roles, Scope, SetupError};
 
 /// No counterexample within the bound.
 const EXIT_OK: u8 = 0;
@@ -149,8 +149,13 @@ OPTIONS:
 
 A TLC configuration is read only when --config names it, which is Apalache's
 default since 0.25.0; a SPEC.cfg next to the spec produces a hint, nothing
-more. In the file, INIT/NEXT/INVARIANT and CONSTANTS are honoured, and a
-command-line option overrides the file's value with a warning.
+more. In the file, INIT/NEXT/SPECIFICATION/INVARIANT, CONSTANTS, CONSTRAINT,
+ACTION_CONSTRAINT and CHECK_DEADLOCK are honoured, and a command-line option
+overrides the file's value with a warning. SPECIFICATION must name a formula
+of the form Init /\\ [][Next]_vars. A fairness conjunct in it is announced and
+not assumed: invariants and deadlocks are checked on the safety fragment, as
+TLC and Apalache check them, and a temporal property is declined (75). Any
+other temporal clause is declined by name (75), never ignored.
 
 EXIT CODES
     0 no counterexample within the bound   12 counterexample found
@@ -653,6 +658,12 @@ fn run(args: &Args) -> u8 {
     let mut config = nixie_tla_syntax::TlcConfig::default();
     let mut cfg_init: Option<String> = None;
     let mut cfg_next: Option<String> = None;
+    // The module a `SPECIFICATION` formula is defined in: the scope its
+    // `Init`/`Next` are read in.
+    let mut home: Option<&nixie_tla_syntax::Module> = None;
+    // The fairness the formula also states, which this checker does not
+    // assume: said out loud below, before anything is checked.
+    let mut cfg_fairness: Vec<nixie_tla_syntax::FairnessClause> = Vec::new();
     let mut cfg_invariants: Vec<String> = Vec::new();
     let mut cfg_deadlock: Option<bool> = None;
     match &args.config {
@@ -686,19 +697,73 @@ fn run(args: &Args) -> u8 {
                 // No INIT/NEXT in the file: the defaults or the command line
                 // decide, exactly as when there is no file at all.
                 nixie_tla_syntax::BehaviorSpec::Unspecified => {}
-                // `SPECIFICATION` names a temporal behaviour spec – `Spec ==
-                // Init /\ [][Next]_vars /\ WF…` – which a bounded
-                // unrolling of `Init`/`Next` does not answer. Refused by
-                // name rather than approximated: checking `Init /\ Next`
-                // against such a spec would silently drop the temporal half.
+                // `SPECIFICATION Spec`, where `Spec == Init /\ [][Next]_vars`
+                // (issue #46). Read for the two roles a bounded check
+                // unrolls: `[Next]_vars` is `Next` or a stuttering step, and
+                // a stuttering step reaches no new state, so the states an
+                // invariant is checked over are the ones `INIT Init` /
+                // `NEXT Next` check over – which is how TLC and Apalache both
+                // read the form. A fairness conjunct is reported and left
+                // unassumed (said out loud below, where it matters whether
+                // the check is for invariants or for a liveness property).
+                // Anything else in the formula – `[]P`, a second action – is
+                // refused **by name**: a clause that excludes states or steps
+                // cannot be dropped from a check that then reports on the
+                // specification.
                 nixie_tla_syntax::BehaviorSpec::Temporal(name) => {
-                    eprintln!(
-                        "error: {} names SPECIFICATION {name}, a temporal \
-                         behaviour spec; this checker needs INIT/NEXT (or a \
-                         temporal-properties pass, not yet built)",
-                        path.display()
-                    );
-                    return EXIT_SYSTEM;
+                    match nixie_tla_syntax::safety_form(
+                        &spec,
+                        module,
+                        &nixie_tla_syntax::check_spec(&spec),
+                        &name,
+                    ) {
+                        Ok(form) => {
+                            // Apalache's own three lines, in its own words.
+                            println!(
+                                "  > {}: Using SPECIFICATION {name}",
+                                path.file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("config")
+                            );
+                            println!("  > Set the initialization predicate to {}", form.init);
+                            println!("  > Set the transition predicate to {}", form.next);
+                            cfg_init = Some(form.init);
+                            cfg_next = Some(form.next);
+                            home = Some(form.home);
+                            cfg_fairness = form.fairness;
+                        }
+                        Err(e) => {
+                            // Where the formula is defined, for the location
+                            // in the diagnostic: it need not be this file.
+                            let in_module =
+                                nixie_tla_syntax::visible_definition(&spec, module, &name)
+                                    .map(|d| format!(" (module {})", d.module.name.name))
+                                    .unwrap_or_default();
+                            eprintln!(
+                                "error: {} names SPECIFICATION {name}{in_module}, which cannot \
+                                 be checked as written: {e}",
+                                path.display()
+                            );
+                            // Only a clause that changes the question gets
+                            // the note: fairness is reported, not refused.
+                            use nixie_tla_syntax::UnsupportedClause;
+                            if matches!(
+                                &e,
+                                nixie_tla_syntax::BehaviorFormError::Unsupported(
+                                    UnsupportedClause::Other { .. }
+                                )
+                            ) {
+                                eprintln!(
+                                    "note: a temporal clause other than fairness excludes states or \
+                                     steps from the specification; this checker cannot preserve it, \
+                                     and ignoring it would answer a different question. To check \
+                                     the invariants of the safety fragment alone, write `INIT \
+                                     <init>` and `NEXT <next>` in the configuration"
+                                );
+                            }
+                            return EXIT_EVAL;
+                        }
+                    }
                 }
             }
             cfg_invariants = config.invariants.clone();
@@ -750,6 +815,26 @@ fn run(args: &Args) -> u8 {
     } else {
         next
     };
+    // Under `SPECIFICATION Spec` the formula names both roles. A
+    // command-line `--init`/`--next` would override one half of it and check
+    // a specification the configuration does not describe, so – unlike the
+    // `INIT`/`NEXT` case below, where the override is Apalache's own
+    // contract – it is refused rather than applied or ignored.
+    if matches!(config.behavior, nixie_tla_syntax::BehaviorSpec::Temporal(_)) {
+        let (i, n) = (&args.init, &args.next);
+        if i.is_some() || n.is_some() {
+            eprintln!(
+                "error: --init/--next cannot be combined with a SPECIFICATION in the config: \
+                 `{}` names the initial predicate and the action itself. To check other \
+                 definitions, write INIT/NEXT in the configuration",
+                match &config.behavior {
+                    nixie_tla_syntax::BehaviorSpec::Temporal(t) => t.as_str(),
+                    _ => unreachable!("checked just above"),
+                }
+            );
+            return EXIT_SYSTEM;
+        }
+    }
     // The deadlock setting, Apalache's precedence: the command line wins
     // over the `.cfg`, with the warning `resolveDeadlockSetting` prints.
     let check_deadlocks = if args.no_deadlock {
@@ -773,13 +858,37 @@ fn run(args: &Args) -> u8 {
             );
             return EXIT_SYSTEM;
         }
-        if !module.units.iter().any(|u| {
-            matches!(&u.kind, nixie_tla_syntax::UnitKind::OpDef { name: n, params, .. }
-                if params.is_empty() && n.name == *t)
-        }) {
+        if !names_visible_zero_arg(&spec, module, t) {
             eprintln!("error: the module has no zero-argument definition named `{t}`");
             return EXIT_EVAL;
         }
+        // A liveness property under a specification that states fairness: an
+        // unfair lasso is not a behaviour of the specification, and a lasso
+        // search that ignored the clause would report it as one. Refused by
+        // name (issue #47 is honoring it); the invariants are still checked.
+        if !cfg_fairness.is_empty() {
+            let clauses = fair_text(&cfg_fairness);
+            eprintln!(
+                "error: the specification states fairness ({clauses}) and this checker cannot \
+                 assume it: a lasso found without it may be unfair, and so may not be a \
+                 behaviour of the specification at all. The temporal property `{t}` is not \
+                 checked; invariants (`--inv`) are, on the safety fragment"
+            );
+            return EXIT_EVAL;
+        }
+    }
+    // Invariants and deadlocks under a specification that states fairness:
+    // checked on the safety fragment, which gives the same answers – a
+    // fairness clause removes no state from any finite prefix (see
+    // `nixie_tla_syntax::behavior`). Said out loud, as Apalache says it.
+    if !cfg_fairness.is_empty() {
+        let clauses = fair_text(&cfg_fairness);
+        eprintln!(
+            "warning: the specification states fairness ({clauses}); it is not assumed here. \
+             Invariants and deadlocks are checked on every state reachable under `Init /\\ \
+             [][Next]_vars`, which is also where TLC and Apalache check them; no liveness is \
+             checked (issue #47)"
+        );
     }
     let inv: Vec<String> = match (&args.inv, cfg_invariants.is_empty()) {
         (Some(cli), false) => {
@@ -807,30 +916,13 @@ fn run(args: &Args) -> u8 {
     };
     // Every name in the list must resolve, or none of them is checked: a
     // subset would answer a narrower question than the caller asked, which is
-    // the same silent narrowing a dropped assumption is. A member of an
-    // **unnamed** instance counts (`--inv=Safety` with `INSTANCE y2k WITH …`):
-    // it is visible unprefixed, which is what a role names.
-    let open_member = |name: &str| -> bool {
-        module.units.iter().any(|u| {
-            matches!(&u.kind, nixie_tla_syntax::UnitKind::Instance { instance, .. }
-            if spec
-                .modules
-                .iter()
-                .find(|(n, _)| *n == instance.module.name)
-                .is_some_and(|(_, m)| {
-                    m.units.iter().any(|u| {
-                        matches!(&u.kind, nixie_tla_syntax::UnitKind::OpDef { name: n, params, .. }
-                            if params.is_empty() && n.name == name)
-                    })
-                }))
-        })
-    };
+    // the same silent narrowing a dropped assumption is. A name resolves
+    // wherever a bare name does in this module: a unit of it, a member of an
+    // **unnamed** instance (`--inv=Safety` with `INSTANCE y2k WITH …`), or a
+    // definition of a module it extends – the model-file shape, where
+    // `MC.tla` EXTENDS the specification and every role lives there.
     for name in &inv {
-        if !module.units.iter().any(|u| {
-            matches!(&u.kind, nixie_tla_syntax::UnitKind::OpDef { name: n, params, .. }
-                if params.is_empty() && n.name == *name)
-        }) && !open_member(name)
-        {
+        if !names_visible_zero_arg(&spec, module, name) {
             eprintln!("error: the module has no zero-argument definition named `{name}`");
             return EXIT_EVAL;
         }
@@ -846,9 +938,16 @@ fn run(args: &Args) -> u8 {
     };
 
     let mut tm = TermManager::new();
+    // Under `SPECIFICATION Spec` the two roles are read in `Spec`'s own
+    // module (issue #46); everywhere else they are read in the root's, as
+    // TLC reads an `INIT`/`NEXT`/`INVARIANT` name.
+    let scope = Scope {
+        root: module,
+        home: home.unwrap_or(module),
+    };
     let prepared = match &args.temporal {
-        Some(t) => Bmc::prepare_temporal(&spec, module, &init, &next, t, &config, &mut tm),
-        None => Bmc::prepare_with_config(&spec, module, roles, &config, &mut tm),
+        Some(t) => Bmc::prepare_temporal_in(&spec, scope, &init, &next, t, &config, &mut tm),
+        None => Bmc::prepare_with_config_in(&spec, scope, roles, &config, &mut tm),
     };
     let mut bmc = match prepared {
         Ok(b) => b,
@@ -877,7 +976,7 @@ fn run(args: &Args) -> u8 {
     // level (an action or temporal view) cannot be evaluated per step and
     // is refused by name.
     if let Some(v) = &args.view {
-        let levels = nixie_tla_syntax::check_module(module);
+        let levels = root_levels(&spec);
         match levels.trusted_level_of(v) {
             Some(lev) if lev <= nixie_tla_syntax::Level::State => {}
             Some(_) => {
@@ -1048,6 +1147,36 @@ fn run(args: &Args) -> u8 {
         return EXIT_COUNTEREXAMPLE;
     }
     EXIT_OK
+}
+
+/// The fairness clauses of a `SPECIFICATION`, as one list for a diagnostic.
+fn fair_text(clauses: &[nixie_tla_syntax::FairnessClause]) -> String {
+    clauses
+        .iter()
+        .map(|c| format!("`{}`", c.rendered))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The root module's level report, with everything it `EXTENDS` resolved –
+/// the report a role's level is read from, wherever the role is defined.
+fn root_levels(spec: &nixie_tla_syntax::LoadedSpec) -> nixie_tla_syntax::LevelReport {
+    nixie_tla_syntax::check_spec(spec)
+        .into_iter()
+        .find(|(n, _)| n == &spec.root)
+        .map(|(_, r)| r)
+        .unwrap_or_default()
+}
+
+/// Whether `name` is a zero-argument definition a role may name in `module`:
+/// one of its own, a member of an unnamed instance, or one of a module it
+/// extends.
+fn names_visible_zero_arg(
+    spec: &nixie_tla_syntax::LoadedSpec,
+    module: &nixie_tla_syntax::Module,
+    name: &str,
+) -> bool {
+    nixie_tla_syntax::visible_definition(spec, module, name).is_some_and(|d| d.params.is_empty())
 }
 
 /// Write one counterexample as `violation<n>.itf.json` (check) or one

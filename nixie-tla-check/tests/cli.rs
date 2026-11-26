@@ -610,11 +610,136 @@ fn a_missing_or_foreign_file_is_255() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A `.cfg` naming `SPECIFICATION` is refused by name: that is a temporal
-/// behaviour spec, and a bounded Init/Next unrolling would silently check
-/// something weaker than what the file says.
+// ======== `SPECIFICATION` in the configuration (issue #46) ========
+
+/// The issue's own reproducer. `SPECIFICATION Spec`, with
+/// `Spec == Init /\ [][Next]_x`, is checked exactly as `INIT Init` /
+/// `NEXT Next` are: `[Next]_x` is `Next` or a stuttering step, and a
+/// stuttering step reaches no state the invariant was not already checked
+/// in. Before this, the configuration was refused: more than half of the
+/// corpus's `.cfg` files name the system this way.
 #[test]
-fn a_cfg_with_specification_is_refused() {
+fn a_cfg_with_the_canonical_specification_checks_like_init_next() {
+    let dir = scratch("cfg-spec-ok");
+    let spec = write_spec(
+        &dir,
+        "SpecRepro",
+        r"
+---- MODULE SpecRepro ----
+VARIABLE x
+Init == x = FALSE
+Next == x' = x
+Spec == Init /\ [][Next]_x
+Inv == x = FALSE
+Nope == x = TRUE
+====
+",
+    );
+    std::fs::write(dir.join("spec.cfg"), "SPECIFICATION Spec\nINVARIANT Inv\n").expect("cfg");
+    let r = run(&[
+        "check",
+        &format!("--config={}", dir.join("spec.cfg").display()),
+        "--length=0",
+        "--out-dir=out",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 0, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(
+        r.out.contains("no counterexample of 0 step(s) or fewer"),
+        "{}",
+        r.out
+    );
+    // Apalache's own three lines, in its own words.
+    assert!(
+        r.out.contains("> spec.cfg: Using SPECIFICATION Spec"),
+        "{}",
+        r.out
+    );
+    assert!(
+        r.out.contains("> Set the initialization predicate to Init")
+            && r.out.contains("> Set the transition predicate to Next"),
+        "{}",
+        r.out
+    );
+
+    // The same specification with the roles named the other way round gives
+    // the same answer, and a violated invariant is found the same way too.
+    std::fs::write(
+        dir.join("spec.cfg"),
+        "CONSTANTS\nINVARIANT Nope\nSPECIFICATION Spec\n",
+    )
+    .expect("cfg");
+    let r = run(&[
+        "check",
+        &format!("--config={}", dir.join("spec.cfg").display()),
+        "--length=2",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 12, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(
+        r.out
+            .contains("counterexample 1: 0 step(s), invariant Nope"),
+        "{}",
+        r.out
+    );
+    assert!(r.out.contains("independently replayed: yes"), "{}", r.out);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Under `SPECIFICATION Spec` the deadlock question is the one TLC and
+/// Apalache ask under it: a state with no `Next`-successor is a deadlock,
+/// even though `[Next]_vars` permits stuttering – and `CHECK_DEADLOCK FALSE`
+/// is what turns that off, in the file, as for TLC.
+#[test]
+fn the_deadlock_question_is_the_same_under_a_specification() {
+    let dir = scratch("cfg-spec-deadlock");
+    let spec = write_spec(
+        &dir,
+        "Stopper",
+        r"
+---- MODULE Stopper ----
+EXTENDS Integers
+VARIABLE x
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+Spec == Init /\ [][Next]_x
+Inv == x >= 0
+====
+",
+    );
+    std::fs::write(
+        dir.join("Stopper.cfg"),
+        "SPECIFICATION Spec\nINVARIANT Inv\n",
+    )
+    .expect("cfg");
+    let r = run(&[
+        "check",
+        &format!("--config={}", dir.join("Stopper.cfg").display()),
+        "--length=4",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 12, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(r.out.contains("The outcome is: Deadlock"), "{}", r.out);
+    std::fs::write(
+        dir.join("Stopper.cfg"),
+        "SPECIFICATION Spec\nINVARIANT Inv\nCHECK_DEADLOCK FALSE\n",
+    )
+    .expect("cfg");
+    let r = run(&[
+        "check",
+        &format!("--config={}", dir.join("Stopper.cfg").display()),
+        "--length=4",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 0, "stdout: {}\nstderr: {}", r.out, r.err);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A `.cfg` naming a definition the module does not have is refused by name
+/// – exit 75, the "could not be evaluated" bucket an `INIT Nope` lands in,
+/// not a usage error.
+#[test]
+fn a_cfg_with_specification_naming_nothing_is_refused_by_name() {
     let dir = scratch("cfg-spec");
     let spec = write_spec(&dir, "Counter", COUNTER);
     std::fs::write(dir.join("temporal.cfg"), "SPECIFICATION Spec\n").expect("writes the cfg");
@@ -624,8 +749,248 @@ fn a_cfg_with_specification_is_refused() {
         &format!("--config={}", dir.join("temporal.cfg").display()),
         spec.to_str().expect("a path"),
     ]);
-    assert_eq!(r.code, 255, "stderr: {}", r.err);
-    assert!(r.err.contains("SPECIFICATION"), "{}", r.err);
+    assert_eq!(r.code, 75, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(
+        r.err.contains("no zero-argument definition named `Spec`"),
+        "{}",
+        r.err
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A fairness conjunct restricts behaviours by their infinite tails. For an
+/// invariant that changes nothing a bounded check sees – TLC checks
+/// invariants on the states `Init`/`Next` reach whatever the fairness, and
+/// Apalache warns and ignores it – so the invariants are checked and the
+/// clause is **said out loud**. For a liveness property it is the difference
+/// between a counterexample and an unfair behaviour, so that check is
+/// declined (75), the clause named and located.
+#[test]
+fn fairness_in_a_specification_is_announced_for_invariants_and_refused_for_liveness() {
+    let dir = scratch("cfg-spec-fair");
+    let spec = write_spec(
+        &dir,
+        "Fair",
+        r"
+---- MODULE Fair ----
+VARIABLE x
+Node == {1}
+A(p) == x' = x + 1
+Next == \E p \in Node : A(p)
+Init == x = 0
+Spec4 == (Init /\ [][Next]_x) /\ WF_x(Next)
+Spec5 == Init /\ ([][Next]_x /\ SF_x(Next))
+Spec6 == Init /\ [][Next]_x /\ \A p \in Node : WF_x(A(p))
+Inv == x < 3
+====
+",
+    );
+    for (spec_name, clause) in [
+        ("Spec4", "WF_x(Next)"),
+        ("Spec5", "SF_x(Next)"),
+        ("Spec6", r"\A … : WF_x(A(p))"),
+    ] {
+        std::fs::write(
+            dir.join("Fair.cfg"),
+            format!("SPECIFICATION {spec_name}\nINVARIANT Inv\n"),
+        )
+        .expect("cfg");
+        // `x < 3` holds through two steps of `x' = x + 1` from 0: checked,
+        // answered, and the fairness clause announced on the way.
+        let r = run(&[
+            "check",
+            &format!("--config={}", dir.join("Fair.cfg").display()),
+            "--length=2",
+            spec.to_str().expect("a path"),
+        ]);
+        assert_eq!(
+            r.code, 0,
+            "{spec_name}: stdout: {}\nstderr: {}",
+            r.out, r.err
+        );
+        assert!(
+            r.out.contains("no counterexample of 2 step(s) or fewer"),
+            "{spec_name}: {}",
+            r.out
+        );
+        assert!(
+            r.err.contains(&format!(
+                "warning: the specification states fairness (`{clause}`)"
+            )),
+            "{spec_name}: {}",
+            r.err
+        );
+        assert!(
+            r.err.contains("it is not assumed here") && r.err.contains("no liveness is checked"),
+            "{spec_name}: {}",
+            r.err
+        );
+        // A liveness property under it is declined by name: an unfair lasso
+        // is not a counterexample to the specification.
+        std::fs::write(dir.join("live.cfg"), format!("SPECIFICATION {spec_name}\n")).expect("cfg");
+        let r = run(&[
+            "check",
+            &format!("--config={}", dir.join("live.cfg").display()),
+            "--temporal=Inv",
+            "--length=3",
+            spec.to_str().expect("a path"),
+        ]);
+        assert_eq!(r.code, 75, "{spec_name}: stderr: {}", r.err);
+        assert!(
+            r.err
+                .contains(&format!("the specification states fairness (`{clause}`)")),
+            "{spec_name}: {}",
+            r.err
+        );
+        assert!(r.err.contains("may be unfair"), "{spec_name}: {}", r.err);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Any other temporal conjunct is declined by name too: `[]P` in the
+/// formula is a property of behaviours, and a bounded `Init`/`Next`
+/// unrolling would answer a different question than the one asked.
+#[test]
+fn a_cfg_with_a_temporal_clause_is_declined_by_name() {
+    let dir = scratch("cfg-spec-temporal");
+    let spec = write_spec(
+        &dir,
+        "Temporal",
+        r"
+---- MODULE Temporal ----
+EXTENDS Integers
+VARIABLE x
+Init == x = 0
+Next == x' = x + 1
+Spec == Init /\ [][Next]_x /\ [](x >= 0)
+Inv == x < 3
+====
+",
+    );
+    std::fs::write(
+        dir.join("Temporal.cfg"),
+        "SPECIFICATION Spec\nINVARIANT Inv\n",
+    )
+    .expect("cfg");
+    let r = run(&[
+        "check",
+        &format!("--config={}", dir.join("Temporal.cfg").display()),
+        "--length=3",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 75, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(r.err.contains("the conjunct `[](x >= 0)`"), "{}", r.err);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--init`/`--next` next to a `SPECIFICATION`: refused rather than applied
+/// (half the formula would be overridden) or ignored (a silent no-op).
+#[test]
+fn init_and_next_are_refused_next_to_a_specification() {
+    let dir = scratch("cfg-spec-override");
+    let spec = write_spec(
+        &dir,
+        "SpecRepro",
+        r"
+---- MODULE SpecRepro ----
+VARIABLE x
+Init == x = FALSE
+Next == x' = x
+Spec == Init /\ [][Next]_x
+Inv == x = FALSE
+====
+",
+    );
+    std::fs::write(
+        dir.join("SpecRepro.cfg"),
+        "SPECIFICATION Spec\nINVARIANT Inv\n",
+    )
+    .expect("cfg");
+    let r = run(&[
+        "check",
+        &format!("--config={}", dir.join("SpecRepro.cfg").display()),
+        "--init=Init",
+        "--length=0",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 255, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(
+        r.err.contains("--init/--next cannot be combined"),
+        "{}",
+        r.err
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The Toolbox's model-file shape: `MC.tla` EXTENDS the specification and
+/// `MC.cfg` says `SPECIFICATION Spec`. The formula and both roles live in
+/// the extended module. And the roles are read **there**: `MC.tla`'s own
+/// `Init` override does not change what `Spec` says (TLC reads the formula
+/// in its own module), while `INIT Init` names the override – the two
+/// configurations are different specifications, and the difference shows.
+#[test]
+fn a_specification_in_an_extended_module_is_read_in_its_own_module() {
+    let dir = scratch("cfg-spec-extends");
+    std::fs::write(
+        dir.join("Base.tla"),
+        r#"
+---- MODULE Base ----
+EXTENDS Integers
+CONSTANT N
+VARIABLE x
+Init == x = 0
+Next == x < N /\ x' = x + 1
+Spec == Init /\ [][Next]_x
+====
+"#,
+    )
+    .expect("Base");
+    let spec = std::fs::write(
+        dir.join("MC.tla"),
+        r#"
+---- MODULE MC ----
+EXTENDS Base, TLC
+CONSTANT N
+ASSUME N \in Nat
+Init == x = 100
+NoHundred == x # 100
+====
+"#,
+    )
+    .map(|_| dir.join("MC.tla"))
+    .expect("MC");
+    // `SPECIFICATION Spec`: Base's `Init` (x = 0) – the override is not read.
+    std::fs::write(
+        dir.join("MC.cfg"),
+        "CONSTANT N = 3\nSPECIFICATION Spec\nINVARIANT NoHundred\n",
+    )
+    .expect("cfg");
+    let r = run(&[
+        "check",
+        &format!("--config={}", dir.join("MC.cfg").display()),
+        "--length=2",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 0, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(
+        r.out.contains("no counterexample of 2 step(s) or fewer"),
+        "{}",
+        r.out
+    );
+    // `INIT Init`: MC's own override (x = 100) – a violation at step 0.
+    std::fs::write(
+        dir.join("MC.cfg"),
+        "CONSTANT N = 3\nINIT Init\nNEXT Next\nINVARIANT NoHundred\n",
+    )
+    .expect("cfg");
+    let r = run(&[
+        "check",
+        &format!("--config={}", dir.join("MC.cfg").display()),
+        "--length=2",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 12, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(r.out.contains("counterexample 1: 0 step(s)"), "{}", r.out);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
