@@ -51,11 +51,15 @@ run_cell () {  # $1 arm-binary  $2 out-dir  rest: argv
   ( cd "$WORK" && taskset -c 0-7 timeout 300 "$bin" "$@" >"$out/stdout" 2>"$out/stderr"; echo "$?" >"$out/code" ) || echo 124 >"$out/code"
 }
 
-n=0; agree_ok=0; agree_viol=0; agree_dl=0; mismatch=0; inconclusive=0; declined=0
+n=0; agree_ok=0; agree_viol=0; agree_dl=0; agree_ref=0; mismatch=0; inconclusive=0; declined=0
 python3 - <<'PY' > /tmp/parity_tla_lines
 import json
 for c in json.load(open('/tmp/parity_tla_cells.json')):
-    print('\t'.join([c['id'], c['mode']] + [t for t in c['argv'] if t != c['mode']] + [c['spec'], str(c['expected_exit'])]))
+    # One field for the options: `argv` is `mode, options…, spec`, and the
+    # spec is its own field. (One field per option misaligned every cell with
+    # two or more options – `read` gives the last variable the remainder – and
+    # those cells were skipped as "no <option>".)
+    print('\t'.join([c['id'], c['mode'], ' '.join(c['argv'][1:-1]), c['spec'], str(c['expected_exit'])]))
 PY
 
 while IFS=$'\t' read -r id mode argv_prefix spec expected; do
@@ -89,6 +93,10 @@ while IFS=$'\t' read -r id mode argv_prefix spec expected; do
           elif grep -q "ExecutionsTooShort" "$2" 2>/dev/null; then echo TooShort
           else echo NoError; fi ;;
       12) echo Error ;;
+      # `Unknown` is an answer too – the honest one (exit 255, "The outcome
+      # is: Unknown") – and it is Inconclusive, never a mismatch.
+      255) if grep -q "The outcome is: Unknown" "$2" 2>/dev/null; then echo Unknown
+          else echo "Exit$1"; fi ;;
       *)  echo "Exit$1" ;;
     esac
   }
@@ -98,8 +106,13 @@ while IFS=$'\t' read -r id mode argv_prefix spec expected; do
   cls=Inconclusive
   case "$x_v" in Exit75|Exit120|Exit150) cls=Declined;; esac
   if [ "$a_v" = NoError ]  && [ "$x_v" = NoError ];  then cls=Agree-Ok; agree_ok=$((agree_ok+1));
+  elif [ "$a_v" = TooShort ] && [ "$x_v" = TooShort ]; then cls=Agree-Ok; agree_ok=$((agree_ok+1));
   elif [ "$a_v" = Error ]  && [ "$x_v" = Error ];    then cls=Agree-Violation; agree_viol=$((agree_viol+1));
   elif [ "$a_v" = Deadlock ] && [ "$x_v" = Deadlock ]; then cls=Agree-Deadlock; agree_dl=$((agree_dl+1));
+  # Both refuse the cell with the same non-verdict exit code (a malformed
+  # configuration, say): an agreement that it cannot be checked, reported
+  # apart from the verdict classes and never as a mismatch.
+  elif [ "$a_v" = "$x_v" ] && echo "$a_v" | grep -q '^Exit' && [ "$a_v" != Exit124 ]; then cls=Agree-Refused; agree_ref=$((agree_ref+1));
   elif [ "$cls" != Declined ]; then
     if [ "$a_v" = "Exit124" ] || [ "$x_v" = "Exit124" ] || [ "$x_v" = Unknown ] || echo "$a_v" | grep -q Exit1; then
       cls=Inconclusive; inconclusive=$((inconclusive+1))
@@ -114,6 +127,7 @@ echo "cells compared : $n"
 echo "  Agree-Ok     : $agree_ok"
 echo "  Agree-Viol.  : $agree_viol"
 echo "  Agree-Deadlk : $agree_dl"
+echo "  Agree-Refus. : $agree_ref"
 echo "  Declined     : $declined"
 echo "  Inconclusive : $inconclusive"
 echo "  MISMATCH     : $mismatch"

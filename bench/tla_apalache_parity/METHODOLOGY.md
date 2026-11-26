@@ -32,6 +32,7 @@ for agreeing violations – equal counterexample length.
 | `Agree-Ok` | both `NoError` |
 | `Agree-Violation` | both `Error` (exit 12); counterexample length must also be equal – both tools search lengths in increasing order, so each one's first counterexample is the shortest |
 | `Agree-Deadlock` | both `Deadlock` |
+| `Agree-Refused` | both refuse the cell with the same non-verdict exit code (2026-11-26: a 255 on both sides was counted a `MISMATCH`) |
 | `MISMATCH` | same cell, different verdict class |
 | `Inconclusive` | `Unknown`, timeout (124), or the oracle itself failed |
 | `Declined` | Nixie 75/120/150 – could not evaluate the spec |
@@ -39,6 +40,20 @@ for agreeing violations – equal counterexample length.
 `Inconclusive` and `Declined` **never count as a match** and are reported
 as separate counts. The run exits non-zero on any `MISMATCH` or on zero
 compared cells.
+
+**Harness defect, fixed 2026-11-26.** The cell line carried one tab-separated
+field per option, and `read` hands the *last* variable the remainder, so a
+cell with two or more options (`--length=5 --config=…`, `--config=… --inv=…`)
+was read as a cell whose spec was the second option and skipped ("SKIP …:
+no --init=Init2"). Every cell ever compared had exactly one option. The
+options are now one field; the cells that were skipped are in the standing
+numbers from this date on (the first full run is recorded on the tracking
+issue, #31). The comparator was wrong in the same direction twice: a Nixie
+`Unknown` (exit 255 with "The outcome is: Unknown") was counted a
+`MISMATCH`, where the table above says `Inconclusive`; and two `TooShort`
+outcomes – the same exit code and the same outcome text – were a mismatch
+too. Both `TooShort` is now `Agree-Ok`; the full run's standing table is in
+the tracking issue.
 
 ## Running
 
