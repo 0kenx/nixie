@@ -178,6 +178,7 @@ impl Context {
         // sensitive to what the term arena holds, so it is not paid for a
         // query the ordinary readings already answer.
         let mut reading: Option<Option<super::printed_check::PrintedReading>> = None;
+        let mut rows = ModelRows::default();
         let mut values = Vec::with_capacity(terms.len());
         for &term in terms {
             let proposed = if !self.published.function_overrides.is_empty()
@@ -207,7 +208,7 @@ impl Context {
                 && let Some(value) = class_values.get(self.class_key(term))
             {
                 value.to_string()
-            } else if let Some(value) = self.unassigned_const_value(term, &model) {
+            } else if let Some(value) = rows.unassigned_const_value(self, term, &model) {
                 // A bare unconstrained constant: report exactly what
                 // `(get-model)` reports for it, witnesses included.
                 value
@@ -655,6 +656,73 @@ impl Context {
                 .find(|(entry_args, _)| *entry_args == arg_strs)
                 .map_or(else_value, |(_, value)| value),
         )
+    }
+}
+
+/// `(get-model)`'s rows for one `(get-value …)` request, rendered at most once.
+///
+/// A bare constant the model left unassigned is answered with exactly what
+/// `(get-model)` prints for it – an uninterpreted-sort witness included – and
+/// that used to be read back by rendering the *whole* model per queried term:
+/// [`Context::get_model`] built every row and
+/// `unassigned_const_value` kept the one at the constant's declaration index.
+/// A batch of n such constants then cost n model renderings, n² rows in all:
+/// 0.37 s of CPU for 512 unconstrained `Int` constants and 2.85 s for 1,024,
+/// against 8 ms for printing the same 1,024-row model with `(get-model)`.
+///
+/// The rows describe the model, not the term being asked, so the first term
+/// that needs one renders them and the rest of the batch reads that rendering
+/// – one `(get-model)`'s worth of work per request, whatever its size, and one
+/// spelling of a constant across the batch (the array renderers scan the term
+/// arena, which the readings below grow, so per-term rendering could describe
+/// one constant two ways inside a single request).
+///
+/// Two properties of the per-term lookup are kept.  A term that is not a
+/// declared constant never renders the model: the declaration index is built
+/// on its own and answers first.  And a model `(get-model)` withholds
+/// (decision (54)) is not cached – that check is cheap, and a later term of
+/// the batch takes the same fall-through the first one did.
+#[derive(Default)]
+pub(super) struct ModelRows {
+    /// Declared constant → its row, in declaration order.
+    index: Option<FxHashMap<TermId, usize>>,
+    /// `(name, sort, value)` per declared constant, at the first query that
+    /// needs one.
+    rows: Option<Vec<(String, String, String)>>,
+}
+
+impl ModelRows {
+    /// The value `(get-model)` reports for `term`, when `term` is a declared
+    /// constant that `model` left unassigned; `None` otherwise.
+    ///
+    /// `get_model`'s uninterpreted-sort witnesses (`@uc_S_n`) are numbered
+    /// across the whole declaration list, which is why the answer is read back
+    /// out of `get_model` itself rather than recomputed.
+    pub(super) fn unassigned_const_value(
+        &mut self,
+        ctx: &Context,
+        term: TermId,
+        model: &crate::solver::Model,
+    ) -> Option<String> {
+        if self.index.is_none() {
+            self.index = Some(
+                ctx.declared_consts
+                    .iter()
+                    .enumerate()
+                    .map(|(position, decl)| (decl.term, position))
+                    .collect(),
+            );
+        }
+        let position = *self.index.as_ref()?.get(&term)?;
+        // A constant the model *did* assign keeps the ordinary evaluation path.
+        if model.get(term).is_some() {
+            return None;
+        }
+        if self.rows.is_none() {
+            self.rows = ctx.get_model();
+        }
+        let (_, _, value) = self.rows.as_ref()?.get(position)?;
+        Some(value.clone())
     }
 }
 

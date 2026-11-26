@@ -75,6 +75,8 @@ impl Context {
         let mut out = ClassValues::default();
         let mut per_sort_next: crate::prelude::HashMap<SortId, usize> =
             crate::prelude::HashMap::new();
+        // One reservation walk for the whole map, however many witnesses follow.
+        let mut witnesses = WitnessNames::default();
 
         for decl in &self.declared_consts {
             let key = self.class_key(decl.term);
@@ -107,7 +109,7 @@ impl Context {
                 let next = per_sort_next.entry(decl.sort).or_insert(0);
                 let index = *next;
                 *next += 1;
-                out.insert(key, self.format_uninterpreted_witness(decl.sort, index));
+                out.insert(key, witnesses.nth(self, decl.sort, index));
             }
         }
 
@@ -144,7 +146,7 @@ impl Context {
             let next = per_sort_next.entry(sort).or_insert(0);
             let witness_index = *next;
             *next += 1;
-            out.insert(key, self.format_uninterpreted_witness(sort, witness_index));
+            out.insert(key, witnesses.nth(self, sort, witness_index));
         }
 
         // Every other term the model assigned a value to, and every literal

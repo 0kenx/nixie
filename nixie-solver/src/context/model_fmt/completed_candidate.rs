@@ -58,6 +58,7 @@ impl Context {
         let mut replacement = FxHashMap::default();
         let mut elements: FxHashMap<(SortId, TermId), TermId> = FxHashMap::default();
         let mut counters: FxHashMap<SortId, usize> = FxHashMap::default();
+        let mut witnesses = WitnessNames::default();
         let mut witness_symbols = FxHashMap::default();
         for (root, parameters) in roots {
             for var in self.terms.free_vars_including_patterns(root) {
@@ -81,7 +82,7 @@ impl Context {
                         witness
                     } else {
                         let next = counters.entry(sort).or_default();
-                        let text = self.format_uninterpreted_witness(sort, *next);
+                        let text = witnesses.nth(self, sort, *next);
                         *next += 1;
                         let name = text
                             .strip_prefix('|')

@@ -17,6 +17,7 @@ use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 
 use super::{Context, RawFuncInterp};
+use witness_names::WitnessNames;
 mod array_model;
 mod candidate_model;
 mod certified_numeric;
@@ -30,6 +31,7 @@ mod printed_check;
 mod printed_eval;
 mod projected_functions;
 mod published;
+mod witness_names;
 pub(super) use published::PublishedModel;
 
 /// Render a nonlinear-real exact value as SMT-LIB2 text.
@@ -584,42 +586,6 @@ impl Context {
 
     fn published_model_withheld(&self) -> bool {
         self.uncertified_model_error().is_some()
-    }
-
-    /// Quote the entire witness symbol, rather than embedding a quoted sort
-    /// token inside a simple symbol.
-    fn format_uninterpreted_witness(&self, sort: SortId, index: usize) -> String {
-        let rendered = self.format_sort_name(sort);
-        let name = rendered
-            .strip_prefix('|')
-            .and_then(|s| s.strip_suffix('|'))
-            .unwrap_or(&rendered);
-        // User @ symbols are legal in Nixie. Number only fresh spellings so
-        // declaring @uc_U_0 cannot turn an abstract value into a self-reference.
-        // Consider declarations, never parse-back artifacts in the term arena:
-        // repeated get-model/get-value calls must retain the same numbering.
-        let prefix = format!("@uc_{name}_");
-        let mut occupied: Vec<u128> = self
-            .declared_consts
-            .iter()
-            .map(|d| d.name.as_str())
-            .chain(self.declared_funs.iter().map(|d| d.name.as_str()))
-            .filter_map(|symbol| {
-                let suffix = symbol.strip_prefix(&prefix)?;
-                let number = suffix.parse::<u128>().ok()?;
-                (number.to_string() == suffix).then_some(number)
-            })
-            .collect();
-        occupied.sort_unstable();
-        occupied.dedup();
-        let mut candidate = index as u128;
-        for reserved in occupied {
-            if reserved > candidate {
-                break;
-            }
-            candidate += 1;
-        }
-        nixie_core::smtlib::format_symbol(&format!("{prefix}{candidate}"))
     }
 
     /// Get the model (if SAT)
@@ -1294,7 +1260,7 @@ impl Context {
                     // a standalone fallback emit the zero-th witness for
                     // the sort.
                     SortKind::Uninterpreted(_) => {
-                        break self.format_uninterpreted_witness(sort, 0);
+                        break WitnessNames::default().nth(self, sort, 0);
                     }
                     // Sort parameters and unapplied parametric sorts have
                     // no ground values.
@@ -1357,23 +1323,6 @@ impl Context {
         crate::solver::model_builder::ground_default_term(&mut self.terms, sort)
     }
 
-    /// The value string [`Context::get_model`] reports for `term`, when `term`
-    /// is a declared constant that the model left unassigned.
-    ///
-    /// `(get-value ...)` and `(get-model)` must never disagree about the same
-    /// constant, and `get_model`'s uninterpreted-sort witnesses (`@uc_S_n`) are
-    /// numbered across the whole declaration list – so the answer is read back
-    /// out of `get_model` itself rather than recomputed.
-    fn unassigned_const_value(&self, term: TermId, model: &crate::solver::Model) -> Option<String> {
-        let index = self.declared_consts.iter().position(|d| d.term == term)?;
-        // A constant the model *did* assign keeps the ordinary evaluation path.
-        if model.get(term).is_some() {
-            return None;
-        }
-        let (_, _, value) = self.get_model()?.into_iter().nth(index)?;
-        Some(value)
-    }
-
     /// Answer a `(get-value (t1 .. tn))` request.
     ///
     /// SMT-LIB 2.6 §4.1.1: the command is available only in `sat` mode, so a
@@ -1413,8 +1362,9 @@ impl Context {
         // survives evaluation unreduced and echoes back, which is the same
         // honest non-answer this path already gives for anything else it
         // cannot fold. (A bare `(get-value (x))` never reaches the completion
-        // at all: `unassigned_const_value` answers it from `get_model` below,
-        // which is where the `root-obj` rendering lives.)
+        // at all: `ModelRows::unassigned_const_value` answers it from the one
+        // `get_model` rendering the whole request shares, which is where the
+        // `root-obj` rendering lives.)
         let unassigned: Vec<(TermId, SortId)> = self
             .declared_consts
             .iter()
@@ -1544,9 +1494,28 @@ impl Context {
             model.set(t, v);
         }
 
+        // The one canonical class → value map `(get-model)` prints from –
+        // the arm the structural path has and this one lacked.  An
+        // uninterpreted-sort term was answered from its model entry instead,
+        // and the solver's entry for a constant of such a sort is a stand-in
+        // term that spells like the constant: a batch holding one Set-sorted
+        // term – which is what routes a request here – answered `(u0 u0)`,
+        // `(u2 u0)` and `((f u0) (f u0))` beside a `(get-model)` printing
+        // `u0 = @uc_U_0`, `u2 = @uc_U_0`, `(f u0) = @uc_U_2`; the same terms
+        // asked without the set term answered the witnesses.  Built once per
+        // request, after the set/bag completions above have settled `model`.
+        let class_values = self.build_class_values(&model);
         let mut values = Vec::with_capacity(terms.len());
+        let mut rows = get_value::ModelRows::default();
         for (&term, term_str) in terms.iter().zip(keys) {
-            let value_str = if let Some(value) = self.unassigned_const_value(term, &model) {
+            let value_str = if self
+                .terms
+                .get(term)
+                .is_some_and(|t| self.is_uninterpreted_sort(t.sort))
+                && let Some(value) = class_values.get(self.class_key(term))
+            {
+                value.to_string()
+            } else if let Some(value) = rows.unassigned_const_value(self, term, &model) {
                 // A bare unconstrained constant: report exactly what
                 // `(get-model)` reports for it, witnesses included.
                 value

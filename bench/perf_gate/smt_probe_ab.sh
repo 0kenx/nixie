@@ -16,7 +16,7 @@
 # with load and are printed for context only.
 #
 # Usage:
-#   bench/perf_gate/smt_probe_ab.sh <candidate> [baseline] [cells-file]
+#   bench/perf_gate/smt_probe_ab.sh <candidate> [baseline] [cells-file ...]
 #   CORE=5 GATE_CAP=60 ... same invocation
 #
 # Baseline defaults to the pinned BASELINE sha's precompile binary (note: for
@@ -26,6 +26,11 @@
 # args>`; blank extra = plain verdict cell, `--conflict-limit N` = fixed-budget
 # cell (counters print on the budget path; they do NOT print on a time-cap
 # timeout, so never let a cell hit `-t`).
+#
+# With no file given, BOTH standing sets run: smt_probe_cells.txt (the
+# theory-assertion path) and array_probe_cells.txt (the lazy array-axiom loop,
+# which the standing set's storecomm cell never reaches – it is decided at 0
+# conflicts).  A theory-path landing is measured against both by default.
 #
 # Verdict or counter mismatch on any cell is a hard failure (exit 1) – for a
 # semantics-inert change the pairing must be bit-identical; for a deliberate
@@ -48,8 +53,14 @@ if [ -z "$BASE" ]; then
     BASE="$SCRIPT_DIR/../../precompile/$SHA/nixie"
 fi
 [ -x "$BASE" ] || { echo "error: baseline binary not found: $BASE" >&2; exit 2; }
-CELLS="${3:-$SCRIPT_DIR/smt_probe_cells.txt}"
-[ -f "$CELLS" ] || { echo "error: cells file not found: $CELLS" >&2; exit 2; }
+if [ $# -ge 3 ]; then
+    CELLS_LIST="${*:3}"
+else
+    CELLS_LIST="$SCRIPT_DIR/smt_probe_cells.txt $SCRIPT_DIR/array_probe_cells.txt"
+fi
+for CELLS in $CELLS_LIST; do
+    [ -f "$CELLS" ] || { echo "error: cells file not found: $CELLS" >&2; exit 2; }
+done
 [ -d "$CORPUS" ] || { echo "error: SMT corpus not found: $CORPUS (set SMT_CORPUS)" >&2; exit 2; }
 command -v perf >/dev/null || { echo "error: perf not installed" >&2; exit 2; }
 
@@ -75,6 +86,8 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 printf '%-44s %-7s %-7s %13s %13s %8s  %s\n' \
     instance base_v cand_v base_inst cand_inst inst_r counters
 fail=0
+for CELLS in $CELLS_LIST; do
+[ "$CELLS" = "$SCRIPT_DIR/smt_probe_cells.txt" ] || printf -- "--- %s\n" "$(basename "$CELLS")"
 while IFS=$'\t' read -r f extra; do
     case "$f" in ''|'#'*) continue ;; esac
     file="$CORPUS/$f"
@@ -96,6 +109,7 @@ while IFS=$'\t' read -r f extra; do
         "$(basename "$f" .smt2 | cut -c1-43)" "$bv" "$cv" "$bi" "$ci" "$r" "$note"
     [ "$r" != "n/a" ] && echo "$bi $ci" >> "$tmp/pairs"
 done < "$CELLS"
+done
 
 awk '{ lr += log($2/$1); n++ }
      END { if (n > 0)

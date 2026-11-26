@@ -92,6 +92,8 @@ impl Context {
         let saved = self.published.clone();
         for size in 1..=4 {
             let mut domains = FxHashMap::default();
+            // Witness indices restart at every size, so every universe counts from its own cursor.
+            let mut witnesses = WitnessNames::default();
             let mut symbols = FxHashMap::default();
             for &sort in &sorts {
                 let values = if sort == self.terms.sorts.bool_sort {
@@ -99,7 +101,7 @@ impl Context {
                 } else {
                     (0..size)
                         .map(|i| {
-                            let name = self.format_uninterpreted_witness(sort, i);
+                            let name = witnesses.nth(self, sort, i);
                             let name = name
                                 .strip_prefix('|')
                                 .and_then(|s| s.strip_suffix('|'))

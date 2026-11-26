@@ -1063,25 +1063,36 @@ fn a_temporal_check_skips_the_deadlock_search_unless_asked() {
     let dir = scratch("lasso-nodeadlock");
     let spec = write_spec(
         &dir,
-        "Ranged",
+        "Cycle",
         r"
----- MODULE Ranged ----
+---- MODULE Cycle ----
 EXTENDS Integers
 VARIABLE x
-Range == {v \in Int: v >= 0 /\ v <= 50}
-Init == x \in Range
-Next == x' = IF x >= 50 THEN x ELSE x + 1
-P == [](x <= 50)
+Init == x = 0
+Next == x' = IF x = 0 THEN 1 ELSE 0
+Never == [](x = 1)
 ====
 ",
     );
     let r = run(&[
         "check",
-        "--temporal=P",
+        "--temporal=Never",
         "--length=6",
         spec.to_str().expect("a path"),
     ]);
-    assert_eq!(r.code, 0, "stderr: {}", r.err);
-    assert!(r.out.contains("no lasso of 6 step(s)"), "{}", r.out);
+    assert_eq!(r.code, 12, "stderr: {}", r.err);
+    // The run never asked the deadlock question (no `Deadlock` outcome).
+    assert!(r.out.contains("a lasso of"), "{}", r.out);
+    assert!(!r.out.contains("Deadlock"), "{}", r.out);
+    // Explicitly asked for, the search runs — and finds none on a lasso
+    // whose loop state has a successor by construction.
+    let r = run(&[
+        "check",
+        "--temporal=Never",
+        "--deadlock",
+        "--length=6",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 12, "stderr: {}", r.err);
     let _ = std::fs::remove_dir_all(&dir);
 }

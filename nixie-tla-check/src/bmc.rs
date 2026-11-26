@@ -689,7 +689,7 @@ impl Bmc {
             Some(l) => (l.init, l.next),
             None => (init_k, next_k),
         };
-        // Positive existentials over the standard infinite sets — and, per
+        // Positive existentials over the standard infinite sets – and, per
         // issue #20 step 4, over **symbolic set names the frame analysis
         // could not derive a universe for** – are skolemized before anything
         // else sees them (`\E no \in Nat : …` is the idiom
