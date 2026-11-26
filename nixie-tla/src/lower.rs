@@ -169,6 +169,25 @@ pub fn skolemize_infinite_existentials_at(root: &KeraRef, root_positive: bool) -
     skolemize_walk(root, root_positive, &counter, &Syms::new())
 }
 
+/// What marks a skolem witness's name: `x!skolem3` is the witness the
+/// skolemizing pass minted for an existential over `x`.
+///
+/// A witness stands for "some member, **at the step where the quantifier is
+/// evaluated**": `\E k \in Nat : x' = x + k` in `Next` picks a `k` at
+/// every step. The encoder gives a witness one SMT variable per step for
+/// exactly that reason – one rigid constant for the whole unrolling would
+/// keep every step to the same `k`, and `0 -> 2 -> 5` under
+/// `k \in {2, 3}` (written `\E k \in Nat : (k = 2 \/ k = 3) /\ x' = x + k`)
+/// would never be reached, for a false "no counterexample".
+pub const SKOLEM_MARK: &str = "!skolem";
+
+/// Whether a free name is a skolem witness (see [`SKOLEM_MARK`]).
+#[must_use]
+pub fn is_skolem_witness(name: &str) -> bool {
+    name.rsplit_once(SKOLEM_MARK)
+        .is_some_and(|(_, tail)| !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// Which **symbolic set names** a positive existential may be skolemized
 /// over (issue #20, step 4): `\E d \in Data : P(d)` becomes
 /// `c \in Data /\ P(c)` – satisfiability-exact, the membership kept as a
@@ -260,7 +279,7 @@ fn skolemize_walk(
                 {
                     let mut c = counter.borrow_mut();
                     *c += 1;
-                    let fresh = Name(format!("{var}!skolem{}", *c));
+                    let fresh = Name(format!("{var}{SKOLEM_MARK}{}", *c));
                     drop(c);
                     let member = Kera::In(Kera::Var(fresh.clone()).rc(), Rc::clone(set)).rc();
                     let renamed = alpha_refresh_binders(&rename_var(body, var, &fresh), counter);
@@ -279,7 +298,7 @@ fn skolemize_walk(
                     // `~\\A x \\in S : P` is `\\E x \\in S : ~P`.
                     let mut c = counter.borrow_mut();
                     *c += 1;
-                    let fresh = Name(format!("{var}!skolem{}", *c));
+                    let fresh = Name(format!("{var}{SKOLEM_MARK}{}", *c));
                     drop(c);
                     let member = Kera::In(Kera::Var(fresh.clone()).rc(), Rc::clone(set)).rc();
                     let neg_body = Kera::Not(Rc::clone(body)).rc();

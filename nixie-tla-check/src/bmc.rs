@@ -2432,10 +2432,15 @@ impl Bmc {
             .filter(|n| !(n.starts_with("__saved_") || n.starts_with("__temporal_")))
             .map(std::string::ToString::to_string)
             .collect();
+        // A skolem witness is the encoding's own name for "some member at
+        // this step", read back per state like a variable; it is not a
+        // parameter of the specification and stays out of the trace's
+        // header.
         let mut params: Vec<String> = self
             .encoder
             .declared_names()
             .filter(|n| !self.encoder.state_names().any(|s| s == *n))
+            .filter(|n| !nixie_tla::lower::is_skolem_witness(n))
             .map(std::string::ToString::to_string)
             .collect();
         // Sorted so two runs over the same specification produce the same
@@ -2505,8 +2510,19 @@ impl Bmc {
                     continue;
                 };
                 let d = self.encoder.domain_at(n, step);
-                let v = crate::trace::decode(t, d, model, tm)
-                    .map_err(|e| format!("`{n}` in state {step}: {e}"))?;
+                let v = match crate::trace::decode(t, d, model, tm) {
+                    Ok(v) => v,
+                    // A skolem witness gets one variable per step, and the
+                    // last state's unprimed one belongs to the transition
+                    // **out of** it, which the trace does not include: the
+                    // query never constrained it, so the model leaves it
+                    // undecided, and there is nothing to read. Elsewhere an
+                    // undecided value is the honest refusal it always was.
+                    Err(_) if step == steps && nixie_tla::lower::is_skolem_witness(n) => {
+                        continue;
+                    }
+                    Err(e) => return Err(format!("`{n}` in state {step}: {e}")),
+                };
                 st.insert(n.clone(), v);
             }
             states.push(st);

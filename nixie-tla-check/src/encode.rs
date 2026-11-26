@@ -347,8 +347,16 @@ impl Encoder {
     /// The SMT variable standing for `name` in state `step`, if it is declared.
     #[must_use]
     pub fn var_at(&self, name: &str, step: u32) -> Option<TermId> {
-        let key = if self.state.contains(name) { step } else { 0 };
-        self.vars.get(&(name.to_string(), key)).copied()
+        let key = (name.to_string(), if self.flexible(name) { step } else { 0 });
+        self.vars.get(&key).copied()
+    }
+
+    /// Whether a name gets one SMT variable **per step**: a `VARIABLE`, or a
+    /// skolem witness (see [`nixie_tla::lower::is_skolem_witness`]), which
+    /// stands for "some member at the step the quantifier is evaluated". A
+    /// `CONSTANT` is one variable for the whole unrolling.
+    fn flexible(&self, name: &str) -> bool {
+        self.state.contains(name) || nixie_tla::lower::is_skolem_witness(name)
     }
 
     /// The names declared as state variables.
@@ -374,8 +382,8 @@ impl Encoder {
     /// which is a different value from the one the specification has.
     #[must_use]
     pub fn domain_at(&self, name: &str, step: u32) -> Option<TermId> {
-        let key = if self.state.contains(name) { step } else { 0 };
-        self.var_domains.get(&(name.to_string(), key)).copied()
+        let key = (name.to_string(), if self.flexible(name) { step } else { 0 });
+        self.var_domains.get(&key).copied()
     }
 
     /// Whether anything encoded so far depended on a function domain that the
@@ -1319,13 +1327,12 @@ impl Encoder {
                 if let Some(v) = self.bound.get(n) {
                     return Ok(Rc::clone(v));
                 }
-                // A rigid name is the same variable at every step; only a
-                // `VARIABLE` gets one per step.
-                let step = if self.state.contains(n.as_str()) {
-                    self.step
-                } else {
-                    0
-                };
+                // A rigid name is the same variable at every step; a
+                // `VARIABLE` – and a skolem witness, which is "some member"
+                // anew at every step the quantifier is evaluated – get one
+                // per step.
+                let flexible = self.flexible(n.as_str());
+                let step = if flexible { self.step } else { 0 };
                 let key = (n.0.clone(), step);
                 if let Some(t) = self.vars.get(&key).copied() {
                     return match self.var_domains.get(&key).copied() {
@@ -1336,7 +1343,7 @@ impl Encoder {
                 let Some(sort) = self.sorts.get(n.as_str()).copied() else {
                     return Err(EncodeError::UnknownSort(n.to_string()));
                 };
-                let smt_name = if self.state.contains(n.as_str()) {
+                let smt_name = if flexible {
                     format!("{n}@{step}")
                 } else {
                     n.0.clone()

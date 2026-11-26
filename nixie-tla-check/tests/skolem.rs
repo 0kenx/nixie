@@ -143,3 +143,85 @@ fn implication_arms_carry_polarity() {
 fn ite_conditions_are_never_rewritten() {
     declines(r"IF \E y \in Nat : y < x THEN TRUE ELSE FALSE");
 }
+
+// ======== one witness per step ========
+
+/// A witness stands for "some member **at the step the quantifier is
+/// evaluated**". `\E k \in Nat : (k = 2 \/ k = 3) /\ x' = x + k` in `Next`
+/// picks a `k` at every step, and `0 -> 2 -> 5` violates `x # 5` at step 2.
+/// With one rigid witness for the whole unrolling, every step kept the same
+/// `k` and the reachable sums were `0, c, 2c` – never 5 – so the checker
+/// printed "no counterexample of 2 step(s) or fewer" (exit 0) for a
+/// specification that has one. The same spec over the literal set `{2, 3}`
+/// (enumerated exactly) found it, which is how the two were told apart.
+#[test]
+fn a_witness_is_picked_anew_at_every_step() {
+    let src = r#"
+---- MODULE Steps ----
+EXTENDS Integers
+VARIABLE x
+Init == x = 0
+Next == \E k \in Nat : (k = 2 \/ k = 3) /\ x' = x + k
+Inv  == x # 5
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    let out = bmc.check(2, &mut tm).expect("checks");
+    assert_eq!(out, Outcome::Violation { step: 2 }, "{out:?}");
+    // And the replay confirms it with the witnesses read back per state:
+    // the evaluator saw `k` be 2 on the first step and 3 on the second.
+    assert_eq!(
+        bmc.verification(),
+        Some(&nixie_tla_check::bmc::Verification::Replayed)
+    );
+    let trace = bmc.counterexample().expect("a trace");
+    // The binder is renamed by the pass (`k#1`), so the witness is found by
+    // its marker; it is one entry per state, and the two steps disagree.
+    let witness = |i: usize| {
+        trace.states[i]
+            .iter()
+            .find(|(n, _)| nixie_tla::lower::is_skolem_witness(n))
+            .map(|(_, v)| v.clone())
+    };
+    let (first, second) = (witness(0), witness(1));
+    assert!(matches!(first, Some(nixie_tla::Value::Int(_))), "{trace:?}");
+    assert_ne!(first, second, "one witness per step: {trace:?}");
+    assert!(
+        matches!(trace.states[2].get("x"), Some(nixie_tla::Value::Int(i)) if *i == 5.into()),
+        "{trace:?}"
+    );
+    // A witness is the encoding's own name, not a parameter of the
+    // specification: it stays out of the trace's header.
+    let itf = bmc.counterexample_itf("Steps").expect("ITF");
+    assert_eq!(itf["vars"], serde_json::json!(["x"]), "{itf}");
+    let params: Vec<String> = itf["params"]
+        .as_array()
+        .expect("params")
+        .iter()
+        .filter_map(|p| p.as_str().map(std::string::ToString::to_string))
+        .collect();
+    assert!(
+        params
+            .iter()
+            .all(|p| !nixie_tla::lower::is_skolem_witness(p)),
+        "{itf}"
+    );
+}
+
+/// The name is the encoder's contract with the skolemizing pass: whatever
+/// the pass mints is recognised, and nothing else is.
+#[test]
+fn the_witness_marker_is_recognised_exactly() {
+    use nixie_tla::lower::is_skolem_witness;
+    assert!(is_skolem_witness("k!skolem1"));
+    assert!(is_skolem_witness("x#2!skolem12"));
+    assert!(!is_skolem_witness("k!skolem"), "no counter");
+    assert!(!is_skolem_witness("k!skolemx"), "not a counter");
+    assert!(!is_skolem_witness("k"), "a plain name");
+    assert!(!is_skolem_witness("N"), "a CONSTANT");
+}

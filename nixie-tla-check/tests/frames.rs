@@ -242,13 +242,19 @@ Inv == x \notin Data
     assert_eq!(claim(src, "Inv"), Outcome::Violation { step: 1 });
 }
 
-/// The honest refusal: with `Data` **completely** unconstrained, the
-/// counterexample exists but the solver leaves the witness string
-/// undecided, and the readback refuses to fabricate a value – the
-/// independent replay could not verify a made-up witness. `Unknown`,
-/// naming the shape, is the correct verdict.
+/// With `Data` **completely** unconstrained, a `CONSTANT` is universally
+/// quantified: the instance `Data = {"e0"}` is legal and `x \notin Data`
+/// fails in the initial state. That step-0 violation needs no witness, and
+/// it is reported and replayed.
+///
+/// This test used to expect `Unknown` here – "the solver leaves the witness
+/// string undecided" – and it was passing for the wrong reason: the witness
+/// was **one rigid constant** for the whole unrolling, so the readback of
+/// state 0 asked for a variable the depth-0 query had never constrained
+/// (it belongs to `Next@0`). With one witness per step, state 0 of a step-0
+/// counterexample has none to read, and the real violation comes through.
 #[test]
-fn unconstrained_witness_refuses_rather_than_fabricates() {
+fn an_unpinned_constant_makes_the_step_zero_violation() {
     let src = r#"
 ---- MODULE Sk3 ----
 CONSTANT Data
@@ -258,13 +264,38 @@ Next == \E d \in Data : x' = d
 Inv == x \notin Data
 ====
 "#;
-    match claim(src, "Inv") {
-        Outcome::Unknown(msg) => assert!(
-            msg.contains("did not decide"),
-            "the refusal names the undecided shape: {msg}"
-        ),
-        other => panic!("expected Unknown, got {other:?}"),
-    }
+    assert_eq!(claim(src, "Inv"), Outcome::Violation { step: 0 });
+}
+
+/// The same with the initial state safe: the step-1 violation goes through
+/// the witness, which the query constrains (`d \in Data /\ x' = d`) and
+/// the readback decides – once per step, from the state the quantifier is
+/// evaluated in.
+#[test]
+fn a_witness_the_query_constrains_reads_back() {
+    let src = r#"
+---- MODULE Sk4 ----
+CONSTANT Data
+VARIABLE x
+Init == x = "e0"
+Next == \E d \in Data : x' = d
+Inv == x = "e0" \/ x \notin Data
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("root");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    assert_eq!(
+        bmc.check(2, &mut tm).expect("checks"),
+        Outcome::Violation { step: 1 }
+    );
+    assert_eq!(
+        bmc.verification(),
+        Some(&nixie_tla_check::bmc::Verification::Replayed)
+    );
 }
 
 /// Issue #20 step 5: a function constructor over `DOMAIN` of a state
