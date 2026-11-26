@@ -209,7 +209,7 @@ argument.
   (`(u1 u1)`) where the same constant asked alone answers its `@uc_U_1`
   witness – `f1200a83` and this tree alike.  Two commands describing two
   models, the failure class `model_fmt` exists to prevent; left for its own
-  landing.
+  landing – and landed the next day, see the addendum.
 * **nextest's `-E` filter runs after the build.** `cargo nextest run
   --release -p nixie-solver -E '...'` first links every test target of the
   package – ~150 fat-LTO binaries here, the better part of an hour – for the
@@ -219,3 +219,40 @@ argument.
   own positional filters and `--test-threads` apply.
 * `/tmp/nxprobe` held the session's scripts and logs (`/tmp` is age-cleaned
   on this box); the array cell set now lives in `bench/perf_gate/`.
+
+## Addendum (2026-11-26) – the legacy get-value bug, and the array cells by default
+
+**`65b6901c` – the legacy `(get-value)` path answers uninterpreted-sort terms
+from the class map.**  The "pre-existing, not touched" bullet above is closed.
+A batch holding a Set-sorted term is routed whole to `format_get_value_legacy`,
+which had no arm for uninterpreted sorts: a constant the model has an entry
+for fell to `model.get(term)`, and the solver's entry for such a constant is a
+stand-in term that spells like it.  With `(= u2 u0)` and `(distinct (f u0)
+(f u1))` asserted, `(get-value (u0 u1 u2 (f u0) (f u1) k s))` answered
+`(u0 u0) (u1 u1) (u2 u0) ((f u0) (f u0)) ((f u1) (f u1))` beside a
+`(get-model)` printing `@uc_U_0 @uc_U_1 @uc_U_0 @uc_U_2 @uc_U_3` – and beside
+the witnesses the same terms answered without `s`; on `f1200a83` and on
+`5cc14910` alike.  The structural path's arm, mirrored: one class → value map
+per request, built after the set/bag completions settle the model.  Blast
+radius by `cmp` against the eight saved baseline outputs of this record: all
+identical; only the Set-sorted probe's uninterpreted answers moved, to the
+model's.  `tests/get_value_batch_rows.rs` pins it (the same batch with and
+without the set term).  Bar: nextest `nixie-solver` + `nixie-cli` 3,371 of
+3,382 (the non-passes the dev-profile itemisation above accounts for, none
+new), parity 171 / 0 / 6, clippy clean, SMT probe over the default corpus
+(now 25 cells) counters identical vs `5cc14910`, geomean 0.9998.
+
+**The array cells run by default.**  `array_probe_cells.txt` had closed the
+harness gap only for a caller who passed it as the third argument.
+`smt_probe_ab.sh` with no cells argument now runs the standing set and the
+array set – 25 cells, one geomean, a header line between the sets – and
+explicit files still override; `smt_probe_cells.txt` marks its storecomm cell
+as the verdict canary it is.
+
+**Trap: the shared volume fills.**  `/media/data` ran out of space twice
+during these runs (other tenants' builds; 263 GB free → 0 → 177 GB within
+the hour).  A link that dies of it reports as `ld.lld … Bus error` /
+`collect2: error: ld returned 135`, five test binaries at a time, and cargo
+relinks them on the next run once space is back – check `df` before reading
+a wave of link failures as code.
+

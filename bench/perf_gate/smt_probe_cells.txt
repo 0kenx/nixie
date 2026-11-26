@@ -1,3 +1,6 @@
+# A verdict canary only: decided at 0 conflicts, before the lazy array-axiom loop
+# runs.  The cells that reach that loop are array_probe_cells.txt, which the
+# harness runs by default alongside this file.
 QF_AUFLIA/storecomm/storecomm_t1_np_nf_ni_00050_001.cvc.smt2	
 QF_AUFLIA/20170829-Rodin/smt101358492275879472.smt2	
 QF_LIA/CAV_2009_benchmarks/smt/25-vars/problem__001.smt2	
