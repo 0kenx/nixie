@@ -126,6 +126,23 @@ pub(in crate::ast::manager) mod substitute;
 #[cfg(test)]
 mod tests;
 
+/// Past this many distinct free variables, "emitted already?" is answered
+/// by a hash index beside the output; below it, by scanning the output
+/// vector, as it always was.
+///
+/// Both answers are correct on either side; this is the measured crossover
+/// of their cost.  The scan is a contiguous `u32` compare that the compiler
+/// vectorises, so it is the CHEAPER of the two up to about a hundred
+/// distinct variables (in-process interleaved A/B, 8 occurrences each,
+/// 2026-11-26: indexing everywhere cost 1.18-1.30x at 8-64 variables on
+/// this box's E-cores and 1.00-1.04x on its P-cores, 0.97x at 128, 0.36x at
+/// 1,024) – and most traversals in a solve are small (the MBQI grounding
+/// guard and `is_ground` ask about single terms).  Past it the scan is
+/// quadratic in the variables (24,306 in one SchurNumbers assertion: 295
+/// million comparisons), which is what the index is for.  See
+/// `docs/studies/2026-11-26-free-vars-scope-retraction-slice6-scan.md`.
+const FREE_VARS_INDEX_MIN: usize = 128;
+
 /// One pending step of the iterative free-variable walk driven by
 /// [`TermManager::free_vars`].
 ///
@@ -219,6 +236,7 @@ impl TermManager {
     /// parameterized by whether trigger patterns are in scope.
     fn free_vars_with(&self, id: TermId, patterns: PatternPolicy) -> Vec<TermId> {
         let mut vars = Vec::new();
+        let mut seen: FxHashMap<TermId, ()> = FxHashMap::default();
         let mut visited: FxHashMap<TermId, ()> = FxHashMap::default();
         let mut bound: FxHashMap<(Spur, SortId), u32> = FxHashMap::default();
         let mut work: Vec<FreeVarStep> = vec![FreeVarStep::Visit(id)];
@@ -227,6 +245,7 @@ impl TermManager {
                 step,
                 patterns,
                 &mut vars,
+                &mut seen,
                 &mut visited,
                 &mut bound,
                 &mut work,
@@ -251,11 +270,24 @@ impl TermManager {
     /// `patterns` is fixed for the whole walk by whichever public entry
     /// point started it, so it never invalidates `visited` (which is
     /// per-call).
+    ///
+    /// `vars` is the output, in first-occurrence order; `seen` is the
+    /// membership index of `vars` once it holds [`FREE_VARS_INDEX_MIN`]
+    /// variables (empty until then – the output's own `contains` answers;
+    /// see the constant for the crossover).
+    ///
+    /// An occurrence is recorded as seen only once it is known to be FREE.
+    /// A `Var` node has one `TermId` wherever it occurs, so a bound
+    /// (shadowed) occurrence recorded as seen would hide a later free
+    /// occurrence of the same variable – the under-reporting
+    /// `collect_free_vars`'s MBQI guard must never see.
+    #[allow(clippy::too_many_arguments)]
     fn run_free_var_step(
         &self,
         step: FreeVarStep,
         patterns: PatternPolicy,
         vars: &mut Vec<TermId>,
+        seen: &mut FxHashMap<TermId, ()>,
         visited: &mut FxHashMap<TermId, ()>,
         bound: &mut FxHashMap<(Spur, SortId), u32>,
         work: &mut Vec<FreeVarStep>,
@@ -291,8 +323,20 @@ impl TermManager {
                         let is_bound = self
                             .get(id)
                             .is_some_and(|t| bound.get(&(*name, t.sort)).is_some_and(|&n| n > 0));
-                        if !is_bound && !vars.contains(&id) {
-                            vars.push(id);
+                        if !is_bound {
+                            let known = if vars.len() < FREE_VARS_INDEX_MIN {
+                                vars.contains(&id)
+                            } else {
+                                // First variable past the crossover: index
+                                // what the scan has emitted so far.
+                                if seen.is_empty() {
+                                    seen.extend(vars.iter().map(|&v| (v, ())));
+                                }
+                                seen.insert(id, ()).is_some()
+                            };
+                            if !known {
+                                vars.push(id);
+                            }
                         }
                     }
                     Some(
