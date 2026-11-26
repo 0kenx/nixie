@@ -5137,8 +5137,12 @@ fn build_infix(op: &str, a: KeraRef, b: KeraRef, span: Span, fresh: &mut usize) 
         "\\" => Kera::SetBin(SetOp::Difference, a, b),
         "\\subseteq" => {
             // The one set relation without a kernel node: it is a quantifier
-            // in every encoding, so expanding it here loses nothing.
-            let v = Name("sub#0".to_string());
+            // in every encoding, so expanding it here loses nothing. The
+            // binder is fresh per expansion, from the lowerer's own counter:
+            // a fixed name made every `\subseteq` in a formula share one
+            // variable, and the binder-uniqueness invariant then declined
+            // the whole specification (`a \subseteq b /\ c \subseteq d`).
+            let v = mk_fresh(fresh, "sub");
             Kera::Forall {
                 var: v.clone(),
                 set: a,

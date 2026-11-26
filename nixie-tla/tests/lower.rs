@@ -649,3 +649,37 @@ fn contains_opaque(t: &nixie_tla::KeraRef, name: &str) -> bool {
     }
     false
 }
+
+/// Two `\subseteq` in one formula are two quantifiers with two variables. The
+/// expansion used to mint a fixed binder (`sub#0`) for every occurrence, so a
+/// specification with two subset relations failed the binder-uniqueness
+/// invariant at the checker – `Next` could not be lowered – and was declined
+/// as a whole: `bosco.tla`, `EnvironmentController.tla` and 20-odd more
+/// configurations in the corpus.
+#[test]
+fn each_subseteq_expansion_gets_its_own_binder() {
+    let src = module(
+        r#"
+S == {1, 2}
+Both == S \subseteq S /\ {1} \subseteq S
+Nested == \A t \in {S} : t \subseteq S /\ S \subseteq t
+"#,
+    );
+    for name in ["Both", "Nested"] {
+        let k = lower(&src, name);
+        assert!(
+            nixie_tla::lower::binder_uniqueness(&k).is_ok(),
+            "{name}: {k:?}"
+        );
+    }
+    // And the expansion is still the quantifier it always was, with the two
+    // binders distinct: every `\A sub#N` binding in the term has its own N.
+    let k = show(&lower(&src, "Both"));
+    let bound: Vec<&str> = k
+        .split(r"\A sub#")
+        .skip(1)
+        .map(|rest| rest.split(' ').next().unwrap_or(""))
+        .collect();
+    assert_eq!(bound.len(), 2, "{k}");
+    assert_ne!(bound[0], bound[1], "{k}");
+}
