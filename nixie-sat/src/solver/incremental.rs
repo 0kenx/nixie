@@ -9,8 +9,44 @@
 //! on the trail (see [`Solver::restore_to_trail_size`]) and clauses learned while
 //! an unjustified level-0 unit constraint was on the trail (see
 //! [`Solver::forget_learned_since`]).
+//!
+//! It also holds the clause retraction those rollbacks share
+//! ([`Solver::retract_clauses`]: `pop`'s scope and `forget_learned_since`'s
+//! probe tail).
 
 use super::*;
+
+/// An implication list holding at most this many live edges is cleared of the
+/// batch's edges by the per-edge removal
+/// ([`BinaryImplicationGraph::remove_clause_edges_short`]), however many of
+/// the batch's clauses it holds: at most this many edges squared element
+/// visits (64) per list, against the per-edge bookkeeping of the batched
+/// pass (see [`Solver::retract_clauses`]).
+const RETRACT_PER_EDGE_MAX_LEN: usize = 8;
+
+/// Scratch of [`Solver::retract_clauses`] (see `Solver::retract_scratch`).
+///
+/// Kept across calls so a push / probe / pop loop does not re-allocate it:
+/// the arrays are grown on demand and only the positions a batch touches
+/// are written, so the memory beyond them stays untouched.
+#[derive(Debug, Default)]
+pub(crate) struct RetractScratch {
+    /// Marked clause ids, by `ClauseId::index()` – the `dead` mark layout
+    /// [`crate::solver::BinaryImplicationGraph::compact_dead`] reads.  Set
+    /// for the ids a batch is retracting through the batched pass (and for
+    /// every id of the batch when the learned-clause registry is filtered
+    /// against it); all `false` between batches.
+    pub(super) dead: Vec<bool>,
+    /// Whether a trigger literal has an entry in `triggers` and that entry
+    /// has not been handled yet (by `Lit::code()`).  All `false` between
+    /// batches.
+    pub(super) trigger_pending: Vec<bool>,
+    /// One `(trigger literal, clause)` per edge of a batch binary clause on
+    /// a LONG list ([`RETRACT_PER_EDGE_MAX_LEN`]), in clause order: a
+    /// trigger's FIRST entry names its first batch clause, every later one
+    /// records that the list holds several ([`ClauseId::NULL`]).
+    pub(super) triggers: Vec<(Lit, ClauseId)>,
+}
 
 impl Solver {
     /// Number of learned clauses currently tracked.
@@ -42,17 +78,133 @@ impl Solver {
             return;
         }
         let to_remove: Vec<ClauseId> = self.learned_clause_ids.split_off(checkpoint);
-        for id in to_remove {
-            // Purge the retracted clause's binary-implication-graph edges before
-            // removing it. The binary graph is a direct fast-path index that (at
-            // its hot-loop call sites) trusts its edges; leaving a stale edge for
-            // a forgotten binary learned clause would let it keep implying/​
-            // conflicting after the clause is gone. Also record the deletion in
-            // the DRAT proof (no-op unless enabled) while the literals are live.
-            self.purge_binary_edges(id);
+        // Purges each forgotten clause's binary-implication-graph edges
+        // before removing it (the graph is a direct fast-path index that, at
+        // its hot-loop call sites, trusts its edges; a stale edge for a
+        // forgotten binary learned clause would keep implying/conflicting
+        // after the clause is gone) and records each deletion in the DRAT
+        // proof (no-op unless enabled) while the literals are live.  The
+        // tail was split off the registry above, so there is nothing left
+        // to filter.
+        self.retract_clauses(&to_remove, false);
+    }
+
+    /// Retract a batch of clauses: for every binary clause in `ids`, its
+    /// binary-implication-graph edges; then, for every clause in `ids` in
+    /// order, its DRAT deletion record (while its literals are still
+    /// readable) and its removal from the clause database.
+    ///
+    /// On the graph, a list holding two or more of the batch's edges is
+    /// compacted once ([`BinaryImplicationGraph::remove_marked_edges`]):
+    /// the per-clause removal rescans the list for each of them, which is
+    /// quadratic while the batch's clauses share a trigger – 16,000 binary
+    /// clauses under one trigger took 28 ms to pop against 0.2 ms when
+    /// their triggers were disjoint, and a real scope (a search's learned
+    /// clauses over an asserted formula of bit-blasted gates) is the
+    /// shared-trigger shape.  Every other list keeps the per-edge removal,
+    /// which is the cheaper constant there: the short ones
+    /// ([`RETRACT_PER_EDGE_MAX_LEN`]) as they are met, a long one when its
+    /// single batch edge is known to stand alone.  Either way the surviving
+    /// edge sequence is the one the per-clause removals leave: both drop
+    /// exactly this batch's edges and keep every other edge in place.
+    ///
+    /// With `filter_learned`, the learned-clause registry is filtered
+    /// against the batch's marks once (`pop`), instead of once per
+    /// retracted clause – the larger of the two quadratic terms: a scope of
+    /// 80,000 clauses with 4,245 registered learned clauses compared 340
+    /// million times, 86 ms per pop.
+    ///
+    /// A null or already-removed id is skipped by the parts that would read
+    /// its clause, as the per-clause code did.
+    pub(super) fn retract_clauses(&mut self, ids: &[ClauseId], filter_learned: bool) {
+        let mut scratch = core::mem::take(&mut self.retract_scratch);
+        let RetractScratch {
+            dead,
+            trigger_pending,
+            triggers,
+        } = &mut scratch;
+        triggers.clear();
+        let mut any_marked = false;
+        let mark = |dead: &mut Vec<bool>, id: ClauseId, any_marked: &mut bool| {
+            if id.index() >= dead.len() {
+                dead.resize(id.index() + 1, false);
+            }
+            dead[id.index()] = true;
+            *any_marked = true;
+        };
+        // A registry filter reads every id of the batch, so they all go
+        // into the marks; otherwise only the ids sent through the batched
+        // pass below are marked, as they are met.
+        let mark_all = filter_learned && !self.learned_clause_ids.is_empty();
+        // One pass, in the per-clause order: a binary clause's edges (read
+        // while its literals still are), then its proof deletion and its
+        // removal from the database.
+        for &id in ids {
+            if id.is_null() {
+                continue;
+            }
+            if mark_all {
+                mark(dead, id, &mut any_marked);
+            }
+            let binary = self
+                .clauses
+                .get(id)
+                .filter(|c| c.lits.len() == 2 && !c.deleted)
+                .map(|c| (c.lits[0], c.lits[1]));
+            if let Some((a, b)) = binary {
+                for trigger in [a.negate(), b.negate()] {
+                    if self.binary_graph.remove_clause_edges_short(
+                        trigger,
+                        id,
+                        RETRACT_PER_EDGE_MAX_LEN,
+                    ) {
+                        continue;
+                    }
+                    if !mark_all {
+                        mark(dead, id, &mut any_marked);
+                    }
+                    if trigger_pending.len() < 2 * self.num_vars {
+                        trigger_pending.resize(2 * self.num_vars, false);
+                    }
+                    let pending = &mut trigger_pending[trigger.code() as usize];
+                    triggers.push((trigger, if *pending { ClauseId::NULL } else { id }));
+                    *pending = true;
+                }
+            }
             self.drat_delete(id);
             self.clauses.remove(id);
         }
+        // Walk the collected entries backwards.  A trigger's LAST entry is
+        // then the first one reached, and it says which removal the list
+        // takes; the flag clears there, so the trigger's earlier entries –
+        // reached afterwards – find it clear and skip.  Every collected
+        // trigger has an entry, so every flag is back to `false` at the
+        // end.  (A long list is only shortened here, so no edge of it was
+        // sent down the per-edge path above.)
+        for &(trigger, sole) in triggers.iter().rev() {
+            let pending = &mut trigger_pending[trigger.code() as usize];
+            if !*pending {
+                continue;
+            }
+            *pending = false;
+            if sole.is_null() {
+                self.binary_graph.remove_marked_edges(dead, trigger);
+            } else {
+                self.binary_graph.remove_clause_edges(trigger, sole);
+            }
+        }
+        if mark_all {
+            self.learned_clause_ids
+                .retain(|&id| !dead.get(id.index()).copied().unwrap_or(false));
+        }
+        if any_marked {
+            for &id in ids {
+                if let Some(marked) = dead.get_mut(id.index()) {
+                    *marked = false;
+                }
+            }
+        }
+        self.retract_scratch = scratch;
     }
 
     /// Current trail size (number of assigned literals across all levels).
