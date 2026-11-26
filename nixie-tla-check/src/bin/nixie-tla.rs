@@ -105,8 +105,9 @@ struct Args {
     /// the corpus harness gets from `NIXIE_BMC_CONFLICTS`. Unset: no budget.
     max_conflicts: Option<u64>,
     /// `--temporal=NAME`: check the temporal property `NAME` with the lasso
-    /// encoding (issue #29). Exactly one name; mutually exclusive with
-    /// `--inv`. Apalache's `check --temporal=P`.
+    /// encoding (issue #29), in a pass of its own beside the invariants.
+    /// Overrides `PROPERTY` in the configuration, with a warning. Apalache's
+    /// `check --temporal=P`.
     temporal: Option<String>,
     /// `--paranoid` (issue #20, step 6): probe every frame's containment
     /// obligation at every step – `Init /\ Trans_{<k} /\ ~(v@k \subseteq
@@ -126,7 +127,7 @@ USAGE:
 OPTIONS:
     --temporal=NAME     check the temporal property NAME (lasso encoding;
                         a counterexample is a lasso; no lasso within the
-                        bound is NOT a proof) -- exclusive with --inv
+                        bound is NOT a proof); overrides PROPERTY in a --config
     --inv=NAMES         the invariant(s) to check, comma-separated
     --init=NAME         the initial-state predicate        [default: Init]
     --next=NAME         the next-state action              [default: Next]
@@ -149,13 +150,15 @@ OPTIONS:
 
 A TLC configuration is read only when --config names it, which is Apalache's
 default since 0.25.0; a SPEC.cfg next to the spec produces a hint, nothing
-more. In the file, INIT/NEXT/SPECIFICATION/INVARIANT, CONSTANTS, CONSTRAINT,
-ACTION_CONSTRAINT and CHECK_DEADLOCK are honoured, and a command-line option
-overrides the file's value with a warning. SPECIFICATION must name a formula
-of the form Init /\\ [][Next]_vars. A fairness conjunct in it is announced and
-not assumed: invariants and deadlocks are checked on the safety fragment, as
-TLC and Apalache check them, and a temporal property is declined (75). Any
-other temporal clause is declined by name (75), never ignored.
+more. In the file, INIT/NEXT/SPECIFICATION/INVARIANT, PROPERTY, CONSTANTS,
+CONSTRAINT, ACTION_CONSTRAINT and CHECK_DEADLOCK are honoured, and a
+command-line option overrides the file's value with a warning. A check is
+one pass for the invariants and deadlocks, then one per temporal property.
+SPECIFICATION must name a formula of the form Init /\\ [][Next]_vars. A
+fairness conjunct in it is announced and not assumed: invariants and
+deadlocks are checked on the safety fragment, as TLC and Apalache check
+them, and a temporal property is declined (75). Any other temporal clause
+is declined by name (75), never ignored.
 
 EXIT CODES
     0 no counterexample within the bound   12 counterexample found
@@ -339,11 +342,6 @@ fn parse_args() -> Result<Args, String> {
                         // flat mirror, below.
                         let v = need(value)?;
                         a.run_dir = Some(PathBuf::from(v));
-                    }
-                    "temporal" => {
-                        return Err("error: `--temporal` properties are not supported yet; \
-                             invariants (`--inv`) and deadlock checking are"
-                            .to_string());
                     }
                     "timeout-smt" => {
                         return Err(
@@ -848,34 +846,54 @@ fn run(args: &Args) -> u8 {
     } else {
         true
     };
-    // `--temporal` is its own role: exactly one property, and never
-    // together with an invariant list (the two ask different questions of
-    // the same trace length; Apalache refuses the mix).
+    // ======== what this run is made of ========
+    //
+    // A `check` is one or more **passes** over the same configuration: the
+    // invariants and the deadlock question over the ordinary unrolling, and
+    // one pass per temporal property over the lasso encoding (issue #29).
+    // A property is named by `--temporal=P` or by the configuration's
+    // `PROPERTY`/`PROPERTIES`, which Apalache checks too. Until they were
+    // read here a configuration could say `NoError` with a liveness property
+    // in it unexamined – the silent-gap shape, in the direction that matters.
+    // The command line wins over the file, with a warning, as `--inv` does
+    // over `INVARIANT`.
+    let mut properties: Vec<String> = config.properties.clone();
     if let Some(t) = &args.temporal {
-        if args.inv.is_some() || !cfg_invariants.is_empty() {
+        if !properties.is_empty() {
             eprintln!(
-                "error: --temporal={t} cannot be combined with --inv (or INVARIANT in the config)"
+                "warning: --temporal={t} overrides PROPERTY from the config ({})",
+                properties.join(",")
             );
-            return EXIT_SYSTEM;
         }
+        properties = vec![t.clone()];
+    }
+    // Every property must resolve before anything is checked: a subset would
+    // answer a narrower question than the caller asked.
+    for t in &properties {
         if !names_visible_zero_arg(&spec, module, t) {
             eprintln!("error: the module has no zero-argument definition named `{t}`");
             return EXIT_EVAL;
         }
-        // A liveness property under a specification that states fairness: an
-        // unfair lasso is not a behaviour of the specification, and a lasso
-        // search that ignored the clause would report it as one. Refused by
-        // name (issue #47 is honoring it); the invariants are still checked.
-        if !cfg_fairness.is_empty() {
-            let clauses = fair_text(&cfg_fairness);
-            eprintln!(
-                "error: the specification states fairness ({clauses}) and this checker cannot \
-                 assume it: a lasso found without it may be unfair, and so may not be a \
-                 behaviour of the specification at all. The temporal property `{t}` is not \
-                 checked; invariants (`--inv`) are, on the safety fragment"
-            );
-            return EXIT_EVAL;
-        }
+    }
+    // A liveness property under a specification that states fairness: an
+    // unfair lasso is not a behaviour of the specification, and a lasso
+    // search that ignored the clause would report it as one. Refused by
+    // name (issue #47 is honoring it); the invariants are still checked.
+    if !cfg_fairness.is_empty() && !properties.is_empty() {
+        let clauses = fair_text(&cfg_fairness);
+        eprintln!(
+            "error: the specification states fairness ({clauses}) and this checker cannot \
+             assume it: a lasso found without it may be unfair, and so may not be a \
+             behaviour of the specification at all. The temporal propert{} {} not checked; \
+             invariants (`--inv`) are, on the safety fragment",
+            if properties.len() == 1 { "y" } else { "ies" },
+            properties
+                .iter()
+                .map(|p| format!("`{p}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        return EXIT_EVAL;
     }
     // Invariants and deadlocks under a specification that states fairness:
     // checked on the safety fragment, which gives the same answers – a
@@ -901,15 +919,16 @@ fn run(args: &Args) -> u8 {
         }
         (Some(cli), true) => cli.clone(),
         (None, false) => cfg_invariants,
-        // No invariant is legal **iff** deadlock checking is on: a
-        // deadlock-only check is a complete question on its own. With
-        // deadlocks off too, there is nothing to check at all.
-        (None, true) if check_deadlocks => Vec::new(),
+        // No invariant is legal **iff** deadlock checking is on or a property
+        // is to be checked: a deadlock-only check is a complete question on
+        // its own, and so is a liveness property. With none of the three,
+        // there is nothing to check at all.
+        (None, true) if check_deadlocks || !properties.is_empty() => Vec::new(),
         (None, true) => {
             eprintln!(
                 "error: nothing to check: name an invariant with `--inv` (or \
-                 put INVARIANT in the --config file), or leave deadlock \
-                 checking on"
+                 put INVARIANT in the --config file), a temporal property with \
+                 `--temporal`, or leave deadlock checking on"
             );
             return EXIT_SYSTEM;
         }
@@ -927,213 +946,109 @@ fn run(args: &Args) -> u8 {
             return EXIT_EVAL;
         }
     }
-    let inv_names: Vec<&str> = inv.iter().map(String::as_str).collect();
 
     let cinit: Vec<&str> = args.cinit.as_deref().into_iter().collect();
-    let roles = Roles {
+    // The invariants pass runs when there is an invariant to check or a
+    // deadlock question to ask; then one pass per temporal property.
+    let mut passes: Vec<Pass<'_>> = Vec::new();
+    if !inv.is_empty() || check_deadlocks {
+        passes.push(Pass::Invariants);
+    }
+    passes.extend(properties.iter().map(String::as_str).map(Pass::Property));
+    let inv_names: Vec<&str> = inv.iter().map(String::as_str).collect();
+    let ctx = PassCtx {
+        args,
+        spec: &spec,
+        module,
+        scope: Scope {
+            root: module,
+            // Under `SPECIFICATION Spec` the two roles are read in `Spec`'s
+            // own module (issue #46); everywhere else in the root's, as TLC
+            // reads an `INIT`/`NEXT`/`INVARIANT` name.
+            home: home.unwrap_or(module),
+        },
+        config: &config,
         init: &init,
         next: &next,
         inv: &inv_names,
-        constraints: &cinit,
+        cinit: &cinit,
+        check_deadlocks,
+        multi: passes.len() > 1,
     };
 
     let mut tm = TermManager::new();
-    // Under `SPECIFICATION Spec` the two roles are read in `Spec`'s own
-    // module (issue #46); everywhere else they are read in the root's, as
-    // TLC reads an `INIT`/`NEXT`/`INVARIANT` name.
-    let scope = Scope {
-        root: module,
-        home: home.unwrap_or(module),
-    };
-    let prepared = match &args.temporal {
-        Some(t) => Bmc::prepare_temporal_in(&spec, scope, &init, &next, t, &config, &mut tm),
-        None => Bmc::prepare_with_config_in(&spec, scope, roles, &config, &mut tm),
-    };
-    let mut bmc = match prepared {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("{e}");
-            return exit_for(&e);
-        }
-    };
-    // A temporal check does not look for deadlocks unless asked (issue
-    // #29/#44): the lasso encoding's "state with no successor" is a
-    // question about the **encoding's** variables — a loop state has a
-    // successor by construction, and the prefix's is the ordinary
-    // checker's question — while the search for one is, on a lasso spec
-    // with a ranged variable, the hardest query of the whole run (the
-    // `Range == {v \in Int : 0 <= v <= 50}` liveness cells spent 0.5 s,
-    // 8 s, 11 s per depth on it, against < 1 ms on the property itself).
-    let check_deadlocks = check_deadlocks && (args.temporal.is_none() || args.deadlock);
-    bmc.set_check_deadlocks(check_deadlocks);
-    bmc.set_paranoid(args.paranoid);
-    if let Some(n) = args.max_conflicts {
-        bmc.set_conflict_limit(n);
-    }
-
-    // The view: a state-level definition whose value at a step is what the
-    // author considers "the same" counterexample. Anything above state
-    // level (an action or temporal view) cannot be evaluated per step and
-    // is refused by name.
-    if let Some(v) = &args.view {
-        let levels = root_levels(&spec);
-        match levels.trusted_level_of(v) {
-            Some(lev) if lev <= nixie_tla_syntax::Level::State => {}
-            Some(_) => {
-                eprintln!("error: --view={v} is above state level; a view is evaluated per state");
-                return EXIT_SYSTEM;
-            }
-            None => {
-                eprintln!("error: --view={v} could not be level-checked; refusing it");
-                return EXIT_SYSTEM;
-            }
-        }
-        let mut low = nixie_tla::Lowerer::new();
-        low.add_spec(&spec);
-        match low.lower_named(module, v) {
-            Ok(body) => bmc.set_view(body),
-            Err(e) => {
-                eprintln!("error: --view={v} could not be lowered: {e}");
-                return EXIT_SYSTEM;
-            }
-        }
-    }
-
     if args.simulate {
+        // Sampling walks behaviours; it does not search for a lasso, and a
+        // property in the configuration is neither checked nor silently
+        // dropped: said out loud, and the run is about the sampled runs.
+        if !properties.is_empty() {
+            eprintln!(
+                "note: simulate does not check temporal properties; {} not checked",
+                properties
+                    .iter()
+                    .map(|p| format!("`{p}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        let mut bmc = match prepare(&ctx, Pass::Invariants, &mut tm) {
+            Ok(b) => b,
+            Err(code) => return code,
+        };
         return run_simulate(args, &mut bmc, &mut tm);
     }
 
-    // Up to `--max-error` counterexamples. A bounded query has one *shortest*
-    // counterexample, so asking again without ruling that one out returns it
-    // forever; each trace found is blocked before the next query. Blocking
-    // only narrows the search, so a later trace is still a real model of the
-    // encoded formula – and is still replayed before it is written.
     let mut found = 0usize;
-    let mut undecided: Option<String> = None;
-    while found < args.max_errors {
-        let outcome = match bmc.check(args.length, &mut tm) {
-            Ok(o) => o,
-            Err(e) => {
-                eprintln!("{e}");
-                return exit_for(&e);
-            }
-        };
-        match outcome {
-            Outcome::NoViolationWithin(k) => {
-                if found == 0 {
-                    match &args.temporal {
-                        // A lasso search's bound: no lasso of k steps or
-                        // fewer violates the property. Not a proof — a
-                        // longer lasso may.
-                        Some(t) => println!(
-                            "no lasso of {k} step(s) or fewer violates `{t}`; this is a \
-                             bound, not a proof that the property holds"
-                        ),
-                        None => println!("no counterexample of {k} step(s) or fewer"),
-                    }
-                }
+    let mut undecided: Vec<String> = Vec::new();
+    let mut deadlock: Option<u32> = None;
+    for (i, pass) in passes.iter().enumerate() {
+        if ctx.multi {
+            println!("checking {}", pass.what(ctx.inv));
+        }
+        match run_pass(&ctx, *pass, &mut tm, &mut found) {
+            Ok(PassEnd::Deadlock(step)) => {
+                deadlock = Some(step);
                 break;
             }
-            // A reachable state with no successor. The same exit code as a
-            // counterexample – Apalache's – with the distinction in the
-            // message: "Deadlock", not "Error".
-            Outcome::Deadlock { step } => {
-                println!("The outcome is: Deadlock");
-                println!(
-                    "a reachable state after {step} step(s) has no successor; the no-successor claim is a proved `Unsat`, not a sample"
-                );
-                return EXIT_COUNTEREXAMPLE;
-            }
-            // Every behaviour stopped short of the bound. Exit 0 – Apalache's
-            // code – with the outcome line saying what actually happened,
-            // because "no error" and "nothing ran that far" are different
-            // facts a caller may treat differently.
-            Outcome::ExecutionsTooShort => {
-                if found == 0 {
-                    println!("The outcome is: ExecutionsTooShort");
-                    println!(
-                        "no behaviour of the full length exists; with deadlock checking off this is not a statement about errors"
-                    );
-                }
-                break;
-            }
-            // The specification has no behaviours. Not "no error": an
-            // invariant vacuously holds over an empty behaviour set, and a
-            // caller that greps for the zero exit would congratulate itself
-            // on a specification whose assumptions cannot all be true.
-            Outcome::AssumptionsUnsatisfiable => {
-                eprintln!(
-                    "error: the assumptions are contradictory; the specification has no behaviours"
-                );
-                return EXIT_SYSTEM;
-            }
-            Outcome::Unknown(why) => {
-                undecided = Some(why);
-                break;
-            }
-            Outcome::Violation { step } => {
-                found += 1;
-                let broken = bmc.violated_invariants();
-                let which = if broken.len() == 1 {
-                    broken[0].clone()
-                } else {
-                    format!("[{}]", broken.join(", "))
-                };
-                match bmc.loop_start() {
-                    Some(l) => println!(
-                        "counterexample {found}: a lasso of {step} step(s) whose last state \
-                         returns to state {l}, violating `{which}`"
-                    ),
-                    None => println!("counterexample {found}: {step} step(s), invariant {which}"),
-                }
-                if let Some(v) = bmc.verification() {
-                    println!("  independently replayed: {}", describe(v));
-                }
-                let out_dir = args.out_dir.as_ref().or(args.run_dir.as_ref());
-                if let Some(dir) = out_dir {
-                    let name = args
-                        .spec
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("spec");
-                    match write_itf_as("violation", &bmc, dir, name, found) {
-                        Ok(path) => println!("  wrote {path}"),
-                        Err(code) => return code,
-                    }
-                }
-                if found >= args.max_errors {
-                    break;
-                }
-                // Nothing to say "not that one" with means asking again would
-                // hand back the same states. Stop, and say why.
-                if !bmc.block_counterexample(&mut tm) {
-                    eprintln!(
-                        "note: that counterexample could not be ruled out, so no further \
-                         traces were searched for"
-                    );
-                    break;
-                }
-            }
+            Ok(PassEnd::Unknown(why)) => undecided.push(why),
+            Ok(PassEnd::Found | PassEnd::Clean | PassEnd::TooShort) => {}
+            Err(code) => return code,
+        }
+        // `--max-error` counts counterexamples across the whole run, as
+        // Apalache's does; what is left is not looked for, and said so.
+        if ctx.multi && i + 1 < passes.len() && found >= args.max_errors {
+            eprintln!(
+                "note: --max-error={} reached; the remaining passes are not run",
+                args.max_errors
+            );
+            break;
         }
     }
 
+    if deadlock.is_some() {
+        println!("The outcome is: Deadlock");
+        println!("EXITCODE: ERROR ({EXIT_COUNTEREXAMPLE})");
+        return EXIT_COUNTEREXAMPLE;
+    }
     if found == 0 {
-        if let Some(why) = undecided {
-            eprintln!("undecided: {why}");
+        if !undecided.is_empty() {
+            for why in &undecided {
+                eprintln!("undecided: {why}");
+            }
             println!("The outcome is: Unknown");
             println!("EXITCODE: ERROR (255)");
             return EXIT_SYSTEM;
         }
-        if args.temporal.is_some() {
-            // Apalache's exit code for a passing `--temporal` check is OK
-            // too; the outcome line says what was actually established.
+        if matches!(passes[..], [Pass::Property(_)]) {
+            // Apalache's exit code for a passing temporal check is OK too;
+            // the outcome line says what was actually established.
             println!("The outcome is: NoError (no violating lasso within the bound)");
         } else {
             println!("The outcome is: NoError");
         }
         println!("EXITCODE: OK");
     } else {
-        if let Some(why) = undecided {
+        for why in &undecided {
             eprintln!("note: the search stopped early: {why}");
         }
         if found < args.max_errors {
@@ -1149,6 +1064,287 @@ fn run(args: &Args) -> u8 {
     EXIT_OK
 }
 
+/// One query a `check` run is made of.
+#[derive(Debug, Clone, Copy)]
+enum Pass<'a> {
+    /// The invariants and the deadlock question, over the ordinary unrolling.
+    Invariants,
+    /// One temporal property, over the lasso encoding (issue #29).
+    Property(&'a str),
+}
+
+impl Pass<'_> {
+    /// What the pass checks, for its heading in a multi-pass run.
+    fn what<'a>(&'a self, inv: &'a [&'a str]) -> std::borrow::Cow<'a, str> {
+        match self {
+            Self::Invariants if inv.is_empty() => "deadlocks".into(),
+            Self::Invariants => std::borrow::Cow::Owned(format!("invariant(s) {}", inv.join(", "))),
+            Self::Property(t) => std::borrow::Cow::Owned(format!("temporal property `{t}`")),
+        }
+    }
+}
+
+/// How one pass ended, when it did not end the run.
+#[derive(Debug)]
+enum PassEnd {
+    /// A counterexample was reported (into the run's running count).
+    Found,
+    /// Nothing within the bound.
+    Clean,
+    /// Every behaviour stopped short of the bound.
+    TooShort,
+    /// A reachable state has no successor: the run stops there, as it
+    /// always did.
+    Deadlock(u32),
+    /// The search could not decide.
+    Unknown(String),
+}
+
+/// Everything a pass needs that is the same for every pass.
+struct PassCtx<'a> {
+    args: &'a Args,
+    spec: &'a nixie_tla_syntax::LoadedSpec,
+    module: &'a nixie_tla_syntax::Module,
+    scope: Scope<'a>,
+    config: &'a nixie_tla_syntax::TlcConfig,
+    init: &'a str,
+    next: &'a str,
+    inv: &'a [&'a str],
+    cinit: &'a [&'a str],
+    /// Whether the run looks for deadlocks (before the temporal exception).
+    check_deadlocks: bool,
+    /// Whether the run has more than one pass: per-pass lines are then
+    /// indented under the pass's heading, and the outcome is printed once.
+    multi: bool,
+}
+
+/// Run one pass, adding its counterexamples to `found`.
+///
+/// Prints every counterexample as it is confirmed; the run's single outcome
+/// line is the caller's. A deadlock ends the run (it is the outcome, as it
+/// always was), and so do the setup and the assumption failures, which
+/// return their exit code.
+///
+/// # Errors
+///
+/// The exit code to end the run with, for a failure that is the run's own
+/// outcome (a set-up error, contradictory assumptions).
+#[allow(clippy::too_many_lines)]
+fn run_pass(
+    ctx: &PassCtx<'_>,
+    pass: Pass<'_>,
+    tm: &mut TermManager,
+    found: &mut usize,
+) -> Result<PassEnd, u8> {
+    let before = *found;
+    let temporal = match pass {
+        Pass::Property(t) => Some(t),
+        Pass::Invariants => None,
+    };
+    let indent = if ctx.multi { "  " } else { "" };
+    let mut bmc = prepare(ctx, pass, tm)?;
+
+    // Up to `--max-error` counterexamples. A bounded query has one *shortest*
+    // counterexample, so asking again without ruling that one out returns it
+    // forever; each trace found is blocked before the next query. Blocking
+    // only narrows the search, so a later trace is still a real model of the
+    // encoded formula – and is still replayed before it is written.
+    let mut undecided: Option<String> = None;
+    while *found < ctx.args.max_errors {
+        let outcome = match bmc.check(ctx.args.length, tm) {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("{e}");
+                return Err(exit_for(&e));
+            }
+        };
+        match outcome {
+            Outcome::NoViolationWithin(k) => {
+                if *found == before {
+                    match temporal {
+                        // A lasso search's bound: no lasso of k steps or
+                        // fewer violates the property. Not a proof – a
+                        // longer lasso may.
+                        Some(t) => println!(
+                            "{indent}no lasso of {k} step(s) or fewer violates `{t}`; this is a \
+                             bound, not a proof that the property holds"
+                        ),
+                        None => println!("{indent}no counterexample of {k} step(s) or fewer"),
+                    }
+                }
+                break;
+            }
+            // A reachable state with no successor. The same exit code as a
+            // counterexample – Apalache's – with the distinction in the
+            // message: "Deadlock", not "Error".
+            Outcome::Deadlock { step } => {
+                if !ctx.multi {
+                    println!("The outcome is: Deadlock");
+                }
+                println!(
+                    "{indent}a reachable state after {step} step(s) has no successor; the \
+                     no-successor claim is a proved `Unsat`, not a sample"
+                );
+                return Ok(PassEnd::Deadlock(step));
+            }
+            // Every behaviour stopped short of the bound. Exit 0 – Apalache's
+            // code – with the outcome line saying what actually happened,
+            // because "no error" and "nothing ran that far" are different
+            // facts a caller may treat differently.
+            Outcome::ExecutionsTooShort => {
+                if *found == before {
+                    println!("{indent}The outcome is: ExecutionsTooShort");
+                    println!(
+                        "{indent}no behaviour of the full length exists; with deadlock checking \
+                         off this is not a statement about errors"
+                    );
+                }
+                return Ok(PassEnd::TooShort);
+            }
+            // The specification has no behaviours. Not "no error": an
+            // invariant vacuously holds over an empty behaviour set, and a
+            // caller that greps for the zero exit would congratulate itself
+            // on a specification whose assumptions cannot all be true.
+            Outcome::AssumptionsUnsatisfiable => {
+                eprintln!(
+                    "error: the assumptions are contradictory; the specification has no behaviours"
+                );
+                return Err(EXIT_SYSTEM);
+            }
+            Outcome::Unknown(why) => {
+                undecided = Some(why);
+                break;
+            }
+            Outcome::Violation { step } => {
+                *found += 1;
+                let broken = bmc.violated_invariants();
+                let which = if broken.len() == 1 {
+                    broken[0].clone()
+                } else {
+                    format!("[{}]", broken.join(", "))
+                };
+                match bmc.loop_start() {
+                    Some(l) => println!(
+                        "{indent}counterexample {found}: a lasso of {step} step(s) whose last \
+                         state returns to state {l}, violating `{which}`"
+                    ),
+                    None => println!(
+                        "{indent}counterexample {found}: {step} step(s), invariant {which}"
+                    ),
+                }
+                if let Some(v) = bmc.verification() {
+                    println!("{indent}  independently replayed: {}", describe(v));
+                }
+                let out_dir = ctx.args.out_dir.as_ref().or(ctx.args.run_dir.as_ref());
+                if let Some(dir) = out_dir {
+                    let name = ctx
+                        .args
+                        .spec
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("spec");
+                    match write_itf_as("violation", &bmc, dir, name, *found) {
+                        Ok(path) => println!("{indent}  wrote {path}"),
+                        Err(code) => return Err(code),
+                    }
+                }
+                if *found >= ctx.args.max_errors {
+                    break;
+                }
+                // Nothing to say "not that one" with means asking again would
+                // hand back the same states. Stop, and say why.
+                if !bmc.block_counterexample(tm) {
+                    eprintln!(
+                        "note: that counterexample could not be ruled out, so no further \
+                         traces were searched for"
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
+    if let Some(why) = undecided {
+        return Ok(PassEnd::Unknown(why));
+    }
+    Ok(if *found > before {
+        PassEnd::Found
+    } else {
+        PassEnd::Clean
+    })
+}
+
+/// Prepare the checker for one pass: the formulas, the flags and the view.
+///
+/// # Errors
+///
+/// The exit code to end the run with, when the pass cannot be prepared or
+/// the view cannot be used.
+fn prepare(ctx: &PassCtx<'_>, pass: Pass<'_>, tm: &mut TermManager) -> Result<Bmc, u8> {
+    let roles = Roles {
+        init: ctx.init,
+        next: ctx.next,
+        inv: ctx.inv,
+        constraints: ctx.cinit,
+    };
+    let prepared = match pass {
+        Pass::Property(t) => {
+            Bmc::prepare_temporal_in(ctx.spec, ctx.scope, ctx.init, ctx.next, t, ctx.config, tm)
+        }
+        Pass::Invariants => Bmc::prepare_with_config_in(ctx.spec, ctx.scope, roles, ctx.config, tm),
+    };
+    let mut bmc = match prepared {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("{e}");
+            return Err(exit_for(&e));
+        }
+    };
+    // A temporal pass does not look for deadlocks unless asked (issue
+    // #29/#44): the lasso encoding's "state with no successor" is a
+    // question about the **encoding's** variables – a loop state has a
+    // successor by construction, and the prefix's is the ordinary
+    // checker's question – while the search for one is, on a lasso spec
+    // with a ranged variable, the hardest query of the whole run (the
+    // `Range == {v \in Int : 0 <= v <= 50}` liveness cells spent 0.5 s,
+    // 8 s, 11 s per depth on it, against < 1 ms on the property itself).
+    let check_deadlocks =
+        ctx.check_deadlocks && (matches!(pass, Pass::Invariants) || ctx.args.deadlock);
+    bmc.set_check_deadlocks(check_deadlocks);
+    bmc.set_paranoid(ctx.args.paranoid);
+    if let Some(n) = ctx.args.max_conflicts {
+        bmc.set_conflict_limit(n);
+    }
+
+    // The view: a state-level definition whose value at a step is what the
+    // author considers "the same" counterexample. Anything above state
+    // level (an action or temporal view) cannot be evaluated per step and
+    // is refused by name.
+    if let Some(v) = &ctx.args.view {
+        let levels = root_levels(ctx.spec);
+        match levels.trusted_level_of(v) {
+            Some(lev) if lev <= nixie_tla_syntax::Level::State => {}
+            Some(_) => {
+                eprintln!("error: --view={v} is above state level; a view is evaluated per state");
+                return Err(EXIT_SYSTEM);
+            }
+            None => {
+                eprintln!("error: --view={v} could not be level-checked; refusing it");
+                return Err(EXIT_SYSTEM);
+            }
+        }
+        let mut low = nixie_tla::Lowerer::new();
+        low.add_spec(ctx.spec);
+        match low.lower_named(ctx.module, v) {
+            Ok(body) => bmc.set_view(body),
+            Err(e) => {
+                eprintln!("error: --view={v} could not be lowered: {e}");
+                return Err(EXIT_SYSTEM);
+            }
+        }
+    }
+    Ok(bmc)
+}
 /// The fairness clauses of a `SPECIFICATION`, as one list for a diagnostic.
 fn fair_text(clauses: &[nixie_tla_syntax::FairnessClause]) -> String {
     clauses

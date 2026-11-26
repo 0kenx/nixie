@@ -1028,15 +1028,15 @@ fn the_option_table_classes() {
     assert_eq!(r.code, 255, "stderr: {}", r.err);
     assert!(r.err.contains("deterministic"), "{}", r.err);
 
-    // Temporal properties: refused, pointing at what exists today.
-    let r = run(&[
-        "check",
-        "--inv=Inv",
-        "--temporal=Always",
-        spec.to_str().expect("a path"),
-    ]);
-    assert_eq!(r.code, 255, "stderr: {}", r.err);
-    assert!(r.err.contains("--temporal"), "{}", r.err);
+    // Temporal properties are implemented (issue #29): a property the
+    // module does not define is refused by name, as `--inv`'s is.
+    let r = run(&["check", "--temporal=Always", spec.to_str().expect("a path")]);
+    assert_eq!(r.code, 75, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(
+        r.err.contains("no zero-argument definition named `Always`"),
+        "{}",
+        r.err
+    );
 
     // Unknown stays fatal.
     let r = run(&[
@@ -1308,6 +1308,9 @@ Next == x' = IF x = 0 THEN 1 ELSE 0
 Never == [](x = 1)
 Always == [](x < 2)
 Fair == WF_x(x' # x)
+Inv == x < 2
+Bad == x = 0
+View == <<x>>
 ====
 ";
 
@@ -1373,8 +1376,8 @@ fn no_violating_lasso_is_exit_0_and_says_bound() {
 
 /// `--inv=<a temporal formula>` is exit **255** — Apalache's integration
 /// corpus has this exact cell (`check --inv=FalseLiveness LongPrefix.tla`
-/// → `EXITCODE: ERROR (255)`). And `--temporal` together with `--inv` is a
-/// usage error, 255 too.
+/// → `EXITCODE: ERROR (255)`). A temporal formula asked for as an invariant
+/// is refused before any pass runs, under `--temporal` too.
 #[test]
 fn inv_naming_a_temporal_formula_is_exit_255() {
     let dir = scratch("inv-temporal");
@@ -1394,8 +1397,207 @@ fn inv_naming_a_temporal_formula_is_exit_255() {
         "--length=4",
         spec.to_str().expect("a path"),
     ]);
-    assert_eq!(r.code, 255, "stderr: {}", r.err);
-    assert!(r.err.contains("cannot be combined"), "{}", r.err);
+    assert_eq!(r.code, 255, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(r.err.contains("temporal"), "{}", r.err);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ======== `PROPERTY` in the configuration, and passes (issues #29, #31) ========
+
+/// `PROPERTY` in a `.cfg` is a temporal property, and Apalache checks it
+/// beside the invariants. Until it was read here the line was parsed and
+/// dropped: a configuration could report `NoError` with a liveness property
+/// in it unexamined. A `check` is now one pass for the invariants and the
+/// deadlock question, then one per property; the outcome is the worst of
+/// them, and each counterexample is written and numbered across the run.
+#[test]
+fn a_cfg_property_is_checked_beside_the_invariants() {
+    let dir = scratch("cfg-property");
+    let spec = write_spec(&dir, "Cycle", CYCLE);
+    std::fs::write(dir.join("Cycle.cfg"), "INVARIANT Inv\nPROPERTY Never\n").expect("cfg");
+    let out = dir.join("out");
+    let r = run(&[
+        "check",
+        &format!("--config={}", dir.join("Cycle.cfg").display()),
+        "--length=4",
+        &format!("--out-dir={}", out.display()),
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 12, "stdout: {}\nstderr: {}", r.out, r.err);
+    // Two passes, each with its heading and its own result.
+    let lines: Vec<&str> = r.out.lines().collect();
+    assert!(lines.contains(&"checking invariant(s) Inv"), "{}", r.out);
+    assert!(
+        lines.contains(&"checking temporal property `Never`"),
+        "{}",
+        r.out
+    );
+    assert!(
+        r.out.contains("  no counterexample of 4 step(s) or fewer"),
+        "{}",
+        r.out
+    );
+    assert!(
+        r.out.contains("  counterexample 1: a lasso of"),
+        "{}",
+        r.out
+    );
+    // One outcome line, for the whole run.
+    assert_eq!(r.out.matches("The outcome is:").count(), 1, "{}", r.out);
+    assert!(r.out.contains("The outcome is: Error"), "{}", r.out);
+    let doc: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out.join("violation1.itf.json")).expect("the ITF file"),
+    )
+    .expect("JSON");
+    assert_eq!(doc["loop"], serde_json::json!(2), "{doc}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The other order of bad news: the invariant breaks first, `--max-error`
+/// is reached, and the property pass is not run – said out loud, never
+/// reported as if it had held. With two errors asked for, both passes run
+/// and the two traces are numbered across the run.
+#[test]
+fn max_error_stops_before_a_later_pass_and_says_so() {
+    let dir = scratch("cfg-property-max");
+    let spec = write_spec(&dir, "Cycle", CYCLE);
+    std::fs::write(dir.join("Cycle.cfg"), "INVARIANT Bad\nPROPERTY Never\n").expect("cfg");
+    let r = run(&[
+        "check",
+        &format!("--config={}", dir.join("Cycle.cfg").display()),
+        "--length=4",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 12, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(
+        r.out.contains("counterexample 1: 1 step(s), invariant Bad"),
+        "{}",
+        r.out
+    );
+    assert!(
+        !r.out.contains("temporal property"),
+        "the pass did not run: {}",
+        r.out
+    );
+    assert!(
+        r.err
+            .contains("--max-error=1 reached; the remaining passes are not run"),
+        "{}",
+        r.err
+    );
+    let out = dir.join("out");
+    let r = run(&[
+        "check",
+        &format!("--config={}", dir.join("Cycle.cfg").display()),
+        "--length=4",
+        "--max-error=2",
+        "--view=View",
+        &format!("--out-dir={}", out.display()),
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 12, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(
+        r.out.contains("counterexample 1: 1 step(s), invariant Bad"),
+        "{}",
+        r.out
+    );
+    assert!(r.out.contains("counterexample 2: a lasso of"), "{}", r.out);
+    assert!(out.join("violation2.itf.json").exists(), "{}", r.out);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A configuration with only a `PROPERTY` is one temporal pass, with the
+/// same words `--temporal` uses; and `--temporal` on the command line
+/// overrides the file's property, with a warning, as `--inv` does.
+#[test]
+fn a_property_only_config_is_a_temporal_pass_and_the_cli_overrides() {
+    let dir = scratch("cfg-property-only");
+    let spec = write_spec(&dir, "Cycle", CYCLE);
+    // Deadlock checking is on by default, so this is two passes: the
+    // deadlock question, then the property – each under its heading.
+    std::fs::write(dir.join("Cycle.cfg"), "PROPERTY Always\n").expect("cfg");
+    let r = run(&[
+        "check",
+        &format!("--config={}", dir.join("Cycle.cfg").display()),
+        "--length=4",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 0, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(r.out.contains("checking deadlocks"), "{}", r.out);
+    assert!(
+        r.out
+            .contains("  no lasso of 4 step(s) or fewer violates `Always`; this is a bound"),
+        "{}",
+        r.out
+    );
+    assert_eq!(r.out.matches("The outcome is:").count(), 1, "{}", r.out);
+    // With the deadlock question off it is one temporal pass, with the same
+    // words `--temporal` uses.
+    std::fs::write(
+        dir.join("Cycle.cfg"),
+        "PROPERTY Always\nCHECK_DEADLOCK FALSE\n",
+    )
+    .expect("cfg");
+    let r = run(&[
+        "check",
+        &format!("--config={}", dir.join("Cycle.cfg").display()),
+        "--length=4",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 0, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(
+        r.out
+            .contains("no lasso of 4 step(s) or fewer violates `Always`; this is a bound"),
+        "{}",
+        r.out
+    );
+    assert!(
+        r.out
+            .contains("The outcome is: NoError (no violating lasso within the bound)"),
+        "{}",
+        r.out
+    );
+    assert_eq!(r.out.matches("The outcome is:").count(), 1, "{}", r.out);
+    // And `--temporal` on the command line overrides the file's property,
+    // with a warning, as `--inv` does over `INVARIANT`.
+    let r = run(&[
+        "check",
+        &format!("--config={}", dir.join("Cycle.cfg").display()),
+        "--temporal=Never",
+        "--length=4",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 12, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(
+        r.err
+            .contains("--temporal=Never overrides PROPERTY from the config (Always)"),
+        "{}",
+        r.err
+    );
+    assert!(r.out.contains("a lasso of"), "{}", r.out);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Sampling does not check properties; it says so rather than dropping them.
+#[test]
+fn simulate_announces_the_properties_it_does_not_check() {
+    let dir = scratch("cfg-property-sim");
+    let spec = write_spec(&dir, "Cycle", CYCLE);
+    std::fs::write(dir.join("Cycle.cfg"), "PROPERTY Always\n").expect("cfg");
+    let r = run(&[
+        "simulate",
+        &format!("--config={}", dir.join("Cycle.cfg").display()),
+        "--max-run=2",
+        "--length=3",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 0, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(
+        r.err
+            .contains("simulate does not check temporal properties; `Always` not checked"),
+        "{}",
+        r.err
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

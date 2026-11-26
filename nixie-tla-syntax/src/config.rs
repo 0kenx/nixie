@@ -194,7 +194,9 @@ pub struct TlcConfig {
     pub behavior: BehaviorSpec,
     /// `INVARIANT` / `INVARIANTS`.
     pub invariants: Vec<String>,
-    /// `PROPERTY` / `PROPERTIES` – temporal, not checked by a BMC pass.
+    /// `PROPERTY` / `PROPERTIES` – temporal properties. A bounded unrolling
+    /// of `Init`/`Next` cannot check one; the lasso encoding (issue #29) can,
+    /// one pass per property.
     pub properties: Vec<String>,
     /// `CONSTRAINT` / `CONSTRAINTS`: a state predicate bounding the search.
     pub state_constraints: Vec<String>,
