@@ -247,7 +247,7 @@ fn skolemize_walk(
         Visit(&'a KeraRef, bool),
         /// All children visited; rebuild this node from the `n` rewritten
         /// children sitting on the value stack, which must be exactly the
-        /// `base` entries the frame recorded plus those `n` — one value per
+        /// `base` entries the frame recorded plus those `n` – one value per
         /// child, nothing left below disturbed.
         Rebuild(&'a KeraRef, bool, usize, usize),
     }
@@ -324,13 +324,13 @@ fn skolemize_walk(
                 }
             }
             Frame::Rebuild(t, pos, n, base) => {
-                // The stack discipline: every child of this node — whether
+                // The stack discipline: every child of this node – whether
                 // it was a leaf, a memo hit, a rewrite, or a descent of its
-                // own — pushed exactly one value, and nothing below `base`
+                // own – pushed exactly one value, and nothing below `base`
                 // was touched. This is what makes the `split_off` below
                 // take exactly this node's children and no more. (The
                 // original `Mark` frame asserted the pre-children length
-                // *after* the children had pushed — an invariant no
+                // *after* the children had pushed – an invariant no
                 // non-leaf node can satisfy, so every debug build with a
                 // set-valued variable tripped it; found while running the
                 // paranoid tests in debug for #44.)
@@ -727,6 +727,72 @@ pub fn subst_term(t: &KeraRef, from: &Name, to: &KeraRef) -> KeraRef {
         }
     }
     values.pop().unwrap_or_else(|| Rc::clone(t))
+}
+
+/// Pin the **current** state of an action to given terms (issue #47).
+///
+/// Every unprimed free variable named in `values` is replaced by its term,
+/// and a primed subterm is left exactly as it is: the next state stays free,
+/// which is what lets the result ask "is there a next state satisfying
+/// this?" of the solver once the current one is fixed. The same binder
+/// discipline as [`subst_term`]. Memoised by pointer and unchanged-preserving.
+#[must_use]
+pub fn pin_unprimed(t: &KeraRef, values: &std::collections::HashMap<Name, KeraRef>) -> KeraRef {
+    enum Frame<'a> {
+        Visit(&'a KeraRef),
+        Rebuild(&'a KeraRef, usize),
+    }
+    let mut memo: std::collections::HashMap<*const Kera, KeraRef> =
+        std::collections::HashMap::new();
+    let mut stack: Vec<Frame> = vec![Frame::Visit(t)];
+    let mut out: Vec<KeraRef> = Vec::new();
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Visit(x) => {
+                if let Some(hit) = memo.get(&Rc::as_ptr(x)) {
+                    out.push(Rc::clone(hit));
+                    continue;
+                }
+                // The next state is not being pinned: a primed subterm is
+                // returned as it stands, primes and all.
+                if matches!(x.as_ref(), Kera::Prime(_)) {
+                    out.push(Rc::clone(x));
+                    continue;
+                }
+                if let Kera::Var(n) = x.as_ref()
+                    && let Some(to) = values.get(n)
+                {
+                    out.push(Rc::clone(to));
+                    continue;
+                }
+                let n = x.as_ref().children().len();
+                if n == 0 {
+                    out.push(Rc::clone(x));
+                    continue;
+                }
+                stack.push(Frame::Rebuild(x, n));
+                for c in x.as_ref().children().into_iter().rev() {
+                    stack.push(Frame::Visit(c));
+                }
+            }
+            Frame::Rebuild(x, n) => {
+                let kids: Vec<KeraRef> = out.split_off(out.len() - n);
+                let old_kids = x.as_ref().children();
+                let rebuilt = if old_kids
+                    .iter()
+                    .zip(kids.iter())
+                    .all(|(o, k)| Rc::ptr_eq(o, k))
+                {
+                    Rc::clone(x)
+                } else {
+                    rebuild(x, true, &kids)
+                };
+                memo.insert(Rc::as_ptr(x), Rc::clone(&rebuilt));
+                out.push(rebuilt);
+            }
+        }
+    }
+    out.pop().unwrap_or_else(|| Rc::clone(t))
 }
 
 /// Which `Variants` operator an application is, when it looks like one.
@@ -1308,6 +1374,22 @@ impl<'a> Lowerer<'a> {
         self.constants.insert(name.to_string(), value);
     }
 
+    /// Withdraw a binding [`Self::bind_constant`] made, and forget every
+    /// cached lowering with it.
+    ///
+    /// A definition lowered while the name was bound mentions the bound
+    /// value in place of the name, and that lowering is cached under the
+    /// definition's own name – so a cache entry that outlived the binding
+    /// would be reused with the value still in it, and check a different
+    /// formula (issue #47 instantiates `\A p \in P : WF_v(A(p))` per
+    /// candidate through a binding, and the candidates must not leak into
+    /// the specification proper). Clearing the whole cache costs re-lowering
+    /// and nothing else.
+    pub fn unbind_constant(&mut self, name: &str) {
+        self.constants.remove(name);
+        self.cache.clear();
+    }
+
     /// Rebind `name` to the definition of `with`, as a TLC configuration's
     /// `name <- with` does.
     ///
@@ -1800,7 +1882,7 @@ impl<'a> Lowerer<'a> {
 
     /// Lower a **temporal-level** formula to its structure (issue #29).
     ///
-    /// The kernel has no temporal operators — by design — so this does not
+    /// The kernel has no temporal operators – by design – so this does not
     /// return a kernel term. It returns the formula's temporal skeleton
     /// ([`Temporal`]): the propositional connectives over `[]`/`<>`, with
     /// every **state-level leaf** lowered by the ordinary [`Self::lower`]
@@ -1831,8 +1913,8 @@ impl<'a> Lowerer<'a> {
     }
 
     /// One node of the temporal walk. The nesting is the formula's own
-    /// depth — bounded by the step budget's sibling, since a deep `[]…[]`
-    /// chain is legal TLA+ — but the walk is structural and each leaf goes
+    /// depth – bounded by the step budget's sibling, since a deep `[]…[]`
+    /// chain is legal TLA+ – but the walk is structural and each leaf goes
     /// through the ordinary, stack-based lowering, so only the *skeleton*
     /// recurses, and its depth is the syntax's.
     fn temporal_walk(
@@ -1981,7 +2063,7 @@ impl<'a> Lowerer<'a> {
                 "the lasso encoding has no fairness rule; Apalache refuses it too. \
                  Dropping it would invent counterexamples, so it is declined",
             ),
-            // `\AA x : P` / `\EE x : P` — an **unbounded** quantifier is
+            // `\AA x : P` / `\EE x : P` – an **unbounded** quantifier is
             // how the parser delivers the temporal kinds.
             ExprKind::UnboundedQuant { .. } => refuse(
                 "a temporal quantifier (`\\AA` / `\\EE`)",
@@ -2014,7 +2096,7 @@ impl<'a> Lowerer<'a> {
 
     /// Whether a state-level leaf hides a prime, an `ENABLED`, a
     /// subscripted action or a fairness construct below an ordinary
-    /// operator — `~(x' = x)`, `x' + 1 > y`, `ENABLED A`. Explicit-stack.
+    /// operator – `~(x' = x)`, `x' + 1 > y`, `ENABLED A`. Explicit-stack.
     fn has_prime_or_action(expr: &Expr) -> bool {
         let mut work = vec![expr];
         while let Some(e) = work.pop() {
@@ -2030,7 +2112,7 @@ impl<'a> Lowerer<'a> {
 
     /// Whether an expression is temporal-level: by its own operator, or by
     /// the level of the (sole) name it is. A level that could not be
-    /// resolved is **not** temporal — the leaf then lowers, and the lowering
+    /// resolved is **not** temporal – the leaf then lowers, and the lowering
     /// refuses what it cannot do, by name.
     ///
     /// Explicit-stack: the expression is user-written and arbitrarily deep.

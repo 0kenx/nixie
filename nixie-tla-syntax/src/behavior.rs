@@ -51,7 +51,10 @@
 //! roles; the caller decides what a check may assume them away for. For a
 //! **liveness** property it may not: an unfair lasso is not a behaviour of
 //! the specification, and a lasso search that ignored the clause would
-//! report it as a counterexample.
+//! report it as a counterexample. The lasso checker therefore **assumes**
+//! each clause there (issue #47), from the syntax the clause carries
+//! ([`FairnessClause::expr`]); what it cannot assume faithfully, it declines
+//! by name.
 //!
 //! Any other temporal conjunct is different in kind. `[]P` excludes states,
 //! `[]A` excludes steps, `<>P` and `P ~> Q` say things no bounded unrolling
@@ -94,8 +97,9 @@ pub struct SafetyForm<'m> {
     /// A bounded check does not assume them. For a state invariant that costs
     /// nothing (see the module docs); for a liveness property it is the
     /// difference between a counterexample and an unfair behaviour, so the
-    /// caller refuses there.
-    pub fairness: Vec<FairnessClause>,
+    /// checker assumes them there (issue #47) – which needs each clause's
+    /// syntax, hence [`FairnessClause::expr`].
+    pub fairness: Vec<FairnessClause<'m>>,
 }
 
 impl<'m> SafetyForm<'m> {
@@ -169,7 +173,7 @@ impl<'m> RoleSource<'m> {
 
 /// One fairness conjunct of a behaviour specification.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FairnessClause {
+pub struct FairnessClause<'m> {
     /// Whether every fairness operator in the clause is `WF` (`SF` mixes in
     /// otherwise).
     pub weak: bool,
@@ -180,6 +184,12 @@ pub struct FairnessClause {
     pub rendered: String,
     /// Where it is.
     pub span: Span,
+    /// The conjunct's own syntax: the `WF`/`SF` node, or the `\A` that
+    /// quantifies one (or a conjunction of several). What a checker that
+    /// **assumes** the clause lowers (issue #47).
+    pub expr: &'m Expr,
+    /// The module the conjunct was written in, where its names resolve.
+    pub home: &'m Module,
 }
 
 /// A definition visible by bare name in a module, and where it lives.
@@ -434,7 +444,7 @@ struct Parts<'m> {
     /// The `[][A]_v` conjunct's action, likewise, when one was seen.
     next: Option<RoleSource<'m>>,
     /// The fairness conjuncts seen, in source order.
-    fairness: Vec<FairnessClause>,
+    fairness: Vec<FairnessClause<'m>>,
 }
 
 impl<'m> Parts<'m> {
@@ -567,6 +577,8 @@ impl<'s, 'f> Walk<'s, 'f> {
                     quantified: false,
                     rendered: brief(e),
                     span: e.span,
+                    expr: e,
+                    home: module,
                 });
                 Ok(())
             }
@@ -584,6 +596,8 @@ impl<'s, 'f> Walk<'s, 'f> {
                         quantified: true,
                         rendered: brief(e),
                         span: e.span,
+                        expr: e,
+                        home: module,
                     });
                     Ok(())
                 }
