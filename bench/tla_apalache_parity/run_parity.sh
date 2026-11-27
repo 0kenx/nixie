@@ -96,13 +96,17 @@ while IFS=$'\x1f' read -r id mode argv_prefix spec expected; do
   for cfg in "$APALACHE_SRC_DIR/${spec%.tla}"*.cfg "$APALACHE_SRC_DIR/${spec%.tla}"*.properties; do
     [ -e "$cfg" ] && cp "$cfg" "$WORK/$(dirname "$spec")/"
   done
-  # A spec in a subdirectory may EXTEND its siblings (`MC_FoldExcept3`
-  # extends `FoldExcept`); they come along.
-  case "$spec" in */*)
-    for dep in "$(dirname "$SPEC_PATH")"/*.tla; do
-      [ -e "$dep" ] && cp "$dep" "$WORK/$(dirname "$spec")/"
-    done;;
-  esac
+  # Every sibling `.tla` comes along, for a spec at the top of the directory
+  # as much as for one in a subdirectory: the corpus's `MC*.tla` instantiate
+  # their base module (`INSTANCE TwoPhaseTyped`), `y2k_cinit` and
+  # `y2k_instance` extend `y2k`, and the first run kept the oracle from
+  # finding any of them – eight stored answers were `Cannot find source file
+  # for module …`, the harness's own error, counted as the oracle's refusal
+  # (`y2k_instance` among them, listed as a known oracle defect). The oracle
+  # arm's store entries for those cells were deleted and re-run.
+  for dep in "$(dirname "$SPEC_PATH")"/*.tla; do
+    [ -e "$dep" ] && cp "$dep" "$WORK/$(dirname "$spec")/"
+  done
   ODIR="$WORK/out"; mkdir -p "$ODIR"
 
   # --- oracle arm (stored; never re-run an existing cell) ---
