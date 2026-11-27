@@ -851,7 +851,8 @@ impl Bmc {
         // the precise set-typed subject list needs the inference that runs
         // after this. A variable this pass frames keeps its enumeration;
         // one it cannot is a skolem subject below, and the precise frames
-        // pass after inference re-derives on the rewritten terms.
+        // pass after inference re-derives on the skolemized terms, with
+        // the inferred sorts.
         let state_now = all_state_variables(spec);
         let coarse = crate::frames::analyze(&crate::frames::Input {
             init: &init_k,
@@ -1287,6 +1288,14 @@ impl Bmc {
         // mention by pointer – an instantiated `Variant` constructor is a
         // new `Rc` – so their nodes must join the collection as roots, or
         // the first member encoding poisons the frame for want of a sort.
+        // On the skolemized roles, like the coarse pass's choice of skolem
+        // subjects: a witness the pass minted for an existential over an
+        // **unframed** set is a concrete (symbolic) member where it is
+        // added – `sent' = sent \cup {c}` grows `sent` by exactly `c` –
+        // and the analysis poisons a variable whose own assignment it
+        // cannot read (`S \in P` for an unpinned set), so a witness is
+        // never mistaken for a member the analysis should have named
+        // (Rand.tla; see `frames::offer`).
         let frames = crate::frames::analyze(&crate::frames::Input {
             init: &init_k,
             next: &next_k,

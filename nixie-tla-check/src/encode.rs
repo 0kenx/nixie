@@ -223,6 +223,25 @@ pub struct Encoder {
     dom_of: HashMap<TermId, (String, u32)>,
 }
 
+/// Whether a kernel term mentions a skolem witness, walked with an explicit
+/// stack and pointer deduplication (a lowered term is a shared DAG).
+fn mentions_skolem_witness(root: &KeraRef) -> bool {
+    let mut seen: std::collections::HashSet<*const Kera> = std::collections::HashSet::new();
+    let mut stack = vec![root];
+    while let Some(t) = stack.pop() {
+        if !seen.insert(Rc::as_ptr(t)) {
+            continue;
+        }
+        if let Kera::Var(n) = t.as_ref()
+            && nixie_tla::lower::is_skolem_witness(n.as_str())
+        {
+            return true;
+        }
+        stack.extend(t.as_ref().children());
+    }
+    false
+}
+
 impl Encoder {
     /// An encoder with no free names declared.
     #[must_use]
@@ -673,6 +692,30 @@ impl Encoder {
         }
     }
 
+    /// The universe's elements with the steps to read them at, for a
+    /// quantifier (or an obligation) at `step`.
+    ///
+    /// An element that mentions no skolem witness is read at `step`. One
+    /// that does was added by the transition of some earlier step – a
+    /// witness is "some member at the step the quantifier is evaluated", one
+    /// SMT variable per step, and the member it denotes stays in the set
+    /// from then on – so it is read at every step `0..=step`: one too many,
+    /// which only adds a candidate guarded by membership. Read at `step`
+    /// alone it names the *next* transition's witness, not the member in
+    /// the set: `Paxos/Consensus.tla` – `chosen' = {c}` under `\E v \in
+    /// Value` – is falsified by the paranoid probe at step 1 that way.
+    fn readings(&self, elems: &[KeraRef], step: u32) -> Vec<(KeraRef, u32)> {
+        let mut out = Vec::with_capacity(elems.len());
+        for e in elems {
+            if mentions_skolem_witness(e) {
+                out.extend((0..=step).map(|at| (Rc::clone(e), at)));
+            } else {
+                out.push((Rc::clone(e), step));
+            }
+        }
+        out
+    }
+
     /// The arena cell of a framed set-valued variable at one step: the
     /// universe's elements, encoded at that step, each guarded by
     /// membership in the real variable term.
@@ -695,7 +738,8 @@ impl Encoder {
         }
         let elems = self.frames.universe.get(name)?.clone();
         let saved = std::mem::replace(&mut self.step, step);
-        let mut members = Vec::with_capacity(elems.len());
+        let readings = self.readings(&elems, step);
+        let mut members = Vec::with_capacity(readings.len());
         let mut ok = true;
         // The variable's element sort – the merged row's datatype, which has
         // every tag the universe's elements carry. A one-tag `Variant`
@@ -708,7 +752,8 @@ impl Encoder {
                 _ => None,
             }
         });
-        for e in &elems {
+        for (e, at) in &readings {
+            self.step = *at;
             let v = match (e.as_ref(), elem_sort) {
                 (Kera::Variant { tag, value }, Some(target)) => {
                     let Ok(payload) = self.value(value, tm) else {
@@ -783,9 +828,11 @@ impl Encoder {
             self.frames.universe.get(name)?.clone()
         };
         let saved = std::mem::replace(&mut self.step, step);
-        let mut members = Vec::with_capacity(universe.len());
+        let readings = self.readings(&universe, step);
+        let mut members = Vec::with_capacity(readings.len());
         let mut ok = true;
-        for e in &universe {
+        for (e, at) in &readings {
+            self.step = *at;
             let v = match self.value(e, tm) {
                 Ok(v) => v,
                 Err(_) => {
@@ -846,9 +893,11 @@ impl Encoder {
         }
         let elems = self.frames.fun_universe.get(name)?.clone();
         let saved = std::mem::replace(&mut self.step, step);
-        let mut members = Vec::with_capacity(elems.len());
+        let readings = self.readings(&elems, step);
+        let mut members = Vec::with_capacity(readings.len());
         let mut ok = true;
-        for e in &elems {
+        for (e, at) in &readings {
+            self.step = *at;
             let v = match self.value(e, tm) {
                 Ok(v) => v,
                 Err(_) => {

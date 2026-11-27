@@ -91,12 +91,15 @@ fn arithmetic_elements_collapse_to_values() {
     );
 }
 
-/// A set the transition rebuilds from a function set has no certain-superset
-/// reading, so nothing from that assignment joins the universe: the honest
-/// refusal is the *absence of invention*, and `Init`'s own elements are all
-/// the universe ever claims.
+/// An assignment the walk cannot read – here a set rebuilt from a function
+/// constructor, read as a set – leaves the variable **unframed**, even
+/// though `Init` gave it an element. The first version of this test pinned
+/// the opposite ("`Init`'s own elements are all the universe ever claims"),
+/// which is exactly the frame `--paranoid` falsified on `Rand.tla`: the
+/// members the unreadable site adds are unknown, so no smaller universe is
+/// a superset of them.
 #[test]
-fn a_function_set_assignment_adds_nothing_to_the_universe() {
+fn an_unreadable_assignment_leaves_the_variable_unframed() {
     let src = module("Init == s = {1}\n         Next == s' = [x \\in 1..3 |-> x]");
     let init = lower(&src, "Init");
     let next = lower(&src, "Next");
@@ -107,8 +110,30 @@ fn a_function_set_assignment_adds_nothing_to_the_universe() {
         set_vars: vec!["s".into()],
         max_candidates: 64,
     });
-    let u = frames.universe.get("s").map_or(0, Vec::len);
-    assert_eq!(u, 1, "only `Init`'s element; nothing from the function set");
+    assert!(
+        !frames.universe.contains_key("s"),
+        "unframed: {:?}",
+        frames.universe
+    );
+}
+
+/// A set-valued conditional is read as both of its branches: an
+/// over-approximation in the sound direction, not a refusal.
+#[test]
+fn a_conditional_assignment_reads_both_branches() {
+    let src =
+        module("Init == s = {1}\n         Next == s' = IF x \\in s THEN s \\cup {2} ELSE {3}");
+    let init = lower(&src, "Init");
+    let next = lower(&src, "Next");
+    let frames = frames::analyze(&Input {
+        fun_vars: Vec::new(),
+        init: &init,
+        next: &next,
+        set_vars: vec!["s".into()],
+        max_candidates: 64,
+    });
+    let u = frames.universe.get("s").expect("framed");
+    assert_eq!(u.len(), 3, "{{1, 2, 3}}: {u:?}");
 }
 
 // ======== the integration behaviours, through the checker ========
@@ -295,6 +320,46 @@ Inv == x = "e0" \/ x \notin Data
     assert_eq!(
         bmc.verification(),
         Some(&nixie_tla_check::bmc::Verification::Replayed)
+    );
+}
+
+/// The other side of that coin: the witness of an existential over an
+/// **unframed** set is a concrete (symbolic) member where another variable
+/// receives it. `Init == sent = {}` is readable, `sent' = sent \cup {c}`
+/// under `\E d \in Data : Send(d)` grows `sent` by exactly the witness,
+/// and `sent` is framed with it – the Channel shape, which must keep
+/// checking: without the witness among the candidates, `\A m \in sent : …`
+/// would skip the message just added.
+#[test]
+fn a_witness_received_by_a_framed_variable_is_its_candidate() {
+    let src = r#"
+---- MODULE Chan ----
+CONSTANT Data
+VARIABLE sent
+Init == sent = {}
+Send(d) == sent' = sent \cup {d}
+Next == \E d \in Data : Send(d)
+====
+"#;
+    let init = lower(src, "Init");
+    let next = lower(src, "Next");
+    let syms = nixie_tla::lower::Syms::from_names(["Data".to_string()]);
+    let next = nixie_tla::lower::skolemize_with_syms_at(&next, true, &syms);
+    let frames = frames::analyze(&Input {
+        fun_vars: Vec::new(),
+        init: &init,
+        next: &next,
+        set_vars: vec!["sent".into()],
+        max_candidates: 64,
+    });
+    let u = frames.universe.get("sent").expect("`sent` is framed");
+    assert_eq!(u.len(), 1, "the witness: {u:?}");
+    assert!(
+        u.iter().any(|e| {
+            let text = format!("{e:?}");
+            text.contains(nixie_tla::lower::SKOLEM_MARK)
+        }),
+        "{u:?}"
     );
 }
 
@@ -548,4 +613,78 @@ W == <>(x = 999)
     assert_eq!(lasso(src, "W", 8), Outcome::Violation { step: 8 });
     // And nothing within 7: s0..s7 are distinct, so no shorter lasso exists.
     assert_eq!(lasso(src, "W", 7), Outcome::NoViolationWithin(7));
+}
+
+/// `s \in SUBSET (1..3)` is readable – `s`'s members are among `1..3` – and
+/// the skolemized `Next`, `s' = (s \ {c}) \cup {c + c}`, grows that
+/// universe by the witness's sum: a term over the per-step witness `c` that
+/// denotes exactly the member the step adds. Read as "unreadable" this
+/// assignment poisoned `s` (and took a `MCConsensus.tla` deadlock verdict
+/// with it); read as *nothing*, it left `s` at the empty universe, which
+/// the witness then grew to one term – the frame `--paranoid` falsified on
+/// `Rand.tla`. Both universes were wrong.
+#[test]
+fn a_subset_membership_is_read_as_its_base_and_the_witness_is_a_candidate() {
+    let src = module(
+        "Init == s \\in SUBSET (1..3)\n         Next == \\E x \\in s : s' = (s \\ {x}) \\cup {x + x}",
+    );
+    let init = lower(&src, "Init");
+    let next = lower(&src, "Next");
+    let next = nixie_tla::lower::skolemize_infinite_existentials_at(&next, true);
+    let next = nixie_tla::lower::skolemize_with_syms_at(
+        &next,
+        true,
+        &nixie_tla::lower::Syms::from_names(["s".to_string()]),
+    );
+    let frames = frames::analyze(&Input {
+        fun_vars: Vec::new(),
+        init: &init,
+        next: &next,
+        set_vars: vec!["s".into()],
+        max_candidates: 64,
+    });
+    let u = frames.universe.get("s").expect("`s` is framed");
+    let ints: Vec<&str> = u
+        .iter()
+        .filter_map(|e| match e.as_ref() {
+            nixie_tla::Kera::Int(i) => Some(i.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ints, ["1", "2", "3"], "{u:?}");
+    assert!(
+        u.iter()
+            .any(|e| { format!("{e:?}").contains(nixie_tla::lower::SKOLEM_MARK) }),
+        "the witness's sum: {u:?}"
+    );
+    assert_eq!(u.len(), 4, "{u:?}");
+}
+
+/// An assignment with no certain-superset reading – `s \in P` for an
+/// unpinned `CONSTANT` set – poisons the variable: nothing the transitions
+/// grow can be a superset of members nobody can name, and `s` stays
+/// unframed whatever the skolemized `Next` adds to it.
+#[test]
+fn an_unreadable_membership_leaves_the_variable_unframed() {
+    let src = r#"
+---- MODULE P ----
+CONSTANT P
+VARIABLE s, t
+Init == s \in P
+Next == \E x \in s : s' = (s \ {x}) \cup {x + x}
+Inv == \A y \in s : y > 0
+====
+"#;
+    let init = lower(src, "Init");
+    let next = lower(src, "Next");
+    let syms = nixie_tla::lower::Syms::from_names(["P".to_string(), "s".to_string()]);
+    let next = nixie_tla::lower::skolemize_with_syms_at(&next, true, &syms);
+    let frames = frames::analyze(&Input {
+        fun_vars: Vec::new(),
+        init: &init,
+        next: &next,
+        set_vars: vec!["s".into()],
+        max_candidates: 64,
+    });
+    assert!(!frames.universe.contains_key("s"), "{:?}", frames.universe);
 }

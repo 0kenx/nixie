@@ -75,6 +75,10 @@ pub struct Frames {
 enum NoFrame {
     /// The universe outgrew the candidate budget.
     TooMany(usize),
+    /// An assignment the analysis cannot read: the right-hand side is a set
+    /// with no certain-superset reading (a powerset, a function set, a
+    /// domain it cannot enumerate), so nothing it may add is known.
+    Unreadable,
 }
 
 /// The analysis input.
@@ -115,8 +119,17 @@ pub fn analyze(input: &Input<'_>) -> Frames {
     // The initial assignment's elements seed every universe – into the same
     // map the element walk reads, so a transition's `v' = v \cup {..}`
     // inherits them. An `Init` that never mentions a set variable leaves it
-    // at the empty universe, which is a frame – a weak one, grown by the
-    // transition's assignments.
+    // at the empty universe, which the transition's assignments may grow;
+    // an `Init` that assigns it something the walk cannot read poisons it
+    // (below).
+    // An assignment the walk cannot read poisons its variable, here and
+    // at every later round: `S \in SUBSET (1..10)` says nothing about
+    // which members `S` has, and no universe the transitions grow can be a
+    // superset of them. (`--paranoid` found the omission on `Rand.tla`:
+    // `S` took its *empty* initial universe for a frame, the transition's
+    // `S' = (S \ {c}) \cup {c + c}` – `c` a skolem witness – grew it to
+    // one term, and `S@0 \subseteq {c + c}` was falsified.)
+    let mut unreadable: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut seeded = HashMap::new();
     collect_assignments(
         input.init,
@@ -125,8 +138,10 @@ pub fn analyze(input: &Input<'_>) -> Frames {
         &kinds,
         &mut seeded,
         input.max_candidates,
+        &mut unreadable,
     );
     merge_into(&mut state, seeded, input.max_candidates);
+    poison(&mut state, &mut unreadable);
     // Iterate the transition's assignments to a fixpoint. Termination: each
     // round only adds candidates, and a universe past the budget poisons its
     // variable for good.
@@ -145,8 +160,11 @@ pub fn analyze(input: &Input<'_>) -> Frames {
             &kinds,
             &mut grown,
             input.max_candidates,
+            &mut unreadable,
         );
-        if !merge_into(&mut state, grown, input.max_candidates) {
+        let changed = merge_into(&mut state, grown, input.max_candidates);
+        poison(&mut state, &mut unreadable);
+        if !changed {
             break;
         }
     }
@@ -169,6 +187,18 @@ pub fn analyze(input: &Input<'_>) -> Frames {
     Frames {
         universe: universes,
         fun_universe: fun_universes,
+    }
+}
+
+/// Mark every variable whose assignment this round could not be read as
+/// unframed. Once poisoned, a variable stays so: `merge_into` only touches
+/// the `Ok` entries.
+fn poison(
+    state: &mut HashMap<String, Result<Vec<KeraRef>, NoFrame>>,
+    unreadable: &mut std::collections::HashSet<String>,
+) {
+    for v in unreadable.drain() {
+        state.insert(v, Err(NoFrame::Unreadable));
     }
 }
 
@@ -234,6 +264,7 @@ fn collect_assignments(
     kinds: &dyn Fn(&str) -> VarKind,
     out: &mut HashMap<String, Vec<KeraRef>>,
     max_candidates: usize,
+    unreadable: &mut std::collections::HashSet<String>,
 ) {
     let mut work: Vec<&KeraRef> = vec![t];
     while let Some(cur) = work.pop() {
@@ -258,6 +289,7 @@ fn collect_assignments(
                                 kinds,
                                 out,
                                 max_candidates,
+                                unreadable,
                             );
                         }
                     }
@@ -272,8 +304,26 @@ fn collect_assignments(
                 work.push(b);
             }
             Kera::Eq(lhs, rhs) => {
-                collect_eq(lhs, rhs, next_state, state, kinds, out, max_candidates);
-                collect_eq(rhs, lhs, next_state, state, kinds, out, max_candidates);
+                collect_eq(
+                    lhs,
+                    rhs,
+                    next_state,
+                    state,
+                    kinds,
+                    out,
+                    max_candidates,
+                    unreadable,
+                );
+                collect_eq(
+                    rhs,
+                    lhs,
+                    next_state,
+                    state,
+                    kinds,
+                    out,
+                    max_candidates,
+                    unreadable,
+                );
             }
             Kera::In(member, set) => {
                 // The nondeterministic assignment shape `v' \in S` (in an
@@ -286,7 +336,7 @@ fn collect_assignments(
                         (VarKind::Fun, Kera::FunSet { set: inner, .. }) => inner,
                         _ => set,
                     };
-                    offer(&v, rhs, state, kinds, out, max_candidates);
+                    offer(&v, rhs, state, kinds, out, max_candidates, unreadable);
                 }
             }
             _ => {}
@@ -296,6 +346,7 @@ fn collect_assignments(
 
 /// One side of an `=` is a (possibly primed, possibly tuple-decomposed)
 /// variable and the other its assigned value.
+#[allow(clippy::too_many_arguments)]
 fn collect_eq(
     lhs: &KeraRef,
     rhs: &KeraRef,
@@ -304,12 +355,13 @@ fn collect_eq(
     kinds: &dyn Fn(&str) -> VarKind,
     out: &mut HashMap<String, Vec<KeraRef>>,
     max_candidates: usize,
+    unreadable: &mut std::collections::HashSet<String>,
 ) {
     let Some(vs) = assigned_vars(lhs, next_state) else {
         return;
     };
     match vs.as_slice() {
-        [(v, None)] => offer(v, rhs, state, kinds, out, max_candidates),
+        [(v, None)] => offer(v, rhs, state, kinds, out, max_candidates, unreadable),
         // A tuple assignment `<<a', b'>> = <<e1, e2>>`: elementwise, when
         // the right side is a tuple of the same arity.
         _ => {
@@ -317,7 +369,7 @@ fn collect_eq(
                 && items.len() == vs.len()
             {
                 for ((v, _), item) in vs.iter().zip(items.iter()) {
-                    offer(v, item, state, kinds, out, max_candidates);
+                    offer(v, item, state, kinds, out, max_candidates, unreadable);
                 }
             }
         }
@@ -366,6 +418,7 @@ fn primed_or_plain_var(t: &KeraRef, next_state: bool) -> Option<String> {
 }
 
 /// Add the elements of `rhs` to variable `v`'s collected candidates.
+#[allow(clippy::too_many_arguments)]
 fn offer(
     v: &str,
     rhs: &KeraRef,
@@ -373,6 +426,7 @@ fn offer(
     kinds: &dyn Fn(&str) -> VarKind,
     out: &mut HashMap<String, Vec<KeraRef>>,
     max_candidates: usize,
+    unreadable: &mut std::collections::HashSet<String>,
 ) {
     // Only framed state variables have universes.
     if !state.contains_key(v) {
@@ -381,6 +435,18 @@ fn offer(
     let elems = match kinds(v) {
         VarKind::Set => elements(rhs, state, max_candidates),
         VarKind::Fun => dom_keys(rhs, state, max_candidates),
+    };
+    // A right-hand side with no certain-superset reading: whatever this
+    // assignment may add is unknown, so no universe of `v` can be sound –
+    // not the one `Init` gave it, not the one other sites grow. Recorded
+    // here, applied by the caller once the round's readable offers are in
+    // (`poison`), so a round never reports a poisoned variable as grown.
+    let elems = match elems {
+        Some(e) => Some(e),
+        None => {
+            unreadable.insert(v.to_string());
+            None
+        }
     };
     if let Some(elems) = elems {
         let cur = out.entry(v.to_string()).or_default();
@@ -440,6 +506,26 @@ fn elements(
             // A filter keeps a subset of its base; the base's candidates
             // cover it.
             Kera::Filter { set, .. } => work.push(set),
+            // A set-valued conditional is one of its branches: both are
+            // candidates, an over-approximation in the sound direction.
+            Kera::Ite(_, a, b) => {
+                work.push(a);
+                work.push(b);
+            }
+            // `v \in SUBSET T` says `v`'s members are among `T`'s: the base
+            // is the superset. (Read as "unreadable", this poisoned
+            // `chosen` in `MCConsensus.tla` – `chosen \in SUBSET {"a", "b",
+            // "c"}` – and took a deadlock verdict with it; read as *nothing*,
+            // it was `Rand.tla`'s falsified frame.)
+            Kera::Powerset(base) => work.push(base),
+            // `v \in UNION S`: the members of `S`'s members, each of which
+            // must itself be a readable set.
+            Kera::BigUnion(s) => {
+                let parts = elements(s, state, max_candidates)?;
+                for p in parts {
+                    out.extend(elements(&p, state, max_candidates)?);
+                }
+            }
             // A variant filter (issue #17) keeps the payloads of one tag.
             // The binder it feeds ranges over **payloads**, so each
             // **same-tag** base candidate is wrapped in the tag's getter –
