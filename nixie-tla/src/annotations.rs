@@ -55,10 +55,18 @@ pub fn parse_signature1(src: &str) -> Result<Option<ParsedSignature>, Annotation
     let mut p = Parser { toks, at: 0 };
     let params = if p.peek() == Some(&Tok::LParen) {
         p.at += 1;
-        let mut params = vec![parse_sig_param(&mut p)?];
-        while p.peek() == Some(&Tok::Comma) {
-            p.at += 1;
+        // `()` is the empty parameter list, Apalache's `operatorArgs` first
+        // form: the signature of a zero-argument operator, which is how the
+        // corpus annotates a constant written as a definition (`\* @type:
+        // () => Set(Int); Empty == {}`). It is the signature of the body's
+        // own type, and it was refused as `RParen where a type was expected`.
+        let mut params = Vec::new();
+        if p.peek() != Some(&Tok::RParen) {
             params.push(parse_sig_param(&mut p)?);
+            while p.peek() == Some(&Tok::Comma) {
+                p.at += 1;
+                params.push(parse_sig_param(&mut p)?);
+            }
         }
         p.expect(&Tok::RParen, "to close a signature's parameter list")?;
         params
@@ -99,7 +107,9 @@ fn parse_sig_param(p: &mut Parser) -> Result<Type, AnnotationError> {
 
 /// The subset of Type1 this checker reads: Int/Bool/Str, Set(T), Seq(T),
 /// right-associative function arrows, tuples, records, and identifiers
-/// (lowercase = one type variable, uppercase = an uninterpreted type).
+/// (lowercase = one type variable, uppercase = an uninterpreted type, or an
+/// alias where `@typeAlias` defines that name; `$name` = a reference to the
+/// alias `name`, a type constant of its own when no alias defines it).
 ///
 /// Deliberately absent, each a named refusal: variants and operator types
 /// (both belong to the variants sub-issue) and real numbers, which the
@@ -187,6 +197,15 @@ fn tokenize(src: &str) -> Result<Vec<Tok>, AnnotationError> {
         let c = bytes[i];
         match c {
             ' ' | '\t' | '\n' | '\r' => i += 1,
+            // A `//` comment runs to the end of its line, as in Apalache's
+            // `Type1Lexer` (`singleComment`): a type spread over several
+            // `\*` lines may carry one between its lines
+            // (`CommentedTypeAnnotation.tla`).
+            '/' if bytes.get(i + 1) == Some(&'/') => {
+                while i < bytes.len() && bytes[i] != '\n' {
+                    i += 1;
+                }
+            }
             '-' if bytes.get(i + 1) == Some(&'>') => {
                 out.push(Tok::Arrow);
                 i += 2;
@@ -218,6 +237,29 @@ fn tokenize(src: &str) -> Result<Vec<Tok>, AnnotationError> {
             '|' => {
                 out.push(Tok::Pipe);
                 i += 1;
+            }
+            // A reference to a `@typeAlias`: `$transfer` names the alias
+            // `transfer` (Apalache's `aliasReference`, whose `ConstT1`
+            // carries the sigil in its name). The sigil stays in the
+            // identifier, so the reference is never read as the type variable
+            // `transfer`, and when no alias of that name exists it is a type
+            // constant of its own, `$transfer`, as it is in Apalache.
+            '$' => {
+                let start = i + 1;
+                let mut j = start;
+                while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == '_') {
+                    j += 1;
+                }
+                if j == start {
+                    return Err(AnnotationError::Parse {
+                        why: format!("`$` must name a type alias (`$name`) in `{src}`"),
+                    });
+                }
+                out.push(Tok::Ident(format!(
+                    "${}",
+                    bytes[start..j].iter().collect::<String>()
+                )));
+                i = j;
             }
             '}' => {
                 out.push(Tok::RBrace);
@@ -372,6 +414,20 @@ impl Parser {
                 })
             }
             Tok::LParen => {
+                // `() => T` is an operator signature with no parameters, the
+                // same refusal-by-name as `(a, b) => c` below it; a bare `()`
+                // is not a type (Apalache's parser rejects it too).
+                if self.peek() == Some(&Tok::RParen) {
+                    self.at += 1;
+                    if self.peek() == Some(&Tok::BigArrow) {
+                        return Err(AnnotationError::Unsupported {
+                            what: "an operator signature (`(a, b) => c`)",
+                        });
+                    }
+                    return Err(AnnotationError::Parse {
+                        why: "`()`: an empty parameter list belongs to an operator signature (`() => T`)".into(),
+                    });
+                }
                 let mut inner = self.parse_fun()?;
                 while self.peek() == Some(&Tok::Comma) {
                     // A parameter list: `(A, B) => C`. The parameters are
@@ -454,8 +510,45 @@ pub fn assume_with_aliases(
     inf.assume(name, tid)
 }
 
+/// The alias a name refers to, if any: the name itself, or – with a `$`
+/// sigil – the name without it.
+fn find_alias<'a>(
+    name: &str,
+    aliases: &'a [(String, ParsedType)],
+) -> Option<&'a (String, ParsedType)> {
+    aliases.iter().find(|(k, _)| k == name).or_else(|| {
+        name.strip_prefix('$')
+            .and_then(|bare| aliases.iter().find(|(k, _)| k == bare))
+    })
+}
+
+/// [`resolve_aliases`] over a signature: its parameters and its result,
+/// each substituted throughout. A signature is checked against its
+/// operator's body with its types interned directly, so an alias a
+/// parameter names (`$transfer => TX`) has to be resolved before that, or
+/// the check compares the body with an opaque `$transfer`.
+///
+/// # Errors
+///
+/// The inference's own error on an alias nest deeper than the bound.
+pub fn resolve_signature_aliases(
+    sig: ParsedSignature,
+    aliases: &[(String, ParsedType)],
+) -> crate::types::Result<ParsedSignature> {
+    let mut params = Vec::with_capacity(sig.params.len());
+    for p in &sig.params {
+        params.push(resolve_aliases(p, aliases, 0)?);
+    }
+    let result = resolve_aliases(&sig.result, aliases, 0)?;
+    Ok(ParsedSignature { params, result })
+}
+
 /// Substitute alias references throughout a type.
-fn resolve_aliases(
+///
+/// # Errors
+///
+/// The inference's own error on an alias nest deeper than the bound.
+pub fn resolve_aliases(
     ty: &Type,
     aliases: &[(String, ParsedType)],
     depth: usize,
@@ -467,7 +560,13 @@ fn resolve_aliases(
     let r = |t: &Type| resolve_aliases(t, aliases, depth + 1);
     Ok(match ty {
         Type::Bool | Type::Int | Type::Str | Type::Var(_) => ty.clone(),
-        Type::Uninterpreted(n) => match aliases.iter().find(|(k, _)| k == n) {
+        // An uppercase name is an alias when one defines it (Apalache's
+        // deprecated all-caps spelling, `@typeAlias: MESSAGE = ...` used as
+        // `Set(MESSAGE)`), and a `$name` reference is the camelCase alias
+        // `name`. A name no alias defines is a type constant, its own
+        // uninterpreted base, sigil included: `$transfer` with no alias is
+        // `$transfer`, apart from `transfer` the type variable.
+        Type::Uninterpreted(n) => match find_alias(n, aliases) {
             Some((_, parsed)) => r(&parsed.0)?,
             None => ty.clone(),
         },

@@ -91,6 +91,64 @@ Inv == strToInt["a"] = 1
     );
 }
 
+/// A trailing comment on a declaration's own line, then the next
+/// declaration's annotation on the line after: the two comments are adjacent
+/// lines, and read as one group they both took the group's first position –
+/// both bound to `msgs`, the second as an `Int`. An annotation's position is
+/// the line it starts on (`HandshakeWithTypes.tla`'s shape).
+#[test]
+fn an_annotation_binds_from_the_line_it_starts_on() {
+    let src = r#"
+---- MODULE Trailing ----
+EXTENDS Integers
+VARIABLES
+    \* @type: Set(Int);
+    msgs,     \* the set of all messages
+    \* @type: Int;
+    iseqno,   \* Initiator's sequence number
+    \* @type: Str;
+    istate    \* Initiator's state
+Init == msgs = {} /\ iseqno = 0 /\ istate = "init"
+Next == UNCHANGED <<msgs, iseqno, istate>>
+Inv == istate = "init"
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let by_name: Vec<(String, String)> = spec
+        .annotations
+        .iter()
+        .map(|a| (a.name.clone(), a.text.clone()))
+        .collect();
+    assert_eq!(
+        by_name,
+        vec![
+            ("msgs".to_string(), "Set(Int);".to_string()),
+            ("iseqno".to_string(), "Int;".to_string()),
+            ("istate".to_string(), "Str;".to_string()),
+        ]
+    );
+    let module = spec.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc = Bmc::prepare_with_config(
+        &spec,
+        module,
+        Roles {
+            init: "Init",
+            next: "Next",
+            inv: &["Inv"],
+            constraints: &[],
+        },
+        &nixie_tla_syntax::TlcConfig::default(),
+        &mut tm,
+    )
+    .expect("prepares");
+    assert_eq!(
+        bmc.check(0, &mut tm).expect("checks"),
+        Outcome::NoViolationWithin(0)
+    );
+}
+
 // ======== seeding: the annotation settles the shape ========
 
 /// An annotated variable whose only uses would leave its shape ambiguous
@@ -379,4 +437,310 @@ Inv == F(x) = 1
 "#;
     let err = types_err(arity, "Inv");
     assert!(err.contains("parameter(s) but the operator takes"), "{err}");
+}
+
+// ======== the grammar the corpus writes (`$name`, `() => T`) ========
+
+/// `() => T` is the signature of a zero-argument operator – how the corpus
+/// annotates a constant written as a definition (`\* @type: () => Set(Int);`
+/// on `Empty == {}`, Bug1880's shape). It was refused as `RParen where a
+/// type was expected`: the parameter list demanded one parameter.
+#[test]
+fn the_empty_parameter_list_is_a_signature() {
+    use nixie_tla::Type;
+    use nixie_tla::annotations::{parse_signature1, parse_type1};
+    let sig = parse_signature1("() => Set(Int);")
+        .expect("parses")
+        .expect("a signature");
+    assert!(sig.params.is_empty(), "no parameters");
+    assert_eq!(sig.result, Type::Set(Box::new(Type::Int)));
+    // The value-type reader names it a signature rather than failing.
+    let err = match parse_type1("() => Set(Int);") {
+        Ok(_) => panic!("a signature is not a value type"),
+        Err(e) => e,
+    };
+    assert!(err.to_string().contains("signature"), "{err}");
+    // A bare `()` is not a type (Apalache's parser rejects it too).
+    let err = match parse_type1("()") {
+        Ok(_) => panic!("`()` is not a type"),
+        Err(e) => e,
+    };
+    assert!(err.to_string().contains("does not parse"), "{err}");
+
+    // Through a specification: the annotation is checked against the body.
+    let src = r#"
+---- MODULE EmptySig ----
+EXTENDS Integers
+VARIABLE
+    \* @type: Set(Int);
+    set
+Init ==
+    LET \* @type: () => Set(Int);
+        Empty == {}
+    IN
+    set = Empty
+Next == UNCHANGED set
+Inv == set = {}
+====
+"#;
+    assert_eq!(claim(src, "Inv"), Outcome::NoViolationWithin(0));
+    // … and one that disagrees with the body is the type error it is.
+    let src = src
+        .replace("Empty == {}", "Empty == {1}")
+        .replace("() => Set(Int)", "() => Set(Str)");
+    let err = types_err(&src, "Inv");
+    assert!(err.contains("does not match its body"), "{err}");
+}
+
+/// `$name` is a reference to the `@typeAlias` named `name` (Apalache's
+/// `aliasReference`): `@typeAlias: set = Set(Int);` with `@type: $set;` on
+/// a variable seeds that variable with `Set(Int)`. A reference no alias
+/// defines is a type constant of its own, `$name`, apart from `name` the
+/// type variable – never a parse error, which is what the corpus's
+/// `MegaSpec1`, `Invariants`, `Test1182` and the `MC*` specs all met.
+#[test]
+fn a_dollar_name_is_an_alias_reference() {
+    use nixie_tla::Type;
+    use nixie_tla::annotations::{parse_signature1, parse_type1};
+    assert_eq!(
+        parse_type1("$set;").expect("parses").0,
+        Type::Uninterpreted("$set".to_string())
+    );
+    // In a signature's parameters and result alike.
+    let sig = parse_signature1("$transfer => TX;")
+        .expect("parses")
+        .expect("a signature");
+    assert_eq!(
+        sig.params,
+        vec![Type::Uninterpreted("$transfer".to_string())]
+    );
+    assert_eq!(sig.result, Type::Uninterpreted("TX".to_string()));
+
+    let src = r#"
+---- MODULE Aliased ----
+EXTENDS Integers, FiniteSets, Sequences
+VARIABLES
+    \* @typeAlias: set = Set(Int);
+    \* @typeAlias: state = { In: $set, Done: $set, Out: $set };
+    \* @type: $set;
+    In,
+    \* @type: $set;
+    Done
+\* @type: Seq($state) => Bool;
+Seen(hist) == Len(hist) = 0 \/ hist[1].In \subseteq {1}
+Init == In = {1} /\ Done = {}
+Next == Done' = Done \union In /\ In' = In
+Inv == /\ Done \subseteq In
+      /\ Seen(<<[In |-> In, Done |-> Done, Out |-> {}]>>)
+====
+"#;
+    assert_eq!(claim(src, "Inv"), Outcome::NoViolationWithin(0));
+
+    // An alias that does not parse is reported, never dropped: dropped,
+    // every `$name` naming it reads as an opaque type and the annotation
+    // constrains nothing.
+    let bad = r#"
+---- MODULE BadAlias ----
+EXTENDS Integers
+\* @typeAlias: set = Set(;
+\* @type: $set;
+S == {}
+Init == TRUE
+Next == TRUE
+Inv == S = {}
+====
+"#;
+    let err = types_err(bad, "Inv");
+    assert!(
+        err.contains("@typeAlias `set = Set(` does not parse"),
+        "{err}"
+    );
+}
+
+/// One comment may hold several annotations: `TestReqAckVariants.tla`
+/// annotates a variable with a block comment whose first line is the
+/// `@typeAlias:` definition and whose third is the variable's own `@type:`.
+/// Read as one, the alias's text swallowed the `@type:` line and the
+/// variable lost its annotation without a word.
+#[test]
+fn a_comment_may_hold_an_alias_and_a_type() {
+    let src = r#"
+---- MODULE BlockAlias ----
+EXTENDS Integers, Variants
+VARIABLES
+    \* @type: Int;
+    balance,
+    (*
+      @typeAlias: MESSAGE = Req({ ask: Int }) | Ack({ success: Bool });
+
+      @type: Set(MESSAGE);
+     *)
+    msgs,
+    (*
+      @typeAlias: EVENT = Withdraw(Int) | Lacking(Int);
+
+      @type: Seq(EVENT);
+     *)
+    log
+Init == balance = 100 /\ msgs = {} /\ log = <<>>
+Next == UNCHANGED <<balance, msgs, log>>
+Inv == msgs = {} /\ log = <<>>
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let by_name: Vec<(String, String)> = spec
+        .annotations
+        .iter()
+        .map(|a| (a.name.clone(), a.text.clone()))
+        .collect();
+    assert_eq!(
+        by_name,
+        vec![
+            ("balance".to_string(), "Int;".to_string()),
+            ("msgs".to_string(), "Set(MESSAGE);".to_string()),
+            ("log".to_string(), "Seq(EVENT);".to_string()),
+        ],
+        "each annotation in the comment binds to the name that follows it"
+    );
+    let aliases: Vec<(String, String)> = spec
+        .type_aliases
+        .iter()
+        .map(|(k, v)| (k.clone(), v.trim().to_string()))
+        .collect();
+    assert_eq!(
+        aliases,
+        vec![
+            (
+                "MESSAGE".to_string(),
+                "Req({ ask: Int }) | Ack({ success: Bool })".to_string()
+            ),
+            (
+                "EVENT".to_string(),
+                "Withdraw(Int) | Lacking(Int)".to_string()
+            ),
+        ],
+        "an alias's text ends at the `;` that closes it"
+    );
+}
+
+/// An annotation on a `LET` definition is checked against that body, not
+/// seeded by name: the name is inlined away and never reaches inference,
+/// so seeding it can only collide with another `LET` definition of the same
+/// name elsewhere. `TestBags.tla` annotates `EB == EmptyBag` as `Int -> Int`
+/// in one test and `Str -> Int` in another, and the second refused the spec.
+#[test]
+fn a_let_scoped_annotation_is_checked_not_seeded() {
+    let src = r#"
+---- MODULE LetScoped ----
+EXTENDS Integers
+A == LET \* @type: Int;
+        V == 1
+    IN V = 1
+B == LET \* @type: Str;
+        V == "a"
+    IN V = "a"
+Init == TRUE
+Next == TRUE
+Inv == /\ A
+      /\ B
+====
+"#;
+    assert_eq!(claim(src, "Inv"), Outcome::NoViolationWithin(0));
+    // Checked, so an annotation the body contradicts is a type error.
+    let wrong = src.replace("V == \"a\"", "V == 2");
+    let err = types_err(&wrong, "Inv");
+    assert!(err.contains("does not match its body"), "{err}");
+    // A variable of the same name keeps its own annotation.
+    let shadow = r#"
+---- MODULE LetShadow ----
+EXTENDS Integers
+VARIABLE
+    \* @type: Int;
+    V
+Pick == LET \* @type: Str;
+             V == "a"
+         IN V = "a"
+Init == V = 0
+Next == UNCHANGED V
+Inv == /\ Pick
+      /\ V = 0
+====
+"#;
+    assert_eq!(claim(shadow, "Inv"), Outcome::NoViolationWithin(0));
+}
+
+/// An annotation may be written across several `\\*` lines – how
+/// `MC_LamportMutexTyped.tla` defines its alias, and `CommentedTypeAnnotation`
+/// spreads a type, `//` comments included. Sany hands Apalache a
+/// declaration's consecutive comment lines as one text; read line by line
+/// here, the first line was an alias with no record to close.
+#[test]
+fn an_annotation_may_span_several_comment_lines() {
+    let src = r#"
+---- MODULE Spread ----
+EXTENDS Integers, FiniteSets
+VARIABLES
+  \* the messages in flight, by their type
+  \* @typeAlias: message = {
+  \*     type: Str,
+  \*     clock: Int
+  \* };
+  \* @type: Set({
+  \*   // a comment
+  \*   x : Int
+  \* });
+  v,
+  \* @type: Set(message);
+  network
+Init == v = {} /\ network = {}
+Next == UNCHANGED <<v, network>>
+Inv == /\ v = {}
+      /\ network = {}
+====
+"#;
+    assert_eq!(claim(src, "Inv"), Outcome::NoViolationWithin(0));
+
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let by_name: Vec<(String, String)> = spec
+        .annotations
+        .iter()
+        .map(|a| (a.name.clone(), a.text.clone()))
+        .collect();
+    assert_eq!(
+        by_name,
+        vec![
+            (
+                "v".to_string(),
+                "Set({\n   // a comment\n   x : Int\n });".to_string()
+            ),
+            ("network".to_string(), "Set(message);".to_string()),
+        ],
+        "consecutive `\\*` lines are one comment, an annotation binds where it ends"
+    );
+    assert_eq!(
+        spec.type_aliases,
+        vec![(
+            "message".to_string(),
+            "{\n     type: Str,\n     clock: Int\n }".to_string()
+        )],
+        "an alias defined across lines is one definition"
+    );
+
+    // Two annotations on adjacent lines are still two annotations.
+    let src = r#"
+---- MODULE Adjacent ----
+EXTENDS Integers
+CONSTANT
+  \* @type: Int;
+  \* @type: Str;
+  c
+Init == TRUE
+Next == TRUE
+Inv == TRUE
+====
+"#;
+    let err = types_err(src, "Inv");
+    assert!(err.contains("conflicts"), "{err}");
 }

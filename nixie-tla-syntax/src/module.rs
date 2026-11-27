@@ -355,6 +355,36 @@ impl Loader {
 /// that precedes nothing (end of module) is dropped – there is no
 /// declaration to annotate, and inventing one would be the silent-gap
 /// pattern this codebase refuses elsewhere.
+/// Whether the declaration an annotation bound to is a `LET` definition
+/// inside a body rather than a module-level one.
+///
+/// A `LET` definition is inlined where it is used, so its name never reaches
+/// inference as a name: an annotation on it is a statement about that one
+/// body, to be checked there, not a name to seed – two operators may be the
+/// same `LET` name in two places with two annotations, as `TestBags.tla`'s
+/// `EB == EmptyBag` is (`Int -> Int` in one test, `Str -> Int` in another).
+/// Offsets are per file, so the answer is about the module the annotation's
+/// own text came from.
+#[must_use]
+pub fn is_let_scoped(module: &Module, decl_offset: u32) -> bool {
+    for unit in &module.units {
+        let at_unit = match &unit.kind {
+            crate::ast::UnitKind::OpDef { name, .. } => name.span.start.offset == decl_offset,
+            crate::ast::UnitKind::VariableDecl(ids) => {
+                ids.iter().any(|i| i.span.start.offset == decl_offset)
+            }
+            crate::ast::UnitKind::ConstantDecl(ds) => {
+                ds.iter().any(|d| d.name.span.start.offset == decl_offset)
+            }
+            _ => false,
+        };
+        if at_unit {
+            return false;
+        }
+    }
+    operator_at(module, decl_offset).is_some()
+}
+
 /// The operator definition whose **name** starts at `decl_offset` – a
 /// module-level definition or a `LET`-scoped one inside a body, whichever
 /// the attach pass bound an annotation to.
@@ -410,26 +440,202 @@ pub fn operator_at<'m>(
     None
 }
 
+/** One annotation read from a comment's text, before its name is interpreted.
+ *
+ * The scan is Apalache's (`CommentPreprocessor`): an annotation is an
+ * `@name` that follows whitespace, a `*` or the start of the text, and it is
+ * followed by `:` – its text then runs to the `;` that closes it (outside a
+ * string), to the next annotation, or to the end – or by `(`, its text then
+ * running to the closing parenthesis. An `@name` followed by anything else
+ * stands alone and carries no text.
+ *
+ * One comment may hold several: `TestReqAckVariants.tla` annotates a
+ * variable with a block comment whose first line is `@typeAlias: MESSAGE =
+ * Req({ ask: Int }) | Ack({ success: Bool });` and whose third is `@type:
+ * Set(MESSAGE);`. Read as one, the alias's text swallowed the `@type:` line
+ * – which the attach pass then never saw, the variable losing its annotation
+ * without a word.
+ */
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RawAnnotation {
+    /// The name after `@`.
+    name: String,
+    /// The text after the `:`, or between the parentheses.
+    arg: String,
+    /// Where the `@` sits in the text scanned, in characters – which line
+    /// of a multi-line comment the annotation starts on.
+    at: usize,
+}
+
+/// Every annotation in one comment's text, in order (see [`RawAnnotation`]).
+fn scan_annotations(text: &str) -> Vec<RawAnnotation> {
+    let b: Vec<char> = text.chars().collect();
+    let is_ident_start = |c: char| c.is_ascii_alphabetic() || c == '_';
+    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    // An `@` that may open an annotation: at the start, or after whitespace or a `*`.
+    let opens_at = |at: usize| -> bool {
+        b.get(at) == Some(&'@') && (at == 0 || b[at - 1].is_whitespace() || b[at - 1] == '*')
+    };
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < b.len() {
+        if !opens_at(i) {
+            i += 1;
+            continue;
+        }
+        let start = i + 1;
+        let mut j = start;
+        while j < b.len() && is_ident(b[j]) {
+            j += 1;
+        }
+        if j == start || !is_ident_start(b[start]) {
+            i = j;
+            continue;
+        }
+        let name: String = b[start..j].iter().collect();
+        match b.get(j) {
+            Some(':') => {
+                let mut k = j + 1;
+                let mut in_str = false;
+                while k < b.len() {
+                    let c = b[k];
+                    if c == '"' {
+                        in_str = !in_str;
+                    } else if !in_str && (c == ';' || opens_at(k)) {
+                        break;
+                    }
+                    k += 1;
+                }
+                // The `;` that closes it stays in the text, as it does in
+                // Apalache (`@type: Int;` is what its parser is handed);
+                // the Type1 reader tolerates it at the end of a type.
+                let close = if k < b.len() && b[k] == ';' { k + 1 } else { k };
+                out.push(RawAnnotation {
+                    name,
+                    arg: b[j + 1..close].iter().collect(),
+                    at: i,
+                });
+                // An `@` that closed it is read again, as the annotation it
+                // opens.
+                i = close;
+            }
+            Some('(') => {
+                let mut depth = 0usize;
+                let mut k = j;
+                while k < b.len() {
+                    match b[k] {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    k += 1;
+                }
+                let close = if k < b.len() { k } else { b.len() };
+                out.push(RawAnnotation {
+                    name,
+                    arg: b[j + 1..close].iter().collect(),
+                    at: i,
+                });
+                i = close + 1;
+            }
+            _ => {
+                out.push(RawAnnotation {
+                    name,
+                    arg: String::new(),
+                    at: i,
+                });
+                i = j;
+            }
+        }
+    }
+    out
+}
+
+/// The comments of one module in the groups an annotation may span: a block
+/// comment on its own, and consecutive one-line comments that start each on
+/// the line the previous one ends.
+///
+/// `\* @typeAlias: message = {` on one line and the record's fields and
+/// `};` on the next three is how `MC_LamportMutexTyped.tla` annotates its
+/// alias; `CommentedTypeAnnotation.tla` spreads a type over four lines.
+/// Sany hands Apalache a declaration's consecutive comment lines as one
+/// text, and its `CommentPreprocessor` prunes the `\*` tokens inside an
+/// annotation, so there the annotation is whole. Read line by line here, the
+/// first line's text was an alias with no record to close – dropped without
+/// a word until aliases were parsed loudly, and then a parse error.
+fn comment_groups(comments: &[crate::token::Comment]) -> Vec<Vec<&crate::token::Comment>> {
+    let mut groups: Vec<Vec<&crate::token::Comment>> = Vec::new();
+    for c in comments {
+        let continues = match groups.last().and_then(|g| g.last()) {
+            Some(prev) => {
+                !prev.block
+                    && !c.block
+                    && prev.span.end.line + 1 == c.span.start.line
+                    && prev.span.end.offset <= c.span.start.offset
+            }
+            None => false,
+        };
+        if continues {
+            groups.last_mut().expect("checked above").push(c);
+        } else {
+            groups.push(vec![c]);
+        }
+    }
+    groups
+}
+
+/// The annotations of one comment group, each with the source offset of the
+/// **line it starts on** – the position the attach pass binds by.
+///
+/// A group's lines are scanned as one text, but an annotation is not given
+/// the group's first line: in `VARIABLES \* @type: Set(…); msgs, \* a
+/// comment` followed by `\* @type: Int; iseqno`, the trailing comment
+/// joins the next annotation into one group, and both read as `msgs`'s –
+/// the first a set, the second an integer.
+fn scanned_annotations(group: &[&crate::token::Comment]) -> Vec<(u32, RawAnnotation)> {
+    let mut text = String::new();
+    let mut line_starts = Vec::with_capacity(group.len());
+    for (i, c) in group.iter().enumerate() {
+        if i > 0 {
+            text.push('\n');
+        }
+        line_starts.push(text.chars().count());
+        text.push_str(&c.text);
+    }
+    scan_annotations(&text)
+        .into_iter()
+        .map(|raw| {
+            let line = line_starts.iter().rposition(|&s| s <= raw.at).unwrap_or(0);
+            (group[line].span.start.offset, raw)
+        })
+        .collect()
+}
+
 /// Collect `@typeAlias: NAME = TYPE;` comments as `(name, type-text)`
-/// pairs. The alias body is the raw text after `=` (the trailing `;` is
-/// stripped here, matching how `@type:` treats one); parsing it is the
-/// annotation layer's business, where the Type1 grammar lives.
+/// pairs. The alias body is the raw text after `=` up to the `;` that closes
+/// the annotation (absent, to its end); parsing it is the annotation layer's
+/// business, where the Type1 grammar lives.
 fn collect_type_aliases(comments: &[crate::token::Comment]) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    for c in comments {
-        let body = c.text.trim();
-        let Some(rest) = body.strip_prefix("@typeAlias:") else {
+    for (_, raw) in comment_groups(comments)
+        .iter()
+        .flat_map(|g| scanned_annotations(g))
+    {
+        if raw.name != "typeAlias" {
             continue;
-        };
-        let rest = rest.trim();
-        let Some(eq) = rest.find('=') else {
-            continue;
-        };
-        let name = rest[..eq].trim().to_string();
-        let mut ty = rest[eq + 1..].trim().to_string();
-        if let Some(semi) = ty.rfind(';') {
-            ty.truncate(semi);
         }
+        let Some(eq) = raw.arg.find('=') else {
+            continue;
+        };
+        let name = raw.arg[..eq].trim().to_string();
+        let rest = raw.arg[eq + 1..].trim();
+        // The `;` that closes the annotation is not part of the type.
+        let ty = rest.strip_suffix(';').unwrap_or(rest).trim().to_string();
         if !name.is_empty() && !ty.is_empty() {
             out.push((name, ty));
         }
@@ -442,14 +648,11 @@ fn attach_annotations(
     m: &Module,
     comments: &[crate::token::Comment],
 ) -> Vec<Annotation> {
-    use crate::token::Comment;
-    let named: Vec<(u32, &str)> = comments
+    let named: Vec<(u32, String)> = comment_groups(comments)
         .iter()
-        .filter_map(|c: &Comment| {
-            let body = c.text.trim();
-            let rest = body.strip_prefix("@type:")?;
-            Some((c.span.start.offset, rest.trim()))
-        })
+        .flat_map(|g| scanned_annotations(g))
+        .filter(|(_, raw)| raw.name == "type")
+        .map(|(off, raw)| (off, raw.arg.trim().to_string()))
         .collect();
     if named.is_empty() {
         return Vec::new();

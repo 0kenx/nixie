@@ -1139,6 +1139,22 @@ impl Bmc {
             &nixie_tla_syntax::module::Annotation,
             nixie_tla::annotations::ParsedSignature,
         )> = Vec::new();
+        // The alias table resolves an uppercase name and a `$name` reference
+        // against the spec's `@typeAlias: NAME = ...` definitions (issue
+        // #17): `@type: Set($message)`, `@type: $transfer => TX`. One table
+        // for every annotation, aliases included – a signature's parameters
+        // are interned as they are parsed, so theirs are resolved up front.
+        // An alias that does not parse is the type error it is in Apalache
+        // (`Parser error in type alias`): dropped silently, every `$name`
+        // that names it would read as an opaque type constant and the
+        // annotation would constrain nothing.
+        let mut aliases: Vec<(String, nixie_tla::annotations::ParsedType)> = Vec::new();
+        for (k, text) in &spec.type_aliases {
+            let parsed = nixie_tla::annotations::parse_type1(text).map_err(|e| {
+                SetupError::Types(format!("the @typeAlias `{k} = {text}` does not parse: {e}"))
+            })?;
+            aliases.push((k.clone(), parsed));
+        }
         for ann in &spec.annotations {
             let parsed = match nixie_tla::annotations::parse_type1(&ann.text) {
                 Ok(p) => p,
@@ -1163,6 +1179,13 @@ impl Bmc {
                                     ann.name
                                 ))
                             })?;
+                        let sig = nixie_tla::annotations::resolve_signature_aliases(sig, &aliases)
+                            .map_err(|e| {
+                                SetupError::Types(format!(
+                                    "the @type: annotation on `{}` does not resolve its aliases: {e}",
+                                    ann.name
+                                ))
+                            })?;
                         signatures.push((ann, sig));
                         continue;
                     }
@@ -1179,17 +1202,30 @@ impl Bmc {
                     )));
                 }
             };
-            // The alias table resolves `@type: Set(MESSAGE)` against the
-            // spec's `@typeAlias: MESSAGE = ...` definitions (issue #17).
-            let aliases: Vec<(String, nixie_tla::annotations::ParsedType)> = spec
-                .type_aliases
-                .iter()
-                .filter_map(|(k, text)| {
-                    nixie_tla::annotations::parse_type1(text)
-                        .ok()
-                        .map(|p| (k.clone(), p))
-                })
-                .collect();
+            // A `LET` definition is inlined where it is used, so its name
+            // is not a name inference sees: seeded by name, the annotation
+            // can only collide with another `LET` definition of the same
+            // name elsewhere – `TestBags.tla` annotates `EB == EmptyBag`
+            // `Int -> Int` in one test and `Str -> Int` in another, and the
+            // second refused the specification. Checked against its own
+            // body instead, as a signature with no parameters. Offsets are
+            // per file: only the root module's annotations are read here.
+            if ann.module == spec.root
+                && nixie_tla_syntax::module::is_let_scoped(module, ann.decl_offset)
+            {
+                let sig = nixie_tla::annotations::ParsedSignature {
+                    params: Vec::new(),
+                    result: nixie_tla::annotations::resolve_aliases(&parsed.0, &aliases, 0)
+                        .map_err(|e| {
+                            SetupError::Types(format!(
+                                "the @type: annotation on `{}` does not resolve its aliases: {e}",
+                                ann.name
+                            ))
+                        })?,
+                };
+                signatures.push((ann, sig));
+                continue;
+            }
             if let Err(e) = nixie_tla::annotations::assume_with_aliases(
                 &mut inf,
                 &ann.name,
