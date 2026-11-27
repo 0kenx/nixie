@@ -516,6 +516,7 @@ impl Solver {
             let mut encoder = FfTseitin {
                 sat: &mut sat,
                 atom_var: &mut atom_var,
+                encoded: FxHashMap::default(),
             };
             for &assertion in &self.assertions {
                 match encoder.encode(assertion, manager) {
@@ -820,6 +821,9 @@ fn fields_of_literal(lit: TermId, manager: &TermManager) -> Vec<FieldId> {
 struct FfTseitin<'a> {
     sat: &'a mut SatSolver,
     atom_var: &'a mut FxHashMap<TermId, Var>,
+    /// The literal each Boolean subterm was encoded to, kept for the
+    /// encoder's lifetime (every assertion of the check).
+    encoded: FxHashMap<TermId, Lit>,
 }
 
 impl<'a> FfTseitin<'a> {
@@ -835,10 +839,24 @@ impl<'a> FfTseitin<'a> {
     }
 
     /// Encode a Boolean term to a literal (`None` = unsupported shape).
+    ///
+    /// A subterm is encoded once. The assertions are hash-consed DAGs, and
+    /// the walk used to expand each occurrence of a shared subterm on its
+    /// own: one gate and its clauses per occurrence, along every path into
+    /// it – exponential in the depth of a diamond for a formula linear in
+    /// it (the tree spelling of a depth-14 diamond of 40 gates holds more
+    /// than 40,000 gate occurrences, and cost 1,146.6 M instructions to
+    /// encode where the memo costs 0.385 M). [`Self::encoded`] answers the
+    /// second occurrence with the first one's literal (the gate is the
+    /// same function of the same atom variables, so the clauses are the
+    /// ones already added), and a subterm is recorded after its children
+    /// are. What each assertion's literal denotes over the atom variables
+    /// is unchanged, and so is every model of the skeleton projected onto
+    /// them.
     fn encode(&mut self, t: TermId, manager: &mut TermManager) -> Option<Lit> {
         enum Frame {
             Expand(TermId),
-            Combine(CombineKind, usize),
+            Combine(CombineKind, usize, TermId),
         }
         #[allow(dead_code)]
         enum CombineKind {
@@ -854,10 +872,22 @@ impl<'a> FfTseitin<'a> {
         while let Some(frame) = stack.pop() {
             match frame {
                 Frame::Expand(x) => {
+                    if let Some(&encoded) = self.encoded.get(&x) {
+                        results.push(encoded);
+                        continue;
+                    }
                     let term = manager.get(x)?;
                     match &term.kind {
-                        TermKind::True => results.push(Lit::pos(self.sat.new_var_forced_true())),
-                        TermKind::False => results.push(Lit::neg(self.sat.new_var_forced_true())),
+                        TermKind::True => {
+                            let lit = Lit::pos(self.sat.new_var_forced_true());
+                            self.encoded.insert(x, lit);
+                            results.push(lit);
+                        }
+                        TermKind::False => {
+                            let lit = Lit::neg(self.sat.new_var_forced_true());
+                            self.encoded.insert(x, lit);
+                            results.push(lit);
+                        }
                         TermKind::Eq(a, b) => {
                             // Check independently of the dispatch shape gate:
                             // every atom must belong to an actual field slice.
@@ -872,13 +902,14 @@ impl<'a> FfTseitin<'a> {
                         // are taken from `results` (the operand stack) at
                         // combine time – children popped in order.
                         TermKind::Not(_) => {
-                            stack.push(Frame::Combine(CombineKind::Not, 1));
+                            stack.push(Frame::Combine(CombineKind::Not, 1, x));
                             stack.push(Frame::Expand(term_arg(term, 0)?));
                         }
                         TermKind::And(children) => {
                             stack.push(Frame::Combine(
                                 CombineKind::And(children.len()),
                                 children.len(),
+                                x,
                             ));
                             for &c in children.iter().rev() {
                                 stack.push(Frame::Expand(c));
@@ -888,23 +919,24 @@ impl<'a> FfTseitin<'a> {
                             stack.push(Frame::Combine(
                                 CombineKind::Or(children.len()),
                                 children.len(),
+                                x,
                             ));
                             for &c in children.iter().rev() {
                                 stack.push(Frame::Expand(c));
                             }
                         }
                         TermKind::Xor(a, b) => {
-                            stack.push(Frame::Combine(CombineKind::Xor, 2));
+                            stack.push(Frame::Combine(CombineKind::Xor, 2, x));
                             stack.push(Frame::Expand(*b));
                             stack.push(Frame::Expand(*a));
                         }
                         TermKind::Implies(a, b) => {
-                            stack.push(Frame::Combine(CombineKind::Implies, 2));
+                            stack.push(Frame::Combine(CombineKind::Implies, 2, x));
                             stack.push(Frame::Expand(*b));
                             stack.push(Frame::Expand(*a));
                         }
                         TermKind::Ite(c, a, b) => {
-                            stack.push(Frame::Combine(CombineKind::Ite, 3));
+                            stack.push(Frame::Combine(CombineKind::Ite, 3, x));
                             stack.push(Frame::Expand(*b));
                             stack.push(Frame::Expand(*a));
                             stack.push(Frame::Expand(*c));
@@ -927,19 +959,24 @@ impl<'a> FfTseitin<'a> {
                                 .enumerate()
                                 .flat_map(|(i, &a)| args[i + 1..].iter().map(move |&b| (a, b)))
                                 .collect();
-                            stack.push(Frame::Combine(CombineKind::And(pairs.len()), pairs.len()));
-                            for (a, b) in pairs.iter().rev() {
-                                // Each conjunct is ¬(a = b): expand the
-                                // equality first (it pops first), then a
-                                // Not combine over its literal.
-                                stack.push(Frame::Combine(CombineKind::Not, 1));
-                                stack.push(Frame::Expand(manager.mk_eq(*a, *b)));
+                            stack.push(Frame::Combine(
+                                CombineKind::And(pairs.len()),
+                                pairs.len(),
+                                x,
+                            ));
+                            for &(a, b) in pairs.iter().rev() {
+                                // Each conjunct is ¬(a = b), an ordinary
+                                // term: its own encoding, shared with every
+                                // other occurrence of the same pair.
+                                let eq = manager.mk_eq(a, b);
+                                let differ = manager.mk_not(eq);
+                                stack.push(Frame::Expand(differ));
                             }
                         }
                         _ => return None,
                     }
                 }
-                Frame::Combine(kind, n) => {
+                Frame::Combine(kind, n, x) => {
                     if results.len() < n {
                         return None;
                     }
@@ -947,11 +984,8 @@ impl<'a> FfTseitin<'a> {
                     // order; split off the last n as [a0, a1, ...].
                     let operands: SmallVec<[Lit; 4]> =
                         results.split_off(results.len() - n).into_iter().collect();
-                    match kind {
-                        CombineKind::Not => {
-                            let l = operands[0];
-                            results.push(l.negate());
-                        }
+                    let lit = match kind {
+                        CombineKind::Not => operands[0].negate(),
                         CombineKind::And(_) => {
                             let v = self.sat.new_var();
                             for &l in &operands {
@@ -963,7 +997,7 @@ impl<'a> FfTseitin<'a> {
                                 operands.iter().map(|l| l.negate()).collect();
                             clause.push(Lit::pos(v));
                             self.sat.add_clause(clause);
-                            results.push(Lit::pos(v));
+                            Lit::pos(v)
                         }
                         CombineKind::Or(_) => {
                             let v = self.sat.new_var();
@@ -974,7 +1008,7 @@ impl<'a> FfTseitin<'a> {
                             let mut clause: SmallVec<[Lit; 4]> = operands.clone();
                             clause.push(Lit::neg(v));
                             self.sat.add_clause(clause);
-                            results.push(Lit::pos(v));
+                            Lit::pos(v)
                         }
                         CombineKind::Xor => {
                             let b = operands[1];
@@ -994,9 +1028,8 @@ impl<'a> FfTseitin<'a> {
                             self.sat.add_clause([Lit::neg(v), a.negate(), b.negate()]);
                             self.sat.add_clause([Lit::pos(v), a.negate(), b]);
                             self.sat.add_clause([Lit::pos(v), a, b.negate()]);
-                            results.push(Lit::pos(v));
+                            Lit::pos(v)
                         }
-
                         CombineKind::Implies => {
                             // operands = [a, b] (a → b).
                             let b = operands[1];
@@ -1011,9 +1044,8 @@ impl<'a> FfTseitin<'a> {
                             self.sat.add_clause([Lit::neg(v), a.negate(), b]);
                             self.sat.add_clause([a, Lit::pos(v)]);
                             self.sat.add_clause([b.negate(), Lit::pos(v)]);
-                            results.push(Lit::pos(v));
+                            Lit::pos(v)
                         }
-
                         CombineKind::Ite => {
                             // operands = [c, a, b] (children expanded in
                             // reverse push order: c, then a, then b).
@@ -1032,10 +1064,11 @@ impl<'a> FfTseitin<'a> {
                             self.sat.add_clause([c, b.negate(), Lit::pos(v)]);
                             self.sat.add_clause([c.negate(), a, Lit::neg(v)]);
                             self.sat.add_clause([c, b, Lit::neg(v)]);
-                            results.push(Lit::pos(v));
+                            Lit::pos(v)
                         }
-
-                    }
+                    };
+                    self.encoded.insert(x, lit);
+                    results.push(lit);
                 }
             }
         }
@@ -1228,6 +1261,7 @@ impl Solver {
             let mut encoder = FfTseitin {
                 sat: &mut sat,
                 atom_var: &mut atom_var,
+                encoded: FxHashMap::default(),
             };
             for &assertion in &self.assertions {
                 match encoder.encode(assertion, manager) {
@@ -2269,6 +2303,116 @@ mod fragment_tests {
         assert!(ufff_complete(&manager, &[root], model).is_none());
     }
 
+    /// One script's single assertion.
+    fn assertion_of(script: &str) -> (TermManager, TermId) {
+        let mut manager = TermManager::new();
+        let commands = nixie_core::smtlib::parse_script(script, &mut manager).expect("script");
+        let root = commands
+            .into_iter()
+            .find_map(|command| match command {
+                nixie_core::smtlib::Command::Assert(term) => Some(term),
+                _ => None,
+            })
+            .expect("assertion");
+        (manager, root)
+    }
+
+    /// Whether a kind is a Boolean connective the skeleton gives a gate to.
+    fn is_gate(kind: &TermKind) -> bool {
+        matches!(
+            kind,
+            TermKind::Not(_)
+                | TermKind::And(_)
+                | TermKind::Or(_)
+                | TermKind::Xor(_, _)
+                | TermKind::Implies(_, _)
+                | TermKind::Ite(_, _, _)
+                | TermKind::Distinct(_)
+        )
+    }
+
+    /// The distinct gate subterms of a DAG (a visited walk), and how many
+    /// gate occurrences its spelling as a tree has.
+    fn gates_dag_and_tree(manager: &TermManager, root: TermId) -> (usize, usize) {
+        let mut distinct: FxHashSet<TermId> = FxHashSet::default();
+        let mut occurrences = 0usize;
+        let mut stack = vec![root];
+        while let Some(t) = stack.pop() {
+            let Some(term) = manager.get(t) else {
+                continue;
+            };
+            if is_gate(&term.kind) {
+                occurrences += 1;
+                distinct.insert(t);
+            }
+            stack.extend(nixie_core::ast::get_children(&term.kind));
+        }
+        (distinct.len(), occurrences)
+    }
+
+    /// A shared subterm is encoded once. A diamond of fourteen levels –
+    /// three gates per level, each over gates of the level below and none
+    /// under its own operator, the top level's `ite` the root – has 40
+    /// distinct gates below it and three atoms; the encoder mints one
+    /// variable for each, where the walk that expanded every occurrence
+    /// minted one per occurrence (exponential in the depth).
+    #[test]
+    fn a_shared_subterm_is_encoded_once() {
+        let mut a = "(= x #f0m7)".to_string();
+        let mut b = "(= y #f0m7)".to_string();
+        let mut c = "(= x #f1m7)".to_string();
+        for _ in 0..14 {
+            let next_a = format!("(and {b} {c})");
+            let next_b = format!("(or {a} {c})");
+            let next_c = format!("(ite {a} {b} {c})");
+            a = next_a;
+            b = next_b;
+            c = next_c;
+        }
+        let (mut manager, root) = assertion_of(&format!(
+            "(declare-const x (_ FiniteField 7))
+             (declare-const y (_ FiniteField 7))
+             (assert {c})"
+        ));
+        let (gates, occurrences) = gates_dag_and_tree(&manager, root);
+        assert_eq!(
+            gates, 40,
+            "three gates per level, less the two the root leaves unused"
+        );
+        assert!(
+            occurrences > 40_000,
+            "the tree spelling is where the cost was: {occurrences}"
+        );
+
+        let mut sat = SatSolver::new();
+        let mut atoms = FxHashMap::default();
+        let root_lit = {
+            let mut encoder = FfTseitin {
+                sat: &mut sat,
+                atom_var: &mut atoms,
+                encoded: FxHashMap::default(),
+            };
+            let lit = encoder.encode(root, &mut manager).expect("encoded");
+            assert_eq!(
+                encoder.encoded.len(),
+                gates,
+                "one literal per distinct gate"
+            );
+            lit
+        };
+        assert_eq!(atoms.len(), 3);
+        assert_eq!(sat.num_vars(), 3 + gates);
+
+        // The skeleton still denotes the term: every gate is true when every
+        // atom is, and false when every atom is.
+        sat.add_clause([root_lit]);
+        assert_eq!(sat.solve(), nixie_sat::SolverResult::Sat);
+        for (_, &var) in atoms.iter() {
+            sat.add_clause([Lit::neg(var)]);
+        }
+        assert_eq!(sat.solve(), nixie_sat::SolverResult::Unsat);
+    }
+
     /// The Boolean term `t` under `value_of` (an FF term of the formula is a
     /// variable or a constant of one field; the connectives are the
     /// skeleton's own).
@@ -2375,7 +2519,8 @@ mod fragment_tests {
                 let mut encoder = FfTseitin {
                     sat: &mut sat,
                     atom_var: &mut atoms,
-                    };
+                    encoded: FxHashMap::default(),
+                };
                 encoder.encode(root, &mut manager).expect("encodable")
             };
             for vx in 0..5u32 {
@@ -2478,7 +2623,8 @@ mod fragment_tests {
                     let mut encoder = FfTseitin {
                         sat: &mut sat,
                         atom_var: &mut atoms,
-                            };
+                        encoded: FxHashMap::default(),
+                    };
                     encoder.encode(gate, &mut manager).expect("encodable")
                 };
                 // Every atom of the gate, at its assigned truth.
@@ -2530,6 +2676,7 @@ mod fragment_tests {
             let mut encoder = FfTseitin {
                 sat: &mut sat,
                 atom_var: &mut atoms,
+                encoded: FxHashMap::default(),
             };
             assert!(encoder.encode(root, &mut manager).is_none());
             assert!(atoms.is_empty());
