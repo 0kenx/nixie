@@ -70,7 +70,7 @@ pub use rewriting::{
 };
 #[cfg(feature = "std")]
 pub use simd::{simd_all_equal, simd_compare_termids, simd_contains, simd_hash_termids};
-pub use term::{InstPattern, RoundingMode, Term, TermId, TermKind};
+pub use term::{InstPattern, MatchCase, RoundingMode, Term, TermId, TermKind};
 pub use term_hash::TermKindHasher;
 pub use traversal::{
     TermVisitor, TraversalError, VisitorAction, collect_free_vars, collect_subterms, compute_depth,
