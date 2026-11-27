@@ -89,6 +89,14 @@ impl Drop for DepthReset {
     }
 }
 
+/// What became of a completed frame (see [`Parser::close_or_absorb`]).
+enum Closed {
+    /// The frame built its term.
+    Value(TermId),
+    /// The frame's operands joined its parent's, and the parent wants more.
+    Absorbed,
+}
+
 /// How many operand terms a pending compound term still expects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Plan {
@@ -96,6 +104,14 @@ pub(super) enum Plan {
     Fixed(u8),
     /// Operand terms until the closing `)`.
     Variadic,
+}
+
+/// Whether an operator `op` closing directly under `parent_op` joins the
+/// parent's operand list instead of building a term of its own (see
+/// [`Parser::close_or_absorb`]): the two variadic operators whose builder
+/// flattens a nested application of itself, `and` and `or`.
+fn absorbs_nested(parent_op: &str, op: &str) -> bool {
+    matches!(op, "and" | "or") && parent_op == op
 }
 
 /// The outer bindings a binder shadowed, restored when it closes.
@@ -340,10 +356,11 @@ impl Parser<'_> {
                 let Some(frame) = frames.pop() else {
                     break;
                 };
-                if matches!(frame, Frame::Op { .. }) {
-                    op_depth = op_depth.saturating_sub(1);
+                match self.close_or_absorb(frame, &mut frames, &mut op_depth)? {
+                    Closed::Value(built) => value = built,
+                    // The frame's operands joined its parent's; the parent reads on.
+                    Closed::Absorbed => break,
                 }
-                value = self.close_frame(frame)?;
             }
         }
     }
@@ -700,6 +717,77 @@ impl Parser<'_> {
                     });
                 }
             }
+        }
+    }
+
+    /// Close a completed frame – or, for `and` and `or`, absorb it into a
+    /// directly enclosing application of the same operator.
+    ///
+    /// `(and a (and b c))` and `(and a b c)` build the same term: `mk_and`
+    /// flattens a nested `and`. Closing each level on its own made that
+    /// flattening quadratic – every level copied and interned the whole
+    /// prefix read so far (n − 1 nodes holding 2 + 3 + … + n operands for n
+    /// leaves: 8,390,655 stored operands at 4,096, against the flat
+    /// spelling's 4,096). So an `and` that closes directly under an `and`
+    /// (an `or` under an `or`) hands its operands to the parent instead of
+    /// building a term, and only the outermost one is interned.
+    ///
+    /// "Directly" is the frame stack. A `let` or an annotation between the
+    /// two keeps them apart: there the inner term is a term in its own right
+    /// – the value a binding stands for, the term an annotation is attached
+    /// to – and it is built.
+    ///
+    /// What the parent builds from the joined operands is what it built from
+    /// the closed inner term. `mk_and` returns `false` on a `false` operand,
+    /// drops `true`, flattens an `and` operand into the operand list, and
+    /// returns its single operand unwrapped; so for an inner level whose
+    /// operands are `I` and the parent's others `R`: an inner `false` makes
+    /// both spellings `false`; an all-`true` (or empty) `I` leaves `R` in
+    /// both; a single surviving operand is pushed in both; and two or more
+    /// are the flattened list in both. `mk_or` is the dual. The depth budget
+    /// is unchanged with it: the absorbed frame was on the stack, and was
+    /// counted, while it was open.
+    fn close_or_absorb(
+        &mut self,
+        mut frame: Frame,
+        frames: &mut Vec<Frame>,
+        op_depth: &mut u32,
+    ) -> Result<Closed> {
+        loop {
+            if matches!(frame, Frame::Op { .. }) {
+                *op_depth = op_depth.saturating_sub(1);
+            }
+            let absorb = match (&frame, frames.last_mut()) {
+                (
+                    Frame::Op {
+                        head: Head::Builtin(op),
+                        plan: Plan::Variadic,
+                        args,
+                    },
+                    Some(Frame::Op {
+                        head: Head::Builtin(parent_op),
+                        plan: Plan::Variadic,
+                        args: parent_args,
+                    }),
+                ) if absorbs_nested(parent_op, op) => {
+                    parent_args.extend_from_slice(args);
+                    true
+                }
+                _ => false,
+            };
+            if !absorb {
+                return Ok(Closed::Value(self.close_frame(frame)?));
+            }
+            // The absorbed frame's `)` is consumed; whether the parent
+            // closes now is the next token's answer, exactly as after an
+            // ordinary operand.
+            if !self.try_consume_rparen() {
+                return Ok(Closed::Absorbed);
+            }
+            frame = frames.pop().ok_or_else(|| NixieError::ParseError {
+                position: self.lexer.position(),
+                message: "internal: absorbed a frame under none".to_string(),
+            })?;
         }
     }
 
