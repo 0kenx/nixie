@@ -858,6 +858,13 @@ fn skolemizable_domain(set: &KeraRef, syms: &Syms) -> bool {
     }
     match set.as_ref() {
         Kera::Var(n) => syms.contains(n.as_str()),
+        // A set operation over a standard infinite set – `Nat \ {0}`, the
+        // idiom `FoldExcept.tla` bounds a delay with. It cannot be
+        // enumerated any more than `Nat` can, and the witness's membership
+        // `c \in Nat \ {0}` is encoded structurally, as any membership in
+        // that shape is. Left to the enumeration, `\E delta \in Nat \
+        // {0}` declined as "`Nat` used as a value".
+        Kera::SetBin(_, x, y) => infinite_set_of(x).is_some() || infinite_set_of(y).is_some(),
         _ => false,
     }
 }

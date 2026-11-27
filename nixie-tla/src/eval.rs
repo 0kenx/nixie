@@ -428,8 +428,7 @@ impl Evaluator {
             }
             Kera::In(a, b) => {
                 let x = self.go(a, env)?;
-                let s = self.set_of(b, env)?;
-                Ok(Value::Bool(s.contains(&x)))
+                Ok(Value::Bool(value_in_set(self, x, b, env)?))
             }
 
             Kera::Forall { var, set, body } => {
@@ -1428,6 +1427,35 @@ fn value_in_set(
             ("STRING", Value::Str(_)) => true,
             _ => false,
         });
+    }
+    // A set operation with a standard infinite set on one side – `Nat \
+    // {0}`, the idiom `FoldExcept.tla` bounds a delay with – is read
+    // structurally too, as the encoder reads it: the infinite side by the
+    // value's kind, the other as the finite set it is. A skolem witness's
+    // `d \in Nat \ {0}` is evaluated here at replay; materialising the
+    // set instead refused `Nat` as a free name, and a correct counterexample
+    // came back `Unknown`.
+    if let Kera::SetBin(op, l, r) = set.as_ref() {
+        let sides = match (standard_infinite_set(l), standard_infinite_set(r)) {
+            (Some(_), _) => Some((l, r, true)),
+            (None, Some(_)) => Some((r, l, false)),
+            (None, None) => None,
+        };
+        if let Some((std, other, std_first)) = sides {
+            let in_std = value_in_set(this, v.clone(), std, env)?;
+            let in_other = value_in_set(this, v, other, env)?;
+            return Ok(match op {
+                SetOp::Union => in_std || in_other,
+                SetOp::Intersect => in_std && in_other,
+                SetOp::Difference => {
+                    if std_first {
+                        in_std && !in_other
+                    } else {
+                        in_other && !in_std
+                    }
+                }
+            });
+        }
     }
     Ok(this.set_of(set, env)?.contains(&v))
 }

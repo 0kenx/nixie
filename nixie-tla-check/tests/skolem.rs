@@ -225,3 +225,42 @@ fn the_witness_marker_is_recognised_exactly() {
     assert!(!is_skolem_witness("k"), "a plain name");
     assert!(!is_skolem_witness("N"), "a CONSTANT");
 }
+
+/// `\E d \in Nat \ {0}` is skolemized like `\E d \in Nat`: the difference
+/// cannot be enumerated any more than `Nat` can, and the witness keeps its
+/// membership as a constraint, encoded structurally – so `x` is at least 1.
+/// Left to the enumeration it declined as "`Nat` used as a value", which is
+/// what refused `FoldExcept.tla`'s `Next` (`\E delta \in Nat \ {0}`). And
+/// the replay reads the membership structurally too: a correct
+/// counterexample came back `Unknown` while the evaluator tried to
+/// materialise `Nat \ {0}`.
+#[test]
+fn a_difference_of_a_standard_set_skolemizes_as_the_set_does() {
+    for (body, want) in [
+        ("x >= 1", Outcome::NoViolationWithin(0)),
+        ("x # 0", Outcome::NoViolationWithin(0)),
+        ("x = 0", Outcome::Violation { step: 0 }),
+        ("x < 0", Outcome::Violation { step: 0 }),
+    ] {
+        let src = format!(
+            r#"
+---- MODULE Delta ----
+EXTENDS Integers
+VARIABLE
+    \* @type: Int;
+    x
+Init == \E d \in Nat \ {{0}}: x = d
+Next == UNCHANGED <<x>>
+Inv  == {body}
+====
+"#
+        );
+        let parsed = nixie_tla_syntax::parse_file(&src).expect("parses");
+        let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+        let module = spec.root_module().expect("has a root module");
+        let mut tm = TermManager::new();
+        let mut bmc =
+            Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+        assert_eq!(bmc.check(0, &mut tm).expect("checks"), want, "`{body}`");
+    }
+}
