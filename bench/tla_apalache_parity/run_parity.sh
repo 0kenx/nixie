@@ -93,7 +93,7 @@ while IFS=$'\x1f' read -r id mode argv_prefix spec expected; do
   # directory gave both tools a file that was not there.
   mkdir -p "$WORK/$(dirname "$spec")"
   cp "$SPEC_PATH" "$WORK/$spec"
-  for cfg in "$APALACHE_SRC_DIR/${spec%.tla}"*.cfg; do
+  for cfg in "$APALACHE_SRC_DIR/${spec%.tla}"*.cfg "$APALACHE_SRC_DIR/${spec%.tla}"*.properties; do
     [ -e "$cfg" ] && cp "$cfg" "$WORK/$(dirname "$spec")/"
   done
   # A spec in a subdirectory may EXTEND its siblings (`MC_FoldExcept3`
@@ -118,6 +118,17 @@ while IFS=$'\x1f' read -r id mode argv_prefix spec expected; do
   run_cell "$NIXIE_TLA" "$WORK/nixie" "$mode" $argv_prefix "--out-dir=$ODIR/n" "$spec"
   x_code="$(cat "$WORK/nixie/code")"
 
+  # The oracle arm's verdict classes that carry no verdict of its own: an
+  # exit code that is not one of Apalache's outcomes (`Exit1` its crash,
+  # `Exit120` its type checker, `Exit255` a configuration error that still
+  # printed the outcome line), and `Refused` – a 255 with no outcome line at
+  # all, its type errors and documented refusals (`Rec3.tla`,
+  # `reorderTest --next=MustFail`). Both are the oracle failing to answer,
+  # never a mismatch when Nixie does.
+  oracle_without_verdict () {  # $1 = the oracle's class
+    case "$1" in Exit124|NoError|TooShort|Error|Deadlock|Unknown) return 1;; esac
+    echo "$1" | grep -q '^Exit' || [ "$1" = Refused ]
+  }
   verdict () {  # from code + stdout
     case "$1" in
       0)  if grep -q "The outcome is: Deadlock" "$2" 2>/dev/null; then echo Deadlock
@@ -168,13 +179,13 @@ while IFS=$'\x1f' read -r id mode argv_prefix spec expected; do
   # Both refuse the cell with the same non-verdict exit code (a malformed
   # configuration, say): an agreement that it cannot be checked, reported
   # apart from the verdict classes and never as a mismatch.
-  elif [ "$a_v" = "$x_v" ] && echo "$a_v" | grep -q '^Exit' && [ "$a_v" != Exit124 ]; then cls=Agree-Refused; agree_ref=$((agree_ref+1));
+  elif [ "$a_v" = "$x_v" ] && oracle_without_verdict "$a_v"; then cls=Agree-Refused; agree_ref=$((agree_ref+1));
   # The oracle itself failed (any exit that is not a verdict of its own:
   # 1 is its crash, 255 its configuration and type errors) – a cell with no
   # oracle verdict to compare against. Reported apart from Inconclusive,
   # because it is the drop-in superset's own count: the cells where Nixie
   # answers and the oracle does not are visible in the rows.
-  elif echo "$a_v" | grep -q '^Exit' && [ "$a_v" != Exit124 ] && [ "$a_v" != "$x_v" ]; then cls=OracleFailed; oracle_failed=$((oracle_failed+1))
+  elif oracle_without_verdict "$a_v" && [ "$a_v" != "$x_v" ]; then cls=OracleFailed; oracle_failed=$((oracle_failed+1))
   elif [ "$cls" != Declined ]; then
     if [ "$a_v" = "Exit124" ] || [ "$x_v" = "Exit124" ] || [ "$x_v" = Unknown ]; then
       cls=Inconclusive; inconclusive=$((inconclusive+1))

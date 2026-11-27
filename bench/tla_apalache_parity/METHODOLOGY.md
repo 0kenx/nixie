@@ -127,6 +127,20 @@ before the harness fixes below and is superseded.
 * **A non-matching grep ended the script**: under `set -o pipefail` the
   command substitution that reads a counterexample length returned the
   grep's status when there was none to read.
+* **The oracle's own refusal was still a `MISMATCH` when Nixie answered**
+  (2026-11-27): the `OracleFailed` branch matched `Exit*` classes only, and
+  the oracle's 255 with no outcome line – its type errors and documented
+  refusals – reads `Refused`. Three cells (`Rec3.tla`, `reorderTest
+  --next=MustFail`, `reorderTest --next=MayFail`) were counted mismatches
+  on answers (`NoError`) this document lists as the superset's own. A
+  `Refused` oracle arm is now `OracleFailed` (or `Agree-Refused` when both
+  refuse), as the table says.
+* **A cell's `.properties` file did not come along**: `reorderTest
+  --next=MayFail` passes `--tuning-options-file=reorderTest.properties`,
+  which the work directory never received, so the oracle's stored answer
+  was its configuration error – a harness artifact, like `MC_FoldExcept3`'s
+  above. The file is copied with the `.cfg`s now, the store entry was
+  deleted and re-run: `NoError`, which Nixie agrees with.
 * **`Agree-Violation` did not compare lengths** although this document said
   it did. It does now, with the action-invariant rule above.
 
