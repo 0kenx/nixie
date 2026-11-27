@@ -563,22 +563,20 @@ Bad  == x < N
     let form =
         nixie_tla_syntax::safety_form(&spec, module, &nixie_tla_syntax::check_spec(&spec), name)
             .expect("decomposes");
-    assert_eq!((form.init.as_str(), form.next.as_str()), ("Init", "Next"));
-    assert!(std::ptr::eq(form.home, module));
+    assert_eq!(
+        (form.init_name(), form.next_name()),
+        (Some("Init"), Some("Next"))
+    );
+    assert!(std::ptr::eq(form.home(), module));
 
     let mut tm = TermManager::new();
-    let scope = nixie_tla_check::bmc::Scope {
-        root: module,
-        home: form.home,
+    let roles = nixie_tla_check::bmc::SpecRoles {
+        init: form.init.clone(),
+        next: form.next.clone(),
+        inv: &["Inv"],
+        constraints: &[],
     };
-    let mut bmc = Bmc::prepare_with_config_in(
-        &spec,
-        scope,
-        roles!(&form.init, &form.next, "Inv"),
-        &config,
-        &mut tm,
-    )
-    .expect("prepares");
+    let mut bmc = Bmc::prepare_spec(&spec, module, roles, &config, &mut tm).expect("prepares");
     assert_eq!(
         bmc.check(3, &mut tm).expect("checks"),
         Outcome::NoViolationWithin(3)
@@ -669,22 +667,18 @@ Init == x = 100
     let module = spec.root_module().expect("root");
     let reports = nixie_tla_syntax::check_spec(&spec);
     let form = nixie_tla_syntax::safety_form(&spec, module, &reports, "Spec").expect("decomposes");
-    assert_eq!(form.home.name.name, "Base");
+    assert_eq!(form.home().name.name, "Base");
 
     let config =
         parse_config("CONSTANT N = 2\nSPECIFICATION Spec\nINVARIANT Inv\n").expect("config parses");
     let mut tm = TermManager::new();
-    let mut bmc = Bmc::prepare_with_config_in(
-        &spec,
-        nixie_tla_check::bmc::Scope {
-            root: module,
-            home: form.home,
-        },
-        roles!(&form.init, &form.next, "Inv"),
-        &config,
-        &mut tm,
-    )
-    .expect("prepares");
+    let roles = nixie_tla_check::bmc::SpecRoles {
+        init: form.init.clone(),
+        next: form.next.clone(),
+        inv: &["Inv"],
+        constraints: &[],
+    };
+    let mut bmc = Bmc::prepare_spec(&spec, module, roles, &config, &mut tm).expect("prepares");
     assert_eq!(
         bmc.check(3, &mut tm).expect("checks"),
         Outcome::NoViolationWithin(3),
@@ -707,6 +701,118 @@ Init == x = 100
         bmc.check(3, &mut tm).expect("checks"),
         Outcome::Violation { step: 0 },
         "the root's `Init` override, x = 100"
+    );
+}
+
+/// A role the formula writes inline is the role: `[Next \/ Terminate]_vars`
+/// has `Next \/ Terminate` for its action and a state-level conjunct that is
+/// not a name is an initial predicate (TLC's reading of both). Each is read
+/// in the module the formula was written in.
+#[test]
+fn roles_written_inline_are_lowered_where_the_formula_is() {
+    let s = Scratch::new(
+        "inline-roles",
+        &[
+            (
+                "Base.tla",
+                r#"
+---- MODULE Base ----
+EXTENDS Integers
+VARIABLE x
+Init == x = 0
+Next == x < 3 /\ x' = x + 1
+Terminate == x' = x /\ x = 3
+StopSpec == x <= 0 /\ Init /\ [][Next \/ Terminate]_x
+BadSpec == x' = 1 /\ Init /\ [][Next]_x
+====
+"#,
+            ),
+            (
+                "MC.tla",
+                "---- MODULE MC ----\nEXTENDS Base\nInit == x = 100\n====\n",
+            ),
+        ],
+    );
+    let spec = nixie_tla_syntax::Loader::new()
+        .load(&s.0.join("MC.tla"))
+        .expect("loads");
+    let module = spec.root_module().expect("root");
+    let reports = nixie_tla_syntax::check_spec(&spec);
+    let form =
+        nixie_tla_syntax::safety_form(&spec, module, &reports, "StopSpec").expect("decomposes");
+    assert_eq!(form.init.len(), 2);
+    assert!(matches!(
+        &form.init[0],
+        nixie_tla_syntax::RoleSource::Expr { .. }
+    ));
+    assert!(matches!(
+        &form.next,
+        nixie_tla_syntax::RoleSource::Expr { .. }
+    ));
+    // `x <= 0` conjoined with Base's `Init` (x = 0) – not MC's override,
+    // which would make the prefix empty – and the action is `Next \/
+    // Terminate`: x climbs to 3 and may then stay there, so behaviours of
+    // every length exist and there is nothing to find.
+    let mut tm = TermManager::new();
+    let roles = nixie_tla_check::bmc::SpecRoles {
+        init: form.init.clone(),
+        next: form.next.clone(),
+        inv: &[],
+        constraints: &[],
+    };
+    let mut bmc = Bmc::prepare_spec(
+        &spec,
+        module,
+        roles,
+        &nixie_tla_syntax::TlcConfig::default(),
+        &mut tm,
+    )
+    .expect("prepares");
+    bmc.set_check_deadlocks(false);
+    assert_eq!(
+        bmc.check(4, &mut tm).expect("checks"),
+        Outcome::NoViolationWithin(4),
+        "Base's `Init` and the inline action, both read in Base"
+    );
+    // An action-level conjunct in the formula is declined there, as TLC
+    // declines it (`TLC_CANT_HANDLE_CONJUNCT`), and an inline initial
+    // predicate that is an action is refused by level should a caller hand
+    // one to the checker directly.
+    assert!(matches!(
+        nixie_tla_syntax::safety_form(&spec, module, &reports, "BadSpec"),
+        Err(nixie_tla_syntax::BehaviorFormError::Unsupported(
+            nixie_tla_syntax::UnsupportedClause::Other { rendered, .. }
+        )) if rendered == "x' = 1"
+    ));
+    let action = nixie_tla_syntax::parse_expr_str("x' = 1").expect("parses");
+    let mut tm = TermManager::new();
+    let err = Bmc::prepare_spec(
+        &spec,
+        module,
+        nixie_tla_check::bmc::SpecRoles {
+            init: vec![nixie_tla_syntax::RoleSource::Expr {
+                expr: &action,
+                home: module,
+            }],
+            next: form.next.clone(),
+            inv: &[],
+            constraints: &[],
+        },
+        &nixie_tla_syntax::TlcConfig::default(),
+        &mut tm,
+    )
+    .err()
+    .expect("an action is not an initial predicate");
+    assert!(
+        matches!(
+            &err,
+            SetupError::Level {
+                role: "an initial predicate",
+                found,
+                ..
+            } if found == "an action"
+        ),
+        "{err}"
     );
 }
 

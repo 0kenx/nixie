@@ -15,7 +15,7 @@ pub mod temporal;
 pub mod trace;
 
 pub use arena::{Member, SetCell, Value};
-pub use bmc::{Bmc, Outcome, Roles, Scope, SetupError};
+pub use bmc::{Bmc, Outcome, Roles, Scope, SetupError, SpecRoles};
 pub use encode::{EncodeError, Encoder, SetEncoding};
 pub use frames::Frames;
 pub use sorts::{NoSort, sort_of};

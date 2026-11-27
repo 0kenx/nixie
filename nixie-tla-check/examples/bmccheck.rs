@@ -154,9 +154,10 @@ fn main() {
             nixie_tla_syntax::visible_definition(&spec, module, name)
                 .is_some_and(|d| d.params.is_empty())
         };
-        // The scope the two roles are read in: the root, or the module a
-        // `SPECIFICATION` formula was defined in.
-        let mut home: Option<&nixie_tla_syntax::Module> = None;
+        // The roles a `SPECIFICATION` formula names, when it names them:
+        // each a definition's name or a formula written inline, read in the
+        // module its conjunct was written in.
+        let mut form: Option<nixie_tla_syntax::SafetyForm<'_>> = None;
         let cfg_init_next = match from_cfg {
             Some(nixie_tla_syntax::BehaviorSpec::InitNext { init, next }) => {
                 Some((init.clone(), next.clone()))
@@ -169,9 +170,18 @@ fn main() {
             Some(nixie_tla_syntax::BehaviorSpec::Temporal(name)) => {
                 let reports = nixie_tla_syntax::check_spec(&spec);
                 match nixie_tla_syntax::safety_form(&spec, module, &reports, name) {
-                    Ok(form) => {
-                        home = Some(form.home);
-                        Some((form.init.clone(), form.next.clone()))
+                    Ok(f) => {
+                        // The names, when both roles are names; a formula
+                        // written inline leaves the convention no room.
+                        let names = (
+                            f.init_name().map(std::string::ToString::to_string),
+                            f.next_name().map(std::string::ToString::to_string),
+                        );
+                        form = Some(f);
+                        Some(match names {
+                            (Some(i), Some(n)) => (i, n),
+                            _ => (String::new(), String::new()),
+                        })
                     }
                     Err(e) => {
                         let key = format!("the .cfg's SPECIFICATION cannot be read: {e}");
@@ -218,17 +228,29 @@ fn main() {
         let mut tm = TermManager::new();
         let empty = nixie_tla_syntax::TlcConfig::default();
         let use_cfg = cfg.as_ref().unwrap_or(&empty);
-        let roles = nixie_tla_check::bmc::Roles {
-            init: &init,
-            next: &next,
-            inv: &inv_refs,
-            constraints: &constraints,
+        let roles = nixie_tla_check::bmc::SpecRoles::named(
+            &init,
+            &next,
+            module,
+            nixie_tla_check::bmc::Roles {
+                init: &init,
+                next: &next,
+                inv: &inv_refs,
+                constraints: &constraints,
+            },
+        );
+        // Under `SPECIFICATION Spec` the roles are whatever the formula
+        // says, read where it says it; elsewhere the names above.
+        let roles = match form {
+            Some(f) => nixie_tla_check::bmc::SpecRoles {
+                init: f.init,
+                next: f.next,
+                inv: &inv_refs,
+                constraints: &constraints,
+            },
+            None => roles,
         };
-        let scope = nixie_tla_check::bmc::Scope {
-            root: module,
-            home: home.unwrap_or(module),
-        };
-        let mut bmc = match Bmc::prepare_with_config_in(&spec, scope, roles, use_cfg, &mut tm) {
+        let mut bmc = match Bmc::prepare_spec(&spec, module, roles, use_cfg, &mut tm) {
             Ok(mut b) => {
                 // Deterministic, so two runs over the corpus agree; see
                 // `Bmc::set_conflict_limit`. Deadlock checking is ON –

@@ -735,6 +735,102 @@ Inv == x >= 0
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// What stands inside the brackets is the next-state action even when it is
+/// not a definition's name – TLC's reading (`TerminatingSpec == Init /\
+/// [][Next \/ Terminate]_v` is the dag-consensus specs' shape) – and a
+/// state-level conjunct that is not a name is an initial predicate
+/// (`PrintT(R) /\ Spec` is MCEcho's). Both are read where the formula was
+/// written.
+#[test]
+fn roles_written_inline_in_the_specification_are_checked() {
+    let dir = scratch("cfg-spec-inline");
+    let spec = write_spec(
+        &dir,
+        "Inline",
+        r"
+---- MODULE Inline ----
+EXTENDS Integers
+VARIABLE x
+Init == x = 0
+Next == x < 3 /\ x' = x + 1
+Terminate == x' = x
+StopSpec == x <= 0 /\ Init /\ [][Next \/ Terminate]_x
+RunSpec == x <= 0 /\ Init /\ [][Next]_x
+Inv == x <= 3
+====
+",
+    );
+    std::fs::write(
+        dir.join("Stop.cfg"),
+        "SPECIFICATION StopSpec\nINVARIANT Inv\n",
+    )
+    .expect("cfg");
+    let r = run(&[
+        "check",
+        &format!("--config={}", dir.join("Stop.cfg").display()),
+        "--length=5",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 0, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(
+        r.out
+            .contains("Set the initialization predicate to x <= 0 (written inline) /\\ Init"),
+        "{}",
+        r.out
+    );
+    assert!(
+        r.out
+            .contains("Set the transition predicate to Next \\/ Terminate (written inline)"),
+        "{}",
+        r.out
+    );
+    // Without `Terminate`, the state x = 3 has no successor: a deadlock,
+    // as under `NEXT Next`.
+    std::fs::write(
+        dir.join("Run.cfg"),
+        "SPECIFICATION RunSpec\nINVARIANT Inv\n",
+    )
+    .expect("cfg");
+    let r = run(&[
+        "check",
+        &format!("--config={}", dir.join("Run.cfg").display()),
+        "--length=5",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 12, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(r.out.contains("The outcome is: Deadlock"), "{}", r.out);
+    // And an initial predicate written as an action is refused before the
+    // formula is checked, as TLC refuses an action-level conjunct.
+    std::fs::write(
+        dir.join("Inline.tla"),
+        r"
+---- MODULE Inline ----
+EXTENDS Integers
+VARIABLE x
+Init == x = 0
+Next == x' = x + 1
+BadSpec == x' = 1 /\ Init /\ [][Next]_x
+Inv == x <= 3
+====
+",
+    )
+    .expect("spec");
+    std::fs::write(
+        dir.join("Bad.cfg"),
+        "SPECIFICATION BadSpec\nINVARIANT Inv\n",
+    )
+    .expect("cfg");
+    let r = run(&[
+        "check",
+        &format!("--config={}", dir.join("Bad.cfg").display()),
+        "--length=5",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 75, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(r.err.contains("the conjunct `x' = 1`"), "{}", r.err);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A `.cfg` naming a definition the module does not have is refused by name
 /// – exit 75, the "could not be evaluated" bucket an `INIT Nope` lands in,
 /// not a usage error.

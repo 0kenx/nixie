@@ -9,8 +9,8 @@
 //! counterexamples, and a dropped `[]P` checks a weaker property.
 
 use nixie_tla_syntax::{
-    BehaviorFormError, Level, Loader, SafetyForm, UnsupportedClause, check_spec, parse_file,
-    safety_form, visible_definition,
+    BehaviorFormError, Level, Loader, RoleSource, SafetyForm, UnsupportedClause, check_spec,
+    parse_file, safety_form, visible_definition,
 };
 use std::path::PathBuf;
 
@@ -28,9 +28,12 @@ fn form<'s>(
     safety_form(spec, module, &check_spec(spec), name)
 }
 
-/// The two names a decomposition yields.
+/// The two names a decomposition yields, when both roles are names.
 fn named<'a, 'm>(form: &'a SafetyForm<'m>) -> (&'a str, &'a str) {
-    (form.init.as_str(), form.next.as_str())
+    (
+        form.init_name().expect("the initial predicate is one name"),
+        form.next_name().expect("the action is a name"),
+    )
 }
 
 const CONFIG: &str = r"
@@ -267,38 +270,66 @@ fn an_action_level_conjunct_is_reported() {
     }
 }
 
-/// The action inside the brackets must be a definition name for there to be
-/// a role to hand the checker; an inline action says so with its text.
+/// The action inside the brackets need not be a definition name: TLC takes
+/// whatever stands there as the next-state predicate, and so does this – the
+/// formula itself is the role.
 #[test]
-fn an_inline_next_state_action_is_reported() {
+fn an_inline_next_state_action_is_the_role() {
     let spec = single(CONFIG);
-    match form(&spec, "SpecD") {
-        Err(BehaviorFormError::Unsupported(UnsupportedClause::NextNotNamed {
-            rendered, ..
-        })) => assert_eq!(rendered, r"[][x' = x + 1]_x"),
-        other => panic!("{other:?}"),
+    let f = form(&spec, "SpecD").expect("decomposes");
+    assert_eq!(f.init_name(), Some("Init2"));
+    assert!(f.next_name().is_none());
+    match &f.next {
+        RoleSource::Expr { expr, home } => {
+            assert_eq!(nixie_tla_syntax::behavior::brief(expr), "x' = x + 1");
+            assert_eq!(home.name.name, "Config");
+        }
+        RoleSource::Name { .. } => panic!("not a name"),
     }
+    assert!(std::ptr::eq(f.home(), f.next.home()));
+}
+
+/// Several state-level conjuncts are several initial predicates, conjoined –
+/// TLC's reading (`Spec == x = TRUE /\ Init /\ [][Next]_x`); Apalache wants
+/// exactly one name and refuses the rest. One of them may be a formula.
+#[test]
+fn several_state_level_conjuncts_are_conjoined() {
+    let spec = single(CONFIG);
+    let f = form(&spec, "SpecF").expect("decomposes");
+    let names: Vec<&str> = f
+        .init
+        .iter()
+        .map(|r| match r {
+            RoleSource::Name { name, .. } => name.as_str(),
+            RoleSource::Expr { .. } => panic!("names"),
+        })
+        .collect();
+    assert_eq!(names, ["Init2", "Init"]);
+    assert_eq!(f.next_name(), Some("Next2"));
+    let src = CONFIG.replace(
+        "SpecN(n) ==",
+        "SpecO == x = 2 /\\ Init2 /\\ [][Next2]_x\nSpecN(n) ==",
+    );
+    let spec = single(&src);
+    let f = form(&spec, "SpecO").expect("decomposes");
+    assert_eq!(f.init.len(), 2);
+    assert!(matches!(&f.init[0], RoleSource::Expr { .. }));
+    assert!(matches!(&f.init[1], RoleSource::Name { .. }));
 }
 
 /// Two next-state relations do not say which one the other's states come
-/// from; TLC refuses the second. Two initial predicates are refused the same
-/// way, naming the one already taken.
+/// from; TLC refuses the second, naming the one already taken.
 #[test]
-fn duplicated_roles_are_reported() {
+fn a_second_next_state_relation_is_reported() {
     let spec = single(CONFIG);
     assert!(matches!(
         form(&spec, "SpecE"),
-        Err(BehaviorFormError::Unsupported(UnsupportedClause::TwoNextState {
-            first,
-            ..
-        })) if first == "Next2"
-    ));
-    assert!(matches!(
-        form(&spec, "SpecF"),
-        Err(BehaviorFormError::Unsupported(UnsupportedClause::TwoInit {
-            first,
-            ..
-        })) if first == "Init2"
+        Err(BehaviorFormError::Unsupported(
+            UnsupportedClause::TwoNextState {
+                first,
+                ..
+            }
+        )) if first == "`Next2`"
     ));
 }
 
@@ -401,7 +432,7 @@ fn a_specification_defined_in_an_extended_module_resolves() {
     let root = spec.root_module().expect("root");
     let form = safety_form(&spec, root, &check_spec(&spec), "Spec").expect("decomposes");
     assert_eq!(named(&form), ("Init", "Next"));
-    assert_eq!(form.home.name.name, "Base");
+    assert_eq!(form.home().name.name, "Base");
     // And the roles the decomposition names are themselves visible.
     let init = visible_definition(&spec, root, "Init").expect("Init is visible");
     assert_eq!(init.module.name.name, "Base");
@@ -439,7 +470,7 @@ fn an_abbreviation_of_an_extended_temporal_definition_is_seen_through() {
     let f = safety_form(&spec, root, &check_spec(&spec), "spec_146427254083041000")
         .expect("decomposes");
     assert_eq!(named(&f), ("Init", "Next"));
-    assert_eq!(f.home.name.name, "Base");
+    assert_eq!(f.home().name.name, "Base");
     assert_eq!(f.fairness.len(), 1);
     assert_eq!(f.fairness[0].rendered, "WF_x(Next)");
 }
@@ -462,7 +493,7 @@ fn a_specification_visible_through_an_open_instance_resolves() {
     let root = spec.root_module().expect("root");
     let form = safety_form(&spec, root, &check_spec(&spec), "Spec").expect("decomposes");
     assert_eq!(named(&form), ("Init", "Next"));
-    assert_eq!(form.home.name.name, "Base");
+    assert_eq!(form.home().name.name, "Base");
     // The root's own definition of the same name wins, as it does in TLA+.
     let s = Scratch::new(
         "shadow",
@@ -505,6 +536,27 @@ fn a_named_instance_member_is_declined_by_name() {
     match safety_form(&spec, root, &check_spec(&spec), "Spec") {
         Err(BehaviorFormError::Unsupported(UnsupportedClause::Other { rendered, .. })) => {
             assert_eq!(rendered, "I!Spec");
+        }
+        other => panic!("{other:?}"),
+    }
+    // A parameterised instance's member, as Apalache's own test61 has it
+    // (`ISpec == IM(y)!Spec`): the same refusal, with the application.
+    let s = Scratch::new(
+        "named-instance-args",
+        &[
+            ("Base.tla", BASE),
+            (
+                "M.tla",
+                "---- MODULE M ----\nVARIABLE x, y\nIM(p) == INSTANCE Base WITH x <- p\n\
+                 ISpec == IM(y)!Spec\n====\n",
+            ),
+        ],
+    );
+    let spec = Loader::new().load(&s.path("M.tla")).expect("loads");
+    let root = spec.root_module().expect("root");
+    match safety_form(&spec, root, &check_spec(&spec), "ISpec") {
+        Err(BehaviorFormError::Unsupported(UnsupportedClause::Other { rendered, .. })) => {
+            assert_eq!(rendered, "IM(y)!Spec");
         }
         other => panic!("{other:?}"),
     }

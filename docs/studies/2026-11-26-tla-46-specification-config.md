@@ -194,7 +194,8 @@ invariant in an extended module).
 * A next-state action written inline (`TerminatingSpec == Init /\ [][Next
   \/ Terminate]_v`) and a second state-level conjunct (`PrintT(R) /\ Spec`,
   which TLC conjoins and Apalache refuses): 14 configurations, declined by
-  name. Both need a role that is an expression, not a name.
+  name at this commit. Both became roles in the commit that followed
+  (`RoleSource::Expr`; see the census in the landing comment on #46).
 * `PROPERTY` in a configuration was, at this commit, still read and not acted
   on – a wrong-verdict-shaped gap (a run that reports `NoError` having checked
   the invariants while a liveness property sat unexamined in the file). Closed

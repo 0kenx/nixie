@@ -78,8 +78,8 @@ pub mod token;
 
 pub use ast::{Expr, ExprKind, Module, Unit, UnitKind};
 pub use behavior::{
-    BehaviorFormError, FairnessClause, SafetyForm, UnsupportedClause, VisibleDef, extends_closure,
-    safety_form, visible_definition,
+    BehaviorFormError, FairnessClause, RoleSource, SafetyForm, UnsupportedClause, VisibleDef,
+    extends_closure, safety_form, visible_definition,
 };
 pub use config::{
     BehaviorSpec, ConfigError, ConfigErrorKind, ConfigValue, Replacement, TlcConfig, parse_config,

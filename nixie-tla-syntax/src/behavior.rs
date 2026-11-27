@@ -59,28 +59,36 @@
 //! name** – with its text and its place in the module – never dropped. So
 //! is an action-level conjunct, a second `[][A]_v` (TLC refuses that too),
 //! and a formula with no transition or no initial predicate at all.
+//!
+//! # Roles written inline
+//!
+//! TLC does not insist that the two roles be definitions' names: whatever
+//! stands inside the brackets is the next-state predicate (`[Next \/
+//! Terminate]_v`, the dag-consensus specs' shape) and every state-level
+//! conjunct is an initial predicate (`PrintT(R) /\ Spec`, or `x = TRUE /\
+//! Init`). Both are returned as [`RoleSource::Expr`], read in the module
+//! the conjunct was written in like a name; Apalache's canonical form wants
+//! one name for each and refuses the rest.
 
 use crate::ast::{ActionKind, Expr, ExprKind, FairnessKind, Junct, QuantKind, UnitKind};
 use crate::span::Span;
 use crate::{Level, LevelReport, LoadedSpec, Module};
 
-/// The safety fragment of a behaviour specification, as the names a bounded
+/// The safety fragment of a behaviour specification, as the roles a bounded
 /// check needs them.
 ///
-/// The names are **not** resolved here: they mean what they mean in `home`,
-/// the module the formula was defined in. A model file that extends the
+/// The roles are **not** resolved here: each means what it means in the
+/// module its conjunct was written in. A model file that extends the
 /// specification and redefines `Init` does not change what `Spec` says, and
 /// a checker that resolved the names at its own root would check the model's
 /// `Init` against the specification's `Next`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SafetyForm<'m> {
-    /// The initial predicate: the one state-level conjunct, by name.
-    pub init: String,
-    /// The next-state action: the action inside `[][Next]_vars`, by name.
-    pub next: String,
-    /// The module the formula is defined in – the scope the two names are
-    /// read in.
-    pub home: &'m Module,
+    /// The initial predicate: every state-level conjunct of the formula,
+    /// conjoined – as TLC reads them. Usually one, a name.
+    pub init: Vec<RoleSource<'m>>,
+    /// The next-state action: whatever stands inside the `[][A]_v` brackets.
+    pub next: RoleSource<'m>,
     /// The fairness conjuncts the formula also carries, in source order.
     ///
     /// A bounded check does not assume them. For a state invariant that costs
@@ -88,6 +96,75 @@ pub struct SafetyForm<'m> {
     /// difference between a counterexample and an unfair behaviour, so the
     /// caller refuses there.
     pub fairness: Vec<FairnessClause>,
+}
+
+impl<'m> SafetyForm<'m> {
+    /// The module the formula's roles are read in: that of the next-state
+    /// action, which is where the canonical `Init /\ [][Next]_vars` is
+    /// written even through a chain of abbreviations.
+    #[must_use]
+    pub fn home(&self) -> &'m Module {
+        self.next.home()
+    }
+
+    /// The initial predicate's one name, when it is a single definition.
+    #[must_use]
+    pub fn init_name(&self) -> Option<&str> {
+        match self.init.as_slice() {
+            [RoleSource::Name { name, .. }] => Some(name),
+            _ => None,
+        }
+    }
+
+    /// The next-state action's name, when it is a definition.
+    #[must_use]
+    pub fn next_name(&self) -> Option<&str> {
+        match &self.next {
+            RoleSource::Name { name, .. } => Some(name),
+            RoleSource::Expr { .. } => None,
+        }
+    }
+}
+
+/// One role of the safety fragment: a definition's name, or a formula the
+/// specification writes inline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RoleSource<'m> {
+    /// A zero-argument definition, read in `home`'s scope.
+    Name {
+        /// The definition's name.
+        name: String,
+        /// The module whose scope the name is read in.
+        home: &'m Module,
+    },
+    /// A formula written in the specification itself (`[Next \/ Terminate]_v`
+    /// has `Next \/ Terminate` for its action), read in `home`'s scope.
+    Expr {
+        /// The formula.
+        expr: &'m Expr,
+        /// The module whose scope its names are read in.
+        home: &'m Module,
+    },
+}
+
+impl<'m> RoleSource<'m> {
+    /// The module the role is read in.
+    #[must_use]
+    pub fn home(&self) -> &'m Module {
+        match self {
+            Self::Name { home, .. } | Self::Expr { home, .. } => home,
+        }
+    }
+
+    /// The role as a line names it: the definition's name, or the formula
+    /// rendered briefly and marked as written inline.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Name { name, .. } => name.clone(),
+            Self::Expr { expr, .. } => format!("{} (written inline)", brief(expr)),
+        }
+    }
 }
 
 /// One fairness conjunct of a behaviour specification.
@@ -237,32 +314,17 @@ pub enum BehaviorFormError {
 /// cannot reproduce.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnsupportedClause {
-    /// `[A]_v` whose `A` is not a definition name (`[][x' = x + 1]_x`), so
-    /// there is no role to hand the checker.
-    NextNotNamed {
-        /// The conjunct, briefly rendered.
-        rendered: String,
-        /// Where it is.
-        span: Span,
-    },
     /// A second `[][A]_v`. TLC refuses this too: two next-state relations
     /// do not say which one the other's states come from.
     TwoNextState {
-        /// The first one's action, by name.
+        /// The first one's action, as a diagnostic names it.
         first: String,
         /// Where the second is.
         span: Span,
     },
-    /// A second state-level conjunct, which would be a second initial
-    /// predicate. Apalache's canonical form has one.
-    TwoInit {
-        /// The first one, by name.
-        first: String,
-        /// Where the second is.
-        span: Span,
-    },
-    /// Any other conjunct: temporal (`[]P`, `<>P`, `P ~> Q`, `\AA x : …`),
-    /// action-level, or a name this lookup does not resolve.
+    /// Any other conjunct: temporal (`[]P`, `<>P`, `P ~> Q`, `\AA x : …`)
+    /// or action-level (`x' # x`, which TLC refuses too), or a name this
+    /// lookup does not resolve.
     Other {
         /// The conjunct, briefly rendered.
         rendered: String,
@@ -299,17 +361,9 @@ impl BehaviorFormError {
                  `Init /\\ [][Next]_vars`"
             ),
             Self::Unsupported(u) => match u {
-                UnsupportedClause::NextNotNamed { rendered, span } => format!(
-                    "the next-state conjunct `{rendered}` ({span}), which is not of the form \
-                     `[][Next]_vars` with `Next` a definition name"
-                ),
                 UnsupportedClause::TwoNextState { first, span } => format!(
                     "a second `[][Next]_vars` conjunct ({span}): `{first}` is already the \
                      next-state action"
-                ),
-                UnsupportedClause::TwoInit { first, span } => format!(
-                    "a second state-level conjunct ({span}): `{first}` is already the initial \
-                     predicate"
                 ),
                 UnsupportedClause::Other { rendered, span } => {
                     format!("the conjunct `{rendered}` ({span})")
@@ -334,7 +388,9 @@ impl BehaviorFormError {
 /// otherwise the first conjunct, in source order, that cannot be preserved –
 /// a temporal clause other than fairness, an action-level one – or a formula
 /// with no safety pair in it at all. Fairness is not an error: it is
-/// reported in [`SafetyForm::fairness`].
+/// reported in [`SafetyForm::fairness`]. A state-level conjunct that is not
+/// a name and an action inside the brackets that is not a name are roles
+/// too ([`RoleSource::Expr`]), as they are for TLC.
 pub fn safety_form<'m>(
     spec: &'m LoadedSpec,
     module: &'m Module,
@@ -373,11 +429,10 @@ pub fn safety_form<'m>(
 /// The classification of the conjuncts seen so far.
 #[derive(Default)]
 struct Parts<'m> {
-    /// The state-level conjunct – by name, and the module its conjunct was
-    /// written in – when one was seen.
-    init: Option<(String, &'m Module)>,
-    /// The `[][A]_v` conjunct's action, likewise.
-    next: Option<(String, &'m Module)>,
+    /// The state-level conjuncts, each with the module it was written in.
+    init: Vec<RoleSource<'m>>,
+    /// The `[][A]_v` conjunct's action, likewise, when one was seen.
+    next: Option<RoleSource<'m>>,
     /// The fairness conjuncts seen, in source order.
     fairness: Vec<FairnessClause>,
 }
@@ -389,22 +444,24 @@ impl<'m> Parts<'m> {
             next,
             fairness,
         } = self;
-        // The roles are read where **their** conjuncts were written: through
-        // a chain of abbreviations (`MC.tla`: `spec_… == Spec`) that is the
+        // Each role is read where **its** conjunct was written: through a
+        // chain of abbreviations (`MC.tla`: `spec_… == Spec`) that is the
         // module holding the canonical formula, not the one naming it – and
         // that module's own `Init` is what the formula means there.
         match (init, next) {
-            (Some((init, _)), Some((next, home))) => Ok(SafetyForm {
+            (init, Some(next)) if !init.is_empty() => Ok(SafetyForm {
                 init,
                 next,
-                home,
                 fairness,
             }),
-            (None, Some(_)) => Err(BehaviorFormError::NoSafetyPair {
-                missing: "state-level conjunct to unroll from",
-                rendered: brief(root),
-                span: root.span,
-            }),
+            (init, Some(_)) => {
+                let _ = init;
+                Err(BehaviorFormError::NoSafetyPair {
+                    missing: "state-level conjunct to unroll from",
+                    rendered: brief(root),
+                    span: root.span,
+                })
+            }
             // No transition: `Spec == Init` on its own is a set of states,
             // not something a bounded check can step.
             (_, None) => Err(BehaviorFormError::NoSafetyPair {
@@ -472,35 +529,30 @@ impl<'s, 'f> Walk<'s, 'f> {
             span: e.span,
         };
         match &e.kind {
-            // `[][Next]_vars`: the action inside the brackets is the role.
-            // The subscript is not consulted – see the module docs: a
-            // stuttering step adds no state, so it changes nothing a bounded
-            // check asks, which is why TLC and Apalache both ignore it too.
+            // `[][Next]_vars`: whatever stands inside the brackets is the
+            // next-state action – a definition's name, or a formula the
+            // specification writes there (`[Next \/ Terminate]_v`), as TLC
+            // takes it. The subscript is not consulted – see the module
+            // docs: a stuttering step adds no state, so it changes nothing a
+            // bounded check asks, which is why TLC and Apalache both ignore
+            // it too.
             ExprKind::Prefix { op, operand, .. } if op == "[]" => match &operand.kind {
                 ExprKind::Action {
                     kind: ActionKind::Stuttering,
                     body,
                     ..
-                } => match bare_name(body) {
-                    Some(n) => {
-                        if let Some((first, _)) = &parts.next {
-                            return Err(BehaviorFormError::Unsupported(
-                                UnsupportedClause::TwoNextState {
-                                    first: first.clone(),
-                                    span: e.span,
-                                },
-                            ));
-                        }
-                        parts.next = Some((n.to_string(), module));
-                        Ok(())
+                } => {
+                    if let Some(first) = &parts.next {
+                        return Err(BehaviorFormError::Unsupported(
+                            UnsupportedClause::TwoNextState {
+                                first: format!("`{}`", first.describe()),
+                                span: e.span,
+                            },
+                        ));
                     }
-                    None => Err(BehaviorFormError::Unsupported(
-                        UnsupportedClause::NextNotNamed {
-                            rendered: brief(e),
-                            span: e.span,
-                        },
-                    )),
-                },
+                    parts.next = Some(role_of(body, module));
+                    Ok(())
+                }
                 // `[]` of an action-level formula that is not `[A]_v`:
                 // non-stuttering `<<A>>_v`, or an inline `[]A` with no
                 // subscript. Both forbid stuttering where `Init /\ [][Next]`
@@ -564,22 +616,110 @@ impl<'s, 'f> Walk<'s, 'f> {
                         }
                     }
                     Some(Level::Constant) | Some(Level::State) | None => {
-                        if let Some((first, _)) = &parts.init {
-                            return Err(BehaviorFormError::Unsupported(
-                                UnsupportedClause::TwoInit {
-                                    first: first.clone(),
-                                    span: e.span,
-                                },
-                            ));
-                        }
-                        parts.init = Some((id.name.clone(), module));
+                        parts.init.push(RoleSource::Name {
+                            name: id.name.clone(),
+                            home: module,
+                        });
                         Ok(())
                     }
                 }
             }
-            _ => Err(BehaviorFormError::Unsupported(other())),
+            // A member of a **named** instance (`I!Spec`, `IM(y)!Spec`): the
+            // roles behind it would have to resolve through the instance's
+            // substitution, a path this lookup does not take. Declined by
+            // name rather than half-resolved.
+            ExprKind::Name(_) | ExprKind::Qualified { .. } => {
+                Err(BehaviorFormError::Unsupported(other()))
+            }
+            // Anything else. At state level it is an initial predicate like
+            // any other (TLC's `processConfigSpec` conjoins every state-level
+            // conjunct: `Spec == x = TRUE /\ Init /\ [][Next]_x`); at
+            // action level TLC refuses it, and so does this; above that it
+            // was already classified above.
+            _ => match syntactic_level(e, module, self.level_of) {
+                Level::Constant | Level::State => {
+                    parts.init.push(role_of(e, module));
+                    Ok(())
+                }
+                Level::Action | Level::Temporal => Err(BehaviorFormError::Unsupported(other())),
+            },
         }
     }
+}
+
+/// The role a conjunct names: its name when it is a single unqualified
+/// identifier, otherwise the formula itself.
+fn role_of<'m>(e: &'m Expr, module: &'m Module) -> RoleSource<'m> {
+    match bare_name(e) {
+        Some(name) => RoleSource::Name {
+            name: name.to_string(),
+            home: module,
+        },
+        None => RoleSource::Expr {
+            expr: unwrap_parens(e),
+            home: module,
+        },
+    }
+}
+
+/// The expression without its outermost parentheses.
+fn unwrap_parens(mut e: &Expr) -> &Expr {
+    while let ExprKind::Paren(inner) = &e.kind {
+        e = inner;
+    }
+    e
+}
+
+/// The level of an expression that is neither a name nor one of the shapes
+/// the walk classifies itself: the maximum over what it visibly contains,
+/// with names read through `level_of`. `Constant` and `State` are told
+/// apart only through names; a formula that is neither is reported at the
+/// level its operators impose.
+fn syntactic_level<'s>(
+    e: &Expr,
+    module: &'s Module,
+    level_of: &dyn Fn(&'s Module, &str) -> Option<Level>,
+) -> Level {
+    let mut level = Level::Constant;
+    let mut stack = vec![e];
+    while let Some(cur) = stack.pop() {
+        match &cur.kind {
+            ExprKind::Postfix { op, .. } if op == "'" => level = level.max(Level::Action),
+            ExprKind::Prefix { op, .. } => {
+                level = match op.as_str() {
+                    "[]" | "<>" => level.max(Level::Temporal),
+                    "ENABLED" => level.max(Level::State),
+                    "UNCHANGED" => level.max(Level::Action),
+                    _ => level,
+                };
+            }
+            ExprKind::Infix { op, .. } => {
+                if matches!(op.as_str(), "~>" | "-+->") {
+                    level = level.max(Level::Temporal);
+                } else if op == "\\cdot" {
+                    level = level.max(Level::Action);
+                }
+            }
+            ExprKind::Action { .. } | ExprKind::Fairness { .. } => {
+                level = level.max(Level::Action);
+            }
+            ExprKind::Quant { kind, .. } | ExprKind::UnboundedQuant { kind, .. } => {
+                if matches!(kind, QuantKind::TemporalForall | QuantKind::TemporalExists) {
+                    level = level.max(Level::Temporal);
+                }
+            }
+            ExprKind::Name(q) if !q.is_qualified() && level < Level::Temporal => {
+                if let Some(id) = q.base()
+                    && let Some(l) = level_of(module, &id.name)
+                {
+                    level = level.max(l);
+                }
+            }
+            _ => {}
+        }
+        stack.extend(cur.subexprs());
+    }
+    level
 }
 
 /// Whether a universal quantifier's body is nothing but fairness – `\A p
@@ -654,6 +794,23 @@ pub fn brief(e: &Expr) -> String {
     };
     match &e.kind {
         ExprKind::Name(q) => names(q),
+        ExprKind::Qualified {
+            base,
+            selector,
+            args,
+            ..
+        } => {
+            let sel = &selector.name;
+            let args_s = if args.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "({})",
+                    args.iter().map(brief).collect::<Vec<_>>().join(", ")
+                )
+            };
+            format!("{}!{sel}{args_s}", brief(base))
+        }
         ExprKind::Int { digits, .. } => digits.clone(),
         ExprKind::Str(t) => format!("{t:?}"),
         ExprKind::Paren(inner) => format!("({})", brief(inner)),

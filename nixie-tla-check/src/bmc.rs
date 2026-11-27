@@ -299,6 +299,42 @@ pub struct Scope<'a> {
     pub home: &'a Module,
 }
 
+/// The roles of a check as a `SPECIFICATION` names them: each the name of a
+/// definition or a formula the specification writes inline, and each read
+/// in the module its conjunct was written in.
+#[derive(Debug, Clone)]
+pub struct SpecRoles<'r> {
+    /// The initial predicate's conjuncts, conjoined – usually one name.
+    pub init: Vec<nixie_tla_syntax::RoleSource<'r>>,
+    /// The next-state action: `Next`, or whatever stands inside the
+    /// `[][…]_vars` brackets.
+    pub next: nixie_tla_syntax::RoleSource<'r>,
+    /// The invariants, as [`Roles::inv`].
+    pub inv: &'r [&'r str],
+    /// Extra definitions to assume, as [`Roles::constraints`].
+    pub constraints: &'r [&'r str],
+}
+
+impl<'r> SpecRoles<'r> {
+    /// Both roles by name, read in `home`'s scope: what an `INIT`/`NEXT`
+    /// configuration says.
+    #[must_use]
+    pub fn named(init: &'r str, next: &'r str, home: &'r Module, roles: Roles<'r>) -> Self {
+        Self {
+            init: vec![nixie_tla_syntax::RoleSource::Name {
+                name: init.to_string(),
+                home,
+            }],
+            next: nixie_tla_syntax::RoleSource::Name {
+                name: next.to_string(),
+                home,
+            },
+            inv: roles.inv,
+            constraints: roles.constraints,
+        }
+    }
+}
+
 /// What the `--inv` names are: ordinary invariants, or a temporal property
 /// to encode as a lasso.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -515,13 +551,17 @@ impl Bmc {
         Self::prepare_with_config_kind(
             spec,
             scope.root,
-            scope.home,
-            Roles {
+            SpecRoles::named(
                 init,
                 next,
-                inv: std::slice::from_ref(&temporal),
-                constraints: &[],
-            },
+                scope.home,
+                Roles {
+                    init,
+                    next,
+                    inv: std::slice::from_ref(&temporal),
+                    constraints: &[],
+                },
+            ),
             config,
             InvKind::Temporal,
             tm,
@@ -593,15 +633,59 @@ impl Bmc {
         config: &TlcConfig,
         tm: &mut TermManager,
     ) -> core::result::Result<Self, SetupError> {
-        Self::prepare_with_config_kind(
+        Self::prepare_spec(
             spec,
             scope.root,
-            scope.home,
-            roles,
+            SpecRoles::named(roles.init, roles.next, scope.home, roles),
             config,
-            InvKind::State,
             tm,
         )
+    }
+
+    /// [`Self::prepare_temporal_in`] with the roles as a `SPECIFICATION`
+    /// formula names them (issue #46), and the temporal property `temporal`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::prepare_temporal`].
+    pub fn prepare_temporal_spec<'a>(
+        spec: &'a LoadedSpec,
+        root: &'a Module,
+        roles: SpecRoles<'a>,
+        temporal: &str,
+        config: &TlcConfig,
+        tm: &mut TermManager,
+    ) -> core::result::Result<Self, SetupError> {
+        Self::prepare_with_config_kind(
+            spec,
+            root,
+            SpecRoles {
+                init: roles.init,
+                next: roles.next,
+                inv: std::slice::from_ref(&temporal),
+                constraints: &[],
+            },
+            config,
+            InvKind::Temporal,
+            tm,
+        )
+    }
+
+    /// A check whose roles are named by a `SPECIFICATION` formula (issue
+    /// #46): each a definition's name or a formula written inline, read in
+    /// the module its conjunct was written in.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::prepare_with_config`].
+    pub fn prepare_spec<'a>(
+        spec: &'a LoadedSpec,
+        root: &'a Module,
+        roles: SpecRoles<'a>,
+        config: &TlcConfig,
+        tm: &mut TermManager,
+    ) -> core::result::Result<Self, SetupError> {
+        Self::prepare_with_config_kind(spec, root, roles, config, InvKind::State, tm)
     }
 
     /// [`Self::prepare_with_config`] with the `--inv` names' kind given by
@@ -610,18 +694,26 @@ impl Bmc {
     fn prepare_with_config_kind<'a>(
         spec: &'a LoadedSpec,
         module: &'a Module,
-        home: &'a Module,
-        roles: Roles<'_>,
+        roles: SpecRoles<'a>,
         config: &TlcConfig,
         inv_kind: InvKind,
         tm: &mut TermManager,
     ) -> core::result::Result<Self, SetupError> {
-        let Roles {
+        let SpecRoles {
             init,
             next,
             inv: _,
             constraints,
         } = roles;
+        // What the two roles are called in a diagnostic: `Init` and `Next`
+        // when they are the definitions of those names, otherwise what the
+        // formula says.
+        let init_label = init
+            .iter()
+            .map(nixie_tla_syntax::RoleSource::describe)
+            .collect::<Vec<_>>()
+            .join(" /\\ ");
+        let next_label = next.describe();
         // ONE lowerer for all three formulas. Binder renaming uses a counter
         // held by the `Lowerer`, so separate lowerings would each start from
         // zero and could give two unrelated binders – one in `Init`, one in
@@ -746,8 +838,14 @@ impl Bmc {
                 }),
                 _ => Ok(()),
             };
-        require(init, "an initial predicate", nixie_tla_syntax::Level::State)?;
-        require(next, "a next-state action", nixie_tla_syntax::Level::Action)?;
+        for role in &init {
+            if let nixie_tla_syntax::RoleSource::Name { name, .. } = role {
+                require(name, "an initial predicate", nixie_tla_syntax::Level::State)?;
+            }
+        }
+        if let nixie_tla_syntax::RoleSource::Name { name, .. } = &next {
+            require(name, "a next-state action", nixie_tla_syntax::Level::Action)?;
+        }
         // The invariant levels split three ways, and only the temporal one
         // is refused: an action-level invariant is a legitimate thing to ask
         // (Apalache's `ActionInv.tla`), checked over step pairs; a temporal
@@ -778,10 +876,27 @@ impl Bmc {
         }
 
         let mut lasso_box: Option<crate::temporal::Lasso> = None;
-        // The two roles a `SPECIFICATION` named are read in the formula's
-        // own module (`home`); see [`Self::prepare_with_config_in`].
-        let init_k = lower_one(&mut low, spec, module, home, init)?;
-        let next_k = lower_one(&mut low, spec, module, home, next)?;
+        // Each role is read in the module its conjunct was written in; see
+        // [`Self::prepare_with_config_in`]. An initial predicate written
+        // inline must still be a state predicate.
+        let mut init_parts = Vec::with_capacity(init.len());
+        for role in &init {
+            let t = lower_role(&mut low, spec, module, role)?;
+            if matches!(role, nixie_tla_syntax::RoleSource::Expr { .. }) && mentions_prime(&t) {
+                return Err(SetupError::Level {
+                    name: role.describe(),
+                    role: "an initial predicate",
+                    found: "an action".to_string(),
+                    wanted: "a state-level formula".to_string(),
+                });
+            }
+            init_parts.push(t);
+        }
+        let init_k = match init_parts.len() {
+            1 => init_parts.pop().unwrap_or_else(|| Kera::Bool(true).rc()),
+            _ => Kera::And(init_parts).rc(),
+        };
+        let next_k = lower_role(&mut low, spec, module, &next)?;
         let mut invs = Vec::with_capacity(roles.inv.len());
         for inv in roles.inv {
             if inv_kind == InvKind::Temporal {
@@ -889,8 +1004,8 @@ impl Bmc {
         // the wrong answer it produces would look like anything except its
         // cause. (An `EmptyBag` with a fixed binder name was the first
         // instance; this check is so there is not a second.)
-        for (name, root) in std::iter::once((init, &init_k))
-            .chain(std::iter::once((next, &next_k)))
+        for (name, root) in std::iter::once((init_label.as_str(), &init_k))
+            .chain(std::iter::once((next_label.as_str(), &next_k)))
             .chain(invs.iter().map(|(n, t)| (n.as_str(), t)))
         {
             if let Err(why) = nixie_tla::lower::binder_uniqueness(root) {
@@ -1167,8 +1282,8 @@ impl Bmc {
         // gives an invariant an arithmetic body, which is how the check came
         // to be written: the trace replay caught the invariant evaluating to
         // `95`, and refusing it up front is where that belongs.
-        for (name, term) in std::iter::once((init, &init_k))
-            .chain(std::iter::once((next, &next_k)))
+        for (name, term) in std::iter::once((init_label.as_str(), &init_k))
+            .chain(std::iter::once((next_label.as_str(), &next_k)))
             .chain(invs.iter().map(|(n, t)| (n.as_str(), t)))
         {
             let Some(id) = inf.node_ty(term) else {
@@ -2754,6 +2869,27 @@ fn lower_one<'a>(
             name: name.to_string(),
             why: e.to_string(),
         })
+}
+
+/// Lower one role – a definition's name or a formula written inline – in
+/// the module its conjunct was written in.
+fn lower_role<'a>(
+    low: &mut Lowerer<'a>,
+    spec: &'a LoadedSpec,
+    module: &'a Module,
+    role: &nixie_tla_syntax::RoleSource<'a>,
+) -> core::result::Result<KeraRef, SetupError> {
+    match role {
+        nixie_tla_syntax::RoleSource::Name { name, home } => {
+            lower_one(low, spec, module, home, name)
+        }
+        nixie_tla_syntax::RoleSource::Expr { expr, home } => low
+            .lower_expr_in(module, home, expr)
+            .map_err(|e| SetupError::Lower {
+                name: nixie_tla_syntax::behavior::brief(expr),
+                why: e.to_string(),
+            }),
+    }
 }
 
 /// Why a role's name does not name a zero-argument definition.

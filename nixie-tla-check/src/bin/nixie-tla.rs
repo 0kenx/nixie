@@ -41,7 +41,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use nixie_core::TermManager;
-use nixie_tla_check::bmc::{Bmc, Outcome, Roles, Scope, SetupError};
+use nixie_tla_check::bmc::{Bmc, Outcome, Roles, SetupError, SpecRoles};
 
 /// No counterexample within the bound.
 const EXIT_OK: u8 = 0;
@@ -154,11 +154,12 @@ more. In the file, INIT/NEXT/SPECIFICATION/INVARIANT, PROPERTY, CONSTANTS,
 CONSTRAINT, ACTION_CONSTRAINT and CHECK_DEADLOCK are honoured, and a
 command-line option overrides the file's value with a warning. A check is
 one pass for the invariants and deadlocks, then one per temporal property.
-SPECIFICATION must name a formula of the form Init /\\ [][Next]_vars. A
-fairness conjunct in it is announced and not assumed: invariants and
-deadlocks are checked on the safety fragment, as TLC and Apalache check
-them, and a temporal property is declined (75). Any other temporal clause
-is declined by name (75), never ignored.
+SPECIFICATION must name a formula of the form Init /\\ [][Next]_vars: the
+action may be written inside the brackets and several state-level conjuncts
+are conjoined, as TLC reads them. A fairness conjunct in it is announced and
+not assumed: invariants and deadlocks are checked on the safety fragment, as
+TLC and Apalache check them, and a temporal property is declined (75). Any
+other temporal clause is declined by name (75), never ignored.
 
 EXIT CODES
     0 no counterexample within the bound   12 counterexample found
@@ -656,9 +657,10 @@ fn run(args: &Args) -> u8 {
     let mut config = nixie_tla_syntax::TlcConfig::default();
     let mut cfg_init: Option<String> = None;
     let mut cfg_next: Option<String> = None;
-    // The module a `SPECIFICATION` formula is defined in: the scope its
-    // `Init`/`Next` are read in.
-    let mut home: Option<&nixie_tla_syntax::Module> = None;
+    // The roles a `SPECIFICATION` formula names: each a definition's name or
+    // a formula written inline, read in the module its conjunct was written
+    // in (issue #46).
+    let mut spec_form: Option<nixie_tla_syntax::SafetyForm<'_>> = None;
     // The fairness the formula also states, which this checker does not
     // assume: said out loud below, before anything is checked.
     let mut cfg_fairness: Vec<nixie_tla_syntax::FairnessClause> = Vec::new();
@@ -723,12 +725,28 @@ fn run(args: &Args) -> u8 {
                                     .and_then(|n| n.to_str())
                                     .unwrap_or("config")
                             );
-                            println!("  > Set the initialization predicate to {}", form.init);
-                            println!("  > Set the transition predicate to {}", form.next);
-                            cfg_init = Some(form.init);
-                            cfg_next = Some(form.next);
-                            home = Some(form.home);
-                            cfg_fairness = form.fairness;
+                            let (init, next) = (form.init_name(), form.next_name());
+                            println!(
+                                "  > Set the initialization predicate to {}",
+                                describe_roles(&form.init)
+                            );
+                            println!(
+                                "  > Set the transition predicate to {}",
+                                form.next.describe()
+                            );
+                            cfg_init = init.map(std::string::ToString::to_string);
+                            cfg_next = next.map(std::string::ToString::to_string);
+                            let nixie_tla_syntax::SafetyForm {
+                                init,
+                                next,
+                                fairness,
+                            } = form;
+                            cfg_fairness = fairness;
+                            spec_form = Some(nixie_tla_syntax::SafetyForm {
+                                init,
+                                next,
+                                fairness: Vec::new(),
+                            });
                         }
                         Err(e) => {
                             // Where the formula is defined, for the location
@@ -956,22 +974,34 @@ fn run(args: &Args) -> u8 {
     }
     passes.extend(properties.iter().map(String::as_str).map(Pass::Property));
     let inv_names: Vec<&str> = inv.iter().map(String::as_str).collect();
+    // Under `SPECIFICATION Spec` the two roles are whatever the formula
+    // says, read where it says it (issue #46); everywhere else they are the
+    // `INIT`/`NEXT` names, read in the root's scope as TLC reads them.
+    let roles: SpecRoles<'_> = match &spec_form {
+        Some(form) => SpecRoles {
+            init: form.init.clone(),
+            next: form.next.clone(),
+            inv: &inv_names,
+            constraints: &cinit,
+        },
+        None => SpecRoles::named(
+            &init,
+            &next,
+            module,
+            Roles {
+                init: &init,
+                next: &next,
+                inv: &inv_names,
+                constraints: &cinit,
+            },
+        ),
+    };
     let ctx = PassCtx {
         args,
         spec: &spec,
         module,
-        scope: Scope {
-            root: module,
-            // Under `SPECIFICATION Spec` the two roles are read in `Spec`'s
-            // own module (issue #46); everywhere else in the root's, as TLC
-            // reads an `INIT`/`NEXT`/`INVARIANT` name.
-            home: home.unwrap_or(module),
-        },
         config: &config,
-        init: &init,
-        next: &next,
-        inv: &inv_names,
-        cinit: &cinit,
+        roles,
         check_deadlocks,
         multi: passes.len() > 1,
     };
@@ -1003,7 +1033,7 @@ fn run(args: &Args) -> u8 {
     let mut deadlock: Option<u32> = None;
     for (i, pass) in passes.iter().enumerate() {
         if ctx.multi {
-            println!("checking {}", pass.what(ctx.inv));
+            println!("checking {}", pass.what(ctx.roles.inv));
         }
         match run_pass(&ctx, *pass, &mut tm, &mut found) {
             Ok(PassEnd::Deadlock(step)) => {
@@ -1105,12 +1135,10 @@ struct PassCtx<'a> {
     args: &'a Args,
     spec: &'a nixie_tla_syntax::LoadedSpec,
     module: &'a nixie_tla_syntax::Module,
-    scope: Scope<'a>,
     config: &'a nixie_tla_syntax::TlcConfig,
-    init: &'a str,
-    next: &'a str,
-    inv: &'a [&'a str],
-    cinit: &'a [&'a str],
+    /// The roles of the invariants pass: the two the configuration names,
+    /// the invariants and the constraints.
+    roles: SpecRoles<'a>,
     /// Whether the run looks for deadlocks (before the temporal exception).
     check_deadlocks: bool,
     /// Whether the run has more than one pass: per-pass lines are then
@@ -1281,17 +1309,20 @@ fn run_pass(
 /// The exit code to end the run with, when the pass cannot be prepared or
 /// the view cannot be used.
 fn prepare(ctx: &PassCtx<'_>, pass: Pass<'_>, tm: &mut TermManager) -> Result<Bmc, u8> {
-    let roles = Roles {
-        init: ctx.init,
-        next: ctx.next,
-        inv: ctx.inv,
-        constraints: ctx.cinit,
-    };
     let prepared = match pass {
         Pass::Property(t) => {
-            Bmc::prepare_temporal_in(ctx.spec, ctx.scope, ctx.init, ctx.next, t, ctx.config, tm)
+            let invs = [t];
+            let roles: SpecRoles<'_> = SpecRoles {
+                init: ctx.roles.init.clone(),
+                next: ctx.roles.next.clone(),
+                inv: &invs,
+                constraints: &[],
+            };
+            Bmc::prepare_temporal_spec(ctx.spec, ctx.module, roles, t, ctx.config, tm)
         }
-        Pass::Invariants => Bmc::prepare_with_config_in(ctx.spec, ctx.scope, roles, ctx.config, tm),
+        Pass::Invariants => {
+            Bmc::prepare_spec(ctx.spec, ctx.module, ctx.roles.clone(), ctx.config, tm)
+        }
     };
     let mut bmc = match prepared {
         Ok(b) => b,
@@ -1345,6 +1376,16 @@ fn prepare(ctx: &PassCtx<'_>, pass: Pass<'_>, tm: &mut TermManager) -> Result<Bm
     }
     Ok(bmc)
 }
+/// The roles of a `SPECIFICATION`'s initial predicate, as Apalache's line
+/// names them: `Init`, or the formula when it is written inline.
+fn describe_roles(roles: &[nixie_tla_syntax::RoleSource<'_>]) -> String {
+    roles
+        .iter()
+        .map(nixie_tla_syntax::RoleSource::describe)
+        .collect::<Vec<_>>()
+        .join(" /\\ ")
+}
+
 /// The fairness clauses of a `SPECIFICATION`, as one list for a diagnostic.
 fn fair_text(clauses: &[nixie_tla_syntax::FairnessClause]) -> String {
     clauses

@@ -1692,6 +1692,37 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// Lower a formula the specification **writes inline**, in `home`'s
+    /// scope: the action of a `[Next \/ Terminate]_v`, or a state-level
+    /// conjunct that is not a name. `module` is the root, as for
+    /// [`Self::lower_named_in`]; in the root's own scope the formula is
+    /// lowered as it stands.
+    ///
+    /// # Errors
+    ///
+    /// The first lowering error.
+    pub fn lower_expr_in(
+        &mut self,
+        module: &'a Module,
+        home: &'a Module,
+        expr: &'a Expr,
+    ) -> Result<KeraRef> {
+        if std::ptr::eq(module, home) {
+            self.lower_module = Some(module);
+            return self.lower(expr);
+        }
+        self.lower_module = Some(home);
+        let inst = Instantiation {
+            module: home,
+            source: Some(home),
+            with: Vec::new(),
+            params: Vec::new(),
+        };
+        let mut stack: Vec<Frame<'a>> = Vec::new();
+        self.push_instance_frames(&inst, Vec::new(), expr, &[], expr.span, &mut stack)?;
+        self.run_frames(stack, expr.span)
+    }
+
     /// Lower `home`'s own definition `name` **in `home`'s scope**: through
     /// the instance machinery, as an instance of `home` with no `WITH`.
     ///
@@ -3289,6 +3320,29 @@ impl<'a> Lowerer<'a> {
                 span,
             ));
         }
+        self.push_instance_frames(inst, def.params.clone(), def.body, args, span, stack)
+    }
+
+    /// The frames that look through `inst`'s module and then expand `body`
+    /// **in that module's scope**: every declared constant and variable of
+    /// the module substituted (see [`Self::resolve_implicit`]), the member's
+    /// own parameters bound to `args`, the instance context pushed, and
+    /// `body` expanded under it.
+    ///
+    /// `body` is a member's definition when a role names one, or a formula
+    /// the specification writes inline (`[Next \/ Terminate]_v`) when it
+    /// does not; `member_params` is empty for the latter.
+    #[allow(clippy::too_many_arguments)]
+    fn push_instance_frames(
+        &mut self,
+        inst: &Instantiation<'a>,
+        member_params: Vec<(String, usize)>,
+        body: &'a Expr,
+        args: &[&'a Expr],
+        span: Span,
+        stack: &mut Vec<Frame<'a>>,
+    ) -> Result<()> {
+        let target = inst.module;
 
         // Every constant and variable the instantiated module declares must be
         // substituted: explicitly by `WITH`, or implicitly by the same-named
@@ -3321,11 +3375,11 @@ impl<'a> Lowerer<'a> {
         }
 
         stack.push(Frame::PopInstanceCtx);
-        stack.push(Frame::Expand(def.body));
+        stack.push(Frame::Expand(body));
         stack.push(Frame::PushInstanceCtx {
             module: target,
             subst_names,
-            member_params: def.params.clone(),
+            member_params,
         });
         // Arguments last so they are on top of the value stack.
         for a in args.iter().rev() {
