@@ -146,6 +146,74 @@ fn an_operator_replacement_of_the_wrong_arity_is_reported() {
     );
 }
 
+/// An `INSTANCE` of a **built-in** module – `INSTANCE Apalache`
+/// (`TestSequencesExt.tla`), `LOCAL INSTANCE Bags` inside the community
+/// `BagsExt` – has no text to look through and needs none: its members are
+/// the built-in operators, and `A!SetToBag({1})` lowers as `SetToBag({1})`
+/// does. It was "neither defined in this file nor loaded from the search
+/// path". A `WITH` clause on one substitutes for nothing the module
+/// declares, and is reported.
+#[test]
+fn an_instance_of_a_built_in_module_resolves_its_members_by_name() {
+    let s = Scratch::new(
+        "builtin",
+        &[(
+            "Outer.tla",
+            "---- MODULE Outer ----\nEXTENDS Integers, Bags\nA == INSTANCE Bags\n\
+             B == A!SetToBag({1})\nC == SetToBag({1})\nD == A!EmptyBag\n====\n",
+        )],
+    );
+    let through = lower_in(&s, "Outer.tla", "B");
+    let direct = lower_in(&s, "Outer.tla", "C");
+    assert_eq!(through, direct, "the member lowers as the bare name does");
+    assert!(!through.contains("Opaque(\"SetToBag\""), "{through}");
+    // A nullary member, the same way.
+    let s = Scratch::new(
+        "builtin-nullary",
+        &[(
+            "Outer.tla",
+            "---- MODULE Outer ----\nEXTENDS Integers, Bags\nA == INSTANCE Bags\n\
+             B == A!EmptyBag\nC == EmptyBag\n====\n",
+        )],
+    );
+    assert_eq!(
+        lower_in(&s, "Outer.tla", "B"),
+        lower_in(&s, "Outer.tla", "C")
+    );
+    let spec = Loader::new()
+        .load(&s.path("Outer.tla"))
+        .expect("spec loads");
+    let root = spec.root_module().expect("root module").clone();
+    let mut low = Lowerer::new();
+    low.add_spec(&spec);
+    low.lower_named(&root, "B").expect("lowers");
+    assert!(
+        low.missing_instances().is_empty(),
+        "a built-in target is not missing"
+    );
+    assert!(low.instance_problems().is_empty());
+
+    let s = Scratch::new(
+        "builtin-with",
+        &[(
+            "Outer.tla",
+            "---- MODULE Outer ----\nEXTENDS Integers, Bags\nA == INSTANCE Bags WITH x <- 1\n\
+             B == TRUE\n====\n",
+        )],
+    );
+    let spec = Loader::new()
+        .load(&s.path("Outer.tla"))
+        .expect("spec loads");
+    let root = spec.root_module().expect("root module").clone();
+    let mut low = Lowerer::new();
+    low.add_spec(&spec);
+    low.lower_named(&root, "B").expect("lowers");
+    let problems = low.instance_problems();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems[0].0, "Bags");
+    assert!(problems[0].2.contains("built-in"), "{problems:?}");
+}
+
 #[test]
 fn an_unsubstituted_declaration_takes_the_same_name_here() {
     // TLA+ substitutes a declared name with no `WITH` clause by the same-named

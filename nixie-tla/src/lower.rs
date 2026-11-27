@@ -86,6 +86,19 @@ struct Instantiation<'a> {
     with: Vec<(String, &'a Expr)>,
     /// Parameters of a parameterised instance, `I(p) == INSTANCE M WITH …`.
     params: Vec<String>,
+    /// The target is a **built-in** module – one this front end knows by
+    /// its operators and has no text for (`Apalache`, `Bags`, …). There is
+    /// nothing to look through and nothing to substitute: a member `I!op`
+    /// is the built-in `op`, and lowers as the bare name does. `module`
+    /// then stands for the instantiating module and is never looked through.
+    builtin: bool,
+}
+
+/// The modules this front end knows by their operators rather than by
+/// text: the standard ones the loader skips, and Apalache's own.
+fn builtin_module(name: &str) -> bool {
+    nixie_tla_syntax::module::BUILTIN_MODULES.contains(&name)
+        || matches!(name, "Apalache" | "Variants")
 }
 
 /// Where the replacement for one substituted name comes from.
@@ -1179,6 +1192,9 @@ pub struct Lowerer<'a> {
     /// `INSTANCE` targets that could not be resolved, with their spans –
     /// reported once, after `add_spec`, rather than silently dropped.
     missing_instances: Vec<(String, Span)>,
+    /// `WITH` clauses on an `INSTANCE` of a built-in module, which declares
+    /// nothing they could substitute – by module, with the instance's span.
+    builtin_with: Vec<(String, Span)>,
     /// The module whose member the walk is lowering – the scope a
     /// `LET`-scoped instance's implicit substitutions resolve against when
     /// no instance context is open.
@@ -1386,6 +1402,7 @@ impl<'a> Lowerer<'a> {
             modules: HashMap::new(),
             pending_ops: HashMap::new(),
             missing_instances: Vec::new(),
+            builtin_with: Vec::new(),
             lower_module: None,
             recursive_names: std::collections::HashSet::new(),
             fresh: 0,
@@ -1549,6 +1566,34 @@ impl<'a> Lowerer<'a> {
             _ => return,
         };
         let Some(target) = self.modules.get(&instance.module.name).copied() else {
+            // An `INSTANCE` of a **built-in** module – `INSTANCE Apalache`
+            // (`TestSequencesExt.tla`), `INSTANCE Bags` inside the
+            // community `BagsExt` – has no text to look through, and needs
+            // none: its members are the built-in operators, which a bare
+            // name already lowers. Registered with the instantiating module
+            // as a stand-in that is never looked through (see
+            // [`Instantiation::builtin`]); a `WITH` clause on it substitutes
+            // for nothing the module declares, and is reported.
+            if builtin_module(&instance.module.name) {
+                if !instance.substitutions.is_empty() {
+                    self.builtin_with
+                        .push((instance.module.name.clone(), unit.span));
+                }
+                let inst = Instantiation {
+                    module,
+                    source: Some(module),
+                    with: Vec::new(),
+                    params,
+                    builtin: true,
+                };
+                match name {
+                    Some(n) => {
+                        self.instances.insert(n, inst);
+                    }
+                    None => self.open_instances.push(inst),
+                }
+                return;
+            }
             // The instantiated module was not loaded. That is an error to
             // report *now*, at registration, with the instance's own span –
             // a use of it would fail much later with a name error that
@@ -1568,6 +1613,7 @@ impl<'a> Lowerer<'a> {
                 .map(|(n, e)| (n.name.clone(), e))
                 .collect(),
             params,
+            builtin: false,
         };
         match name {
             Some(n) => {
@@ -1631,6 +1677,29 @@ impl<'a> Lowerer<'a> {
     #[must_use]
     pub fn missing_instances(&self) -> &[(String, Span)] {
         &self.missing_instances
+    }
+
+    /// Every `INSTANCE` the lowering cannot honour, with the reason: a
+    /// target that never resolved, or a `WITH` clause on a built-in module.
+    pub fn instance_problems(&self) -> Vec<(String, Span, String)> {
+        self.missing_instances
+            .iter()
+            .map(|(n, s)| {
+                (
+                    n.clone(),
+                    *s,
+                    "is neither defined in this file nor loaded from the search path".to_string(),
+                )
+            })
+            .chain(self.builtin_with.iter().map(|(n, s)| {
+                (
+                    n.clone(),
+                    *s,
+                    "is a built-in module: it declares nothing a `WITH` clause could substitute"
+                        .to_string(),
+                )
+            }))
+            .collect()
     }
 
     /// Note every `RECURSIVE`-declared name and every self-referential
@@ -1701,14 +1770,22 @@ impl<'a> Lowerer<'a> {
     ///
     /// Returns [`LowerErrorKind::Unsupported`] if there is no such definition,
     /// or the first lowering error.
+    /// Whether `qualifier` names an `INSTANCE` of a built-in module, whose
+    /// members are the built-in operators (see [`Instantiation::builtin`]).
+    fn is_builtin_instance(&self, qualifier: &str) -> bool {
+        self.instances.get(qualifier).is_some_and(|i| i.builtin)
+    }
+
     /// Whether `name` is a nullary member of some **unnamed** instance –
     /// visible unprefixed, which is what a role names.
     #[must_use]
     pub fn open_instances_visible(&self, name: &str) -> bool {
         self.open_instances.iter().any(|i| {
-            self.module_defs
-                .get(&i.module.name.name)
-                .is_some_and(|m| m.get(name).is_some_and(|d| d.params.is_empty()))
+            !i.builtin
+                && self
+                    .module_defs
+                    .get(&i.module.name.name)
+                    .is_some_and(|m| m.get(name).is_some_and(|d| d.params.is_empty()))
         })
     }
 
@@ -1740,9 +1817,11 @@ impl<'a> Lowerer<'a> {
             .open_instances
             .iter()
             .position(|i| {
-                self.module_defs
-                    .get(&i.module.name.name)
-                    .is_some_and(|m| m.contains_key(name))
+                !i.builtin
+                    && self
+                        .module_defs
+                        .get(&i.module.name.name)
+                        .is_some_and(|m| m.contains_key(name))
             })
             .map(|ix| self.open_instances[ix].clone());
         if let Some(inst) = inst {
@@ -1838,6 +1917,7 @@ impl<'a> Lowerer<'a> {
             source: Some(home),
             with: Vec::new(),
             params: Vec::new(),
+            builtin: false,
         };
         let mut stack: Vec<Frame<'a>> = Vec::new();
         self.push_instance_frames(&inst, Vec::new(), expr, &[], expr.span, &mut stack)?;
@@ -1864,6 +1944,7 @@ impl<'a> Lowerer<'a> {
             source: Some(home),
             with: Vec::new(),
             params: Vec::new(),
+            builtin: false,
         };
         self.lower_member(&inst, name)
     }
@@ -4221,6 +4302,7 @@ impl<'a> Lowerer<'a> {
                             .map(|(n, e)| (n.name.clone(), e))
                             .collect(),
                         params: params.iter().map(|p| p.name.name.clone()).collect(),
+                        builtin: false,
                     };
                     saved_insts.push((
                         name.name.clone(),
@@ -4324,7 +4406,13 @@ impl<'a> Lowerer<'a> {
                 }
             },
             ExprKind::Name(q) => {
-                if q.is_qualified() {
+                // `A!op` through an `INSTANCE` of a built-in module: the
+                // built-in `op`, resolved as the bare name below.
+                let through_builtin = q.is_qualified()
+                    && q.path
+                        .first()
+                        .is_some_and(|i| self.is_builtin_instance(&i.name));
+                if q.is_qualified() && !through_builtin {
                     let names: Vec<&str> = q.path.iter().map(|i| i.name.as_str()).collect();
                     let (Some(inst), Some(member)) = (names.first(), names.get(1)) else {
                         return Err(LowerError::unsupported(
@@ -4474,7 +4562,14 @@ impl<'a> Lowerer<'a> {
                 }
             }
             ExprKind::Apply { head, args } => {
-                if head.is_qualified() {
+                // `A!op(args)` through an `INSTANCE` of a built-in module is
+                // the built-in `op(args)`: no module to look through, so the
+                // name's last part resolves as a bare one would.
+                let through_builtin = head
+                    .path
+                    .first()
+                    .is_some_and(|q| self.is_builtin_instance(&q.name));
+                if head.is_qualified() && !through_builtin {
                     let names: Vec<&str> = head.path.iter().map(|i| i.name.as_str()).collect();
                     let (Some(inst), Some(member)) = (names.first(), names.get(1)) else {
                         return Err(LowerError::unsupported(

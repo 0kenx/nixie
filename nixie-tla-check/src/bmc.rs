@@ -826,13 +826,10 @@ impl Bmc {
         // An `INSTANCE` target that never resolved is a defect in the
         // specification, reported by name with the instance's span – not a
         // silent drop that surfaces much later as a name error at some use.
-        if let Some((name, _)) = low.missing_instances().first() {
+        if let Some((name, _, why)) = low.instance_problems().first() {
             return Err(SetupError::Lower {
                 name: format!("INSTANCE {name}"),
-                why: format!(
-                    "the instantiated module `{name}` is neither defined in this file nor \
-                     loaded from the search path"
-                ),
+                why: format!("the instantiated module `{name}` {why}"),
             });
         }
         // Level-check before anything else. TLA+ gives `Init` and `Inv` a
