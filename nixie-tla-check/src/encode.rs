@@ -2419,6 +2419,17 @@ impl Encoder {
                     // approximated by an uninterpreted function whose models
                     // nothing could replay.
                     ArithOp::Exp => {
+                        // A ground base to a ground exponent is **one
+                        // literal**, the one the evaluator computes – so the
+                        // replay reads the same value by construction – up
+                        // to a budget on its size. Unfolding `2^256` as 256
+                        // multiplications refused it (`SafeMath.tla`); the
+                        // oracle folds it too (`ConstSimplifierBase`), up to
+                        // `Double.MaxValue`.
+                        if let (Some(a0), Some(b0)) = (ground_int(a), ground_int(b)) {
+                            let lit = folded_power(a0, b0, tm)?;
+                            return scalar(lit);
+                        }
                         let Some(n) = ground_int(b) else {
                             return Err(EncodeError::Unsupported(
                                 "`^` with a symbolic exponent (non-linear)".into(),
@@ -3886,6 +3897,44 @@ fn literal_int(term: &KeraRef) -> Option<num_bigint::BigInt> {
 /// would be a second semantics to keep in agreement. It fails closed – a free
 /// name, an overflow or the depth limit all give `None`, which is the refusal
 /// that was already there.
+/// The largest result `a ^ b` is folded to, in bits: generous for the
+/// widths specifications name (`2^256`, `2^256 - 1`), and a refusal by name
+/// beyond, rather than a literal the arithmetic would carry through every
+/// row it enters.
+const POW_FOLD_BITS: u64 = 4096;
+
+/// `a ^ b` for two ground integers, as one integer literal: the
+/// evaluator's own value, so the replay can only agree (it decides `0 ^ 0`,
+/// a negative exponent and an overflow), within [`POW_FOLD_BITS`].
+fn folded_power(
+    a: num_bigint::BigInt,
+    b: num_bigint::BigInt,
+    tm: &mut TermManager,
+) -> Result<TermId> {
+    let refused = |why: &str| {
+        Err(EncodeError::Unsupported(format!(
+            "`^` with a ground base and exponent where {why}"
+        )))
+    };
+    // The result's size is known before it is computed: `bits(a) * b`.
+    let Ok(e) = u32::try_from(&b) else {
+        return refused("the exponent is negative or beyond the folding budget");
+    };
+    if u128::from(a.bits().max(1)) * u128::from(e) > u128::from(POW_FOLD_BITS) {
+        return refused("the result exceeds the folding budget of 4096 bits");
+    }
+    let term = Kera::Arith(
+        ArithOp::Exp,
+        Kera::Int(a.to_string()).rc(),
+        Kera::Int(b.to_string()).rc(),
+    )
+    .rc();
+    match ground_int(&term) {
+        Some(n) => Ok(tm.mk_int(n)),
+        None => refused("the evaluator gives it no value (`0 ^ 0`, or an overflow)"),
+    }
+}
+
 fn ground_int(term: &KeraRef) -> Option<num_bigint::BigInt> {
     if let Some(n) = literal_int(term) {
         return Some(n);

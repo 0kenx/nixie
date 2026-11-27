@@ -212,3 +212,44 @@ fn a_free_name_needs_a_declared_sort() {
     solver.assert(negated, &mut tm);
     assert_eq!(solver.check(&mut tm), SolverResult::Unsat);
 }
+
+/// `a ^ b` for two ground integers is one literal, the evaluator's own –
+/// so the replay agrees by construction – up to the folding budget; the
+/// old reading unfolded at most 64 multiplications and refused `2^100`
+/// as "above the unfolding budget". Beyond what the replay's 128-bit
+/// integers can hold (`2^256`, `SafeMath.tla`'s width) it is refused by
+/// name rather than encoded as a literal no trace could replay.
+#[test]
+fn a_ground_power_is_folded_to_the_evaluators_literal() {
+    assert_eq!(
+        validity_of("2^100 = 1267650600228229401496703205376"),
+        SolverResult::Unsat
+    );
+    assert_eq!(validity_of("3^0 = 1"), SolverResult::Unsat);
+    assert_eq!(
+        validity_of("0^0 = 1"),
+        SolverResult::Unsat,
+        "the evaluator's reading, as TLC's"
+    );
+    let err = encode_err("2^256 = 1");
+    assert!(err.to_string().contains("gives it no value"), "{err}");
+    let err = encode_err("2^(2^20) = 1");
+    assert!(err.to_string().contains("folding budget"), "{err}");
+}
+
+/// `x \in SUBSET Int` holds of every set of integers, and is read as
+/// `TRUE` rather than as a membership in a powerset to enumerate – which
+/// declined as "`Int` used as a value" (`FunInInfiniteSubset.tla`'s
+/// `TypeOkay == myVariable \in [P -> SUBSET Int]`). `SUBSET Nat` is not read
+/// this way: a member must also be non-negative, and there is no "every
+/// member" to say it with.
+#[test]
+fn membership_in_the_powerset_of_the_integers_holds() {
+    // Still refused – `SUBSET Nat` is not read as `TRUE`; which refusal
+    // depends on the level (the checker's says "`Nat` used as a value").
+    assert!(
+        encode_err("{1} \\in SUBSET Nat")
+            .to_string()
+            .contains("set")
+    );
+}
