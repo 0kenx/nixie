@@ -389,3 +389,44 @@ fn a_union_with_singletons_folds() {
         "ApaFoldSet(A, {4}, {1, 1, 2, 3}) = {1, 2, 3, 4}",
     );
 }
+
+/// A fold whose step writes the accumulator at the **element's own key** –
+/// `![p, q]` with `p == pair[1]`, `q == pair[2]`, over a product of two
+/// sets – and reads the accumulator nowhere: each step depends on no other
+/// step, so the fold is order-free (`FoldExcept.tla`'s `SubtractInLoop`,
+/// two cells of Apalache's suite). The key must *be* the element:
+/// `<<pair[1], pair[1]>>` names only its first component, so two elements
+/// would write the same entry, and that still declines.
+#[test]
+fn a_fold_whose_step_writes_the_elements_own_key_is_order_free() {
+    let init = "x = [p \\in 1..2, q \\in 1..2 |-> 0]";
+    // The signature pins `pair`'s shape, as `FoldExcept.tla`'s does.
+    let sig = "\\* @type: (<<Int, Int>> -> Int, <<Int, Int>>) => <<Int, Int>> -> Int;\n\
+               W(f, pair) == [f EXCEPT ![pair[1], pair[2]] = pair[1] * 10 + pair[2]]";
+    holds(
+        "x",
+        sig,
+        init,
+        "ApaFoldSet(W, x, {1, 2} \\X {1, 2}) = [p \\in 1..2, q \\in 1..2 |-> p * 10 + q]",
+    );
+    let src = spec(
+        "x",
+        "\\* @type: (<<Int, Int>> -> Int, <<Int, Int>>) => <<Int, Int>> -> Int;\n\
+         W(f, pair) == [f EXCEPT ![pair[1], pair[1]] = 1]",
+        init,
+        "ApaFoldSet(W, x, {1, 2} \\X {1, 2}) = x",
+    );
+    let parsed = nixie_tla_syntax::parse_file(&src).expect("parses");
+    let loaded = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = loaded.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&loaded, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    let err = bmc
+        .check(0, &mut tm)
+        .expect_err("a non-injective key declines");
+    assert!(
+        err.to_string().contains("associative and commutative"),
+        "{err}"
+    );
+}

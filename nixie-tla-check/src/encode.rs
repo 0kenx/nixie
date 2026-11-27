@@ -2922,7 +2922,7 @@ impl Encoder {
                         // provably order-independent **declines** unless the
                         // set has at most one member (where every order is the
                         // same order). Declining is exit 75, not a guess.
-                        if !set_fold_order_independent(body, acc, elem)
+                        if !set_fold_order_independent(body, acc, elem, collection)
                             && !at_most_one_element(collection)
                         {
                             return Err(EncodeError::Unsupported(
@@ -3580,7 +3580,41 @@ fn scalar(t: TermId) -> Result<Rc<Value>> {
 ///
 /// Called on a lowered operator body, which is user input, so every helper
 /// walks with an explicit stack and a budget.
-fn set_fold_order_independent(body: &KeraRef, acc: &Name, elem: &Name) -> bool {
+/// Whether an `EXCEPT` index is the fold's element: the element itself, or
+/// the tuple `<<e[1], …, e[n]>>` of its components, over a collection that
+/// is a product of exactly `n` sets – so that distinct elements give
+/// distinct keys, and writes at them never collide.
+fn key_is_the_element(index: &KeraRef, elem: &Name, collection: &KeraRef) -> bool {
+    if matches!(index.as_ref(), Kera::Var(n) if n == elem) {
+        return true;
+    }
+    let Kera::Tuple(items) = index.as_ref() else {
+        return false;
+    };
+    let Kera::Times(parts) = collection.as_ref() else {
+        return false;
+    };
+    if items.len() != parts.len() {
+        return false;
+    }
+    items
+        .iter()
+        .enumerate()
+        .all(|(i, item)| match item.as_ref() {
+            Kera::FunApp(f, ix) => {
+                matches!(f.as_ref(), Kera::Var(n) if n == elem)
+                    && matches!(ix.as_ref(), Kera::Int(k) if k.parse::<usize>().ok() == Some(i + 1))
+            }
+            _ => false,
+        })
+}
+
+fn set_fold_order_independent(
+    body: &KeraRef,
+    acc: &Name,
+    elem: &Name,
+    collection: &KeraRef,
+) -> bool {
     // The element parameter unused: the operator is `g(acc)`, and iterating
     // one function is order-independent by inspection.
     if !mentions(body, elem) {
@@ -3601,6 +3635,18 @@ fn set_fold_order_independent(body: &KeraRef, acc: &Name, elem: &Name) -> bool {
         // *original* value whatever order the steps run in. This is
         // `Antipatterns`' `addOneInCdm` and the `FoldSetFun` shape.
         if matches!(index.as_ref(), Kera::Var(n) if n == elem) && acc_read_only_at(value, acc, elem)
+        {
+            return true;
+        }
+        // The key written as the element's own components – `![p, q]` with
+        // `p == pair[1]` and `q == pair[2]` over `Proc \X Proc` – and a
+        // value that does not read the accumulator at all. The key is the
+        // element (a product of as many sets as the key has components, so
+        // no two elements share one), and each step depends on nothing the
+        // other steps wrote: `FoldExcept.tla`'s `SubtractInLoop`.
+        if !mentions(index, acc)
+            && !mentions(value, acc)
+            && key_is_the_element(index, elem, collection)
         {
             return true;
         }
