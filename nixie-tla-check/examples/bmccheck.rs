@@ -29,8 +29,19 @@ fn main() {
 
     let mut modules = 0usize;
     let mut with_triple = 0usize;
+    // Modules the convention (or the configuration) gives no roles, or that
+    // do not load: counted, and named per file in list mode.
+    let mut no_roles = 0usize;
     let mut with_cfg = 0usize;
     let no_cfg = std::env::var("NIXIE_BMC_NO_CFG").is_ok_and(|v| v == "1");
+    // `NIXIE_BMC_PARANOID=1`: the frame containment obligation at every step
+    // (issue #20, step 6 – `Bmc::set_paranoid`). The fixpoint argument in
+    // `frames.rs` says no framed variable ever escapes its universe; this
+    // asks the solver to agree on every specification of the corpus, and a
+    // `Sat` or `Unknown` on the obligation blocks the specification by name
+    // (`frame for ... may miss members`) instead of answering on a possibly
+    // missing member. Roughly doubles the query count.
+    let paranoid = std::env::var("NIXIE_BMC_PARANOID").is_ok_and(|v| v == "1");
     // Which configuration mode this run is in, said once, out loud: the
     // `.cfg`-by-convention reading is this harness's own choice (the CLI
     // reads a config only with `--config`, Apalache's default), and a number
@@ -39,6 +50,9 @@ fn main() {
         println!("config mode: .cfg ignored (NIXIE_BMC_NO_CFG=1)");
     } else {
         println!("config mode: .cfg read by convention when present");
+    }
+    if paranoid {
+        println!("frames: containment obligation probed at every step (NIXIE_BMC_PARANOID=1)");
     }
     // `NIXIE_BMC_LIST=1` prints one `file<TAB>outcome` line per specification
     // instead of the summary, so two runs can be diffed spec by spec. A
@@ -94,6 +108,13 @@ fn main() {
             }
         }
         let Ok(spec) = loader.load(std::path::Path::new(&path)) else {
+            // Said, in list mode: a module that does not load is not a
+            // measurement, and a run that says nothing about it leaves the
+            // reader to infer it from the totals.
+            if list {
+                println!("{path}\tskipped\tdoes not load (a missing EXTENDS or INSTANCE target)");
+            }
+            no_roles += 1;
             continue;
         };
         let Some(module) = spec.root_module() else {
@@ -207,13 +228,25 @@ fn main() {
             Some(p) => p,
             None => match (pick(INITS), pick(NEXTS)) {
                 (Some(i), Some(n)) => (i, n),
-                _ => continue,
+                _ => {
+                    if list {
+                        println!("{path}\tskipped\tno Init/Next by convention or configuration");
+                    }
+                    no_roles += 1;
+                    continue;
+                }
             },
         };
         let invs: Vec<String> = if cfg_invs.is_empty() {
             match pick(INVS) {
                 Some(i) => vec![i],
-                None => continue,
+                None => {
+                    if list {
+                        println!("{path}\tskipped\tno invariant by convention or configuration");
+                    }
+                    no_roles += 1;
+                    continue;
+                }
             }
         } else {
             cfg_invs
@@ -257,6 +290,7 @@ fn main() {
                 // Apalache's default – so the corpus measures it too.
                 b.set_conflict_limit(limit);
                 b.set_check_deadlocks(true);
+                b.set_paranoid(paranoid);
                 b
             }
             Err(e) => {
@@ -412,6 +446,7 @@ fn main() {
     println!("{modules} modules loaded");
     println!("  with a .cfg that parsed      : {with_cfg}");
     println!("  with an Init/Next/Inv triple : {with_triple}");
+    println!("  without roles, or not loaded  : {no_roles}");
     println!("  prepared (typed and sorted)  : {prepared}");
     println!("  actually checked at depth {depth}  : {checked}");
     println!("    no violation within the bound : {no_violation}");
@@ -469,10 +504,12 @@ fn reason(e: &SetupError) -> String {
         SetupError::Replacement { why, .. } => {
             format!("the .cfg's `<-` could not be applied: {why}")
         }
-        // Only produced under `--paranoid`, which the harness does not pass;
-        // named anyway so the tally never hides it behind a catch-all.
-        SetupError::FrameEscaped { var, step, .. } => {
-            format!("frame for `{var}` at step {step} may miss members")
+        // Only produced under `--paranoid` / `NIXIE_BMC_PARANOID=1`; named
+        // so the tally never hides it behind a catch-all – and with the
+        // probe's answer, because "is falsified" is a frame that is
+        // unsound on this specification and "is undecided" is a budget.
+        SetupError::FrameEscaped { var, step, result } => {
+            format!("frame for `{var}` at step {step} may miss members (containment {result})")
         }
     }
 }

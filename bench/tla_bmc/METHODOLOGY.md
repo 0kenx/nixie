@@ -89,6 +89,18 @@ So a `Violation` may be spurious and `NoViolationWithin` stays sound, the same
 asymmetry as a dropped assumption. `Encoder::domain_unmodelled()` reports when
 a verdict was reached through it.
 
+## The frames' containment obligation (2026-11-26)
+
+`NIXIE_BMC_PARANOID=1` runs the `--paranoid` probe (issue #20, step 6) at
+every step of every module: `Init /\ Trans_{<k} /\ ~(v@k \subseteq U_k)` must
+be `Unsat` for every framed set and function variable, and a `Sat` or
+`Unknown` blocks the module by name with the probe's answer ("is falsified"
+is a frame unsound on that specification; "is undecided" is the budget).
+Roughly twice the query count. The first sweep (907 modules) found one
+falsified frame and, on the way, a skolem witness that was one rigid
+constant for the whole unrolling; both are fixed, and the sweep is written
+up in `docs/studies/2026-11-26-tla-20-paranoid-sweep.md`.
+
 ## Level checking is part of correctness here, not tidiness
 
 An invariant must be a **state** predicate. `UnchangedAsInv1663.tla` has
