@@ -60,6 +60,20 @@ if os.environ.get('CELL_IDS'):
 json.dump(cells[:int(os.environ.get('MAX_CELLS', '40'))], sys.stdout)
 PY
 
+# A (nearly) empty store is not "nothing cached yet" but, in practice, a
+# checkout without `precompile/` – a worktree: the directory is not tracked,
+# and on 2026-11-27 a worktree without the symlink re-ran the oracle on all
+# 253 cells against the rule above. Populating a store is a deliberate act
+# (a re-pin): say so with APALACHE_FRESH_STORE=1.
+STORED="$(find "$STORE" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)"
+CELLS_N="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$CELLS_JSON")"
+if [ "$STORED" -lt $(( CELLS_N / 2 )) ] && [ -z "${APALACHE_FRESH_STORE:-}" ]; then
+  echo "the oracle's store holds $STORED entries for $CELLS_N cells: a checkout without" >&2
+  echo "precompile/ (a worktree) – $STORE. Link the store, or set APALACHE_FRESH_STORE=1" >&2
+  echo "to populate one on purpose (a re-pin, never by accident)." >&2
+  exit 2
+fi
+
 run_cell () {  # $1 arm-binary  $2 out-dir  rest: argv
   local bin="$1"; shift; local out="$1"; shift
   mkdir -p "$out"

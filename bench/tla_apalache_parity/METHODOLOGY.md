@@ -59,13 +59,73 @@ concurrent runs once shared `/tmp/parity_tla_lines`, and the later one
 truncated it under the earlier one's `read` loop, which stopped after 40
 cells).
 
-## Standing result (2026-11-27, all 253 cells)
+**In a worktree, link the store first**: `precompile/` is not tracked, so
+a fresh worktree has none, and the harness would take the oracle's arm as
+uncached and re-run it on every cell. It refuses to when the store holds
+fewer than half the corpus's cells, unless `APALACHE_FRESH_STORE=1` says a
+new store is meant (a re-pin). And never rebuild the Nixie binary into a
+path a running harness is spawning it from: a cell launched during the
+swap loses its output – on 2026-11-27 five cells lost their lasso line
+that way and were classed without their length.
 
-`main` @ `8faa6c12`, the last code commit of the parity-gaps session (seven
-commits on `9b3982d7`'s code; the study is
-`docs/studies/2026-11-27-tla-31-parity-gaps.md`), pinned oracle 0.63.0,
-every cell of the corpus: four concurrent runs of the harness over disjoint cell
-ids (its scratch files are private to a run and the oracle's store was
+## Standing result (2026-11-27, second pass, all 253 cells)
+
+The parity-gaps session's second pass (seven more commits; the study's
+"Second pass"), pinned oracle 0.63.0, the oracle's store corrected (below),
+every cell of the corpus, four concurrent runs of the harness on a machine
+at load 40–85 from other work.
+
+| class | count |
+|---|---:|
+| Agree-Ok | 88 |
+| Agree-Violation | 27 |
+| Agree-Violation-Shorter | 5 |
+| Agree-Deadlock | 0 |
+| Agree-Refused | 9 |
+| Declined | 45 |
+| Inconclusive | 37 |
+| OracleFailed | 44 |
+| **MISMATCH** | **0** |
+
+* **129 verdict agreements, 0 mismatches** (109 in the first pass; 94 the
+  morning before it). No cell moved from an agreement to a decline, an
+  `Unknown` or a mismatch.
+* **Most of the movement is the oracle's, not Nixie's**: 47 stored oracle
+  answers were the oracle's usage banner – the malformed argv of a harness
+  bug fixed on 2026-11-26 and never refreshed – and were re-run (below).
+  Given a real question, the oracle answers `NoError` on 19 of the 47,
+  `Error` on 3, refuses 14 (its type and configuration errors), and
+  crashes on 11. Against those: Agree-Ok 11, Agree-Violation 1,
+  Agree-Refused 6, Inconclusive 4 (`Unknown` or a timeout), Declined 6
+  (the classes below), OracleFailed 19 (the crashes and refusals Nixie
+  also declines or cannot reach). The same kind of finding as the first
+  pass's eight, twice over.
+* **Nixie's own movement, this pass:** `ConstantOperatorImpl` and
+  `FunInInfiniteSubset` declined → `Agree-Ok`; `MC_FoldExcept3` (two cells)
+  declined → `Unknown` (encoded, solver capacity).
+* **Agree-Violation-Shorter (5):** unchanged – the oracle's tableau defect
+  with its reproducers (below). (A run in which the binary was replaced on
+  disk while the harness was spawning it lost Nixie's lasso line on those
+  five and counted them plain `Agree-Violation`; re-run clean, they are
+  `Shorter` again. Do not rebuild into a running harness's path.)
+* **Declined (45):** the first pass's 43 minus `ConstantOperatorImpl`,
+  `FunInInfiniteSubset` and `MC_FoldExcept3` ×2, plus six cells that
+  became comparable with the corrected store and decline: `CaseNoOther`,
+  `CaseNoOtherBool` (`$CaseNoMatch`), `OracleFunSet` and `test1` (a
+  function set as a value), `Verifier_functionComparison` and `letpoly` (a
+  symbolic set with no candidate list / a function as a value).
+* **Inconclusive (37):** the first pass's 31 plus `MC_FoldExcept3` ×2
+  (`Unknown`) and three cells newly compared that time out
+  (`HandshakeWithTypes` ×2, `RecordExcept987`, `TestReqAckVariants`).
+* **OracleFailed (44):** the oracle's own – 11 × exit 1 (its crash on its
+  cells), 32 × a refusal (its configuration and type errors), 1 × exit 120.
+
+### The 2026-11-27 standing, first pass
+
+`main` @ `10bf7e56`, the last code commit of the parity-gaps session's
+first pass (seven commits on `9b3982d7`'s code), pinned oracle 0.63.0,
+every cell of the corpus: four concurrent runs of the harness over disjoint
+cell ids (its scratch files are private to a run and the oracle's store was
 complete), on a machine carrying a load of 20–45 from other work, so 14
 cells timed out at 300 s.
 
@@ -125,10 +185,11 @@ cells timed out at 300 s.
   `Counter` ×2, `FunExcept` ×3, `PickPerf` ×2, and one each on six
   others) – solver capacity (#20's remaining cells, #50), never a wrong
   verdict.
-* **OracleFailed (72):** unchanged in nature – the oracle's crash on its
-  own cells (exit 1), its type and configuration errors – minus the eight
-  that were the harness's (above), whose real oracle answers are now
-  compared.
+* **OracleFailed (72):** ~~unchanged in nature – the oracle's crash on its
+  own cells (exit 1), its type and configuration errors~~ – **corrected the
+  same day**: 47 of the exit-1 answers were the oracle's usage banner, a
+  harness artifact (see "Fixed 2026-11-27" and the second pass), and the
+  eight that were the harness's (above) had already been re-run.
 
 ### The 2026-11-26 standing
 
@@ -230,6 +291,25 @@ before the harness fixes below and is superseded.
   `precompile/apalache-0.63.0/benchmark/tla_parity_artifacts_20261127` and
   the oracle re-run. With real oracle answers, the cells are 1
   `Agree-Violation`, 2 `Declined`, 5 `Inconclusive`, 0 `MISMATCH`.
+* **47 stored oracle answers were the oracle's usage banner.** The
+  comparator counts exit 1 as `OracleFailed` ("the oracle's crash on its
+  own cells"), and the first pass's table carried 72 of them. Looking at
+  the stored `stdout` of each – which nobody had – 47 are not crashes: they
+  are `apalache-mc [options] command …`, the CLI refusing a malformed
+  argv, printed when the cells were first run under the two harness bugs
+  fixed on 2026-11-26 (an empty options field collapsing, so that the exit
+  code landed in the spec's place; multi-option cells misread). The fix
+  corrected the argv for every later run but the store was never refreshed
+  – the rule that "a cell the harness kept the oracle from running is not
+  an oracle result" was applied to one cell then. Found by accident: a
+  worktree without the store symlink re-ran the oracle on every cell, and
+  28 "crashes" came back verdicts. The 47 entries were set aside
+  (`tla_parity_artifacts_20261127`, beside the first pass's eight) and
+  replaced by the fixed harness's answers; on the 204 cells whose stored
+  answer was real, the fresh answers were identical to the stored ones,
+  cell for cell, which is what says the oracle arm is reproducible and the
+  store was otherwise sound. **Count a class only after reading what is in
+  it**: `exit 1` was read as "the oracle's crash" for a day.
 * **A lasso's length was never read.** `counterexample 1: a lasso of N
   step(s) …` did not match the pattern for a plain counterexample, so
   `x_len` was empty on every temporal violation and no `--temporal` cell's
