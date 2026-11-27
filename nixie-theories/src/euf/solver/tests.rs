@@ -722,10 +722,11 @@ fn test_function_application_entries_basic() {
     assert_eq!(entries.len(), 1, "exactly one application of func 7");
     let e = &entries[0];
     assert_eq!(e.arg_reps.len(), 1);
+    let classes = solver.class_member_snapshot();
     // The argument class of a contains a's TermId (1).
-    assert!(e.arg_class_terms[0].contains(&TermId::new(1)));
+    assert!(classes.members_of(e.arg_reps[0]).contains(&TermId::new(1)));
     // The result class contains the application term itself (3).
-    assert!(e.result_class_terms.contains(&TermId::new(3)));
+    assert!(classes.members_of(e.result_rep).contains(&TermId::new(3)));
 
     // A function with no applications yields no entries.
     assert!(solver.function_application_entries(9).is_empty());
@@ -766,8 +767,79 @@ fn test_function_application_entries_congruence_collapses_arg_reps() {
         "after a=b the two applications are in the same result class"
     );
     // The shared result class contains both application terms.
-    assert!(after[0].result_class_terms.contains(&TermId::new(10)));
-    assert!(after[0].result_class_terms.contains(&TermId::new(11)));
+    let classes = solver.class_member_snapshot();
+    let result_class = classes.members_of(after[0].result_rep);
+    assert!(result_class.contains(&TermId::new(10)));
+    assert!(result_class.contains(&TermId::new(11)));
+}
+
+/// The snapshot lists every class exactly as `class_members` does, each
+/// class ascending by node index, and nothing under a node that is not a
+/// root.
+#[test]
+fn class_member_snapshot_lists_every_class_in_node_order() {
+    use super::EufSolver;
+    let mut solver = EufSolver::new();
+    let ids: Vec<_> = (1..=8).map(TermId::new).collect();
+    let nodes: Vec<u32> = ids.iter().map(|&t| solver.intern(t)).collect();
+    let f = 3u32;
+    for pair in [[0usize, 1], [2, 3], [4, 5]] {
+        let _ = solver.intern_app(
+            TermId::new(100 + pair[0] as u32),
+            f,
+            [nodes[pair[0]], nodes[pair[1]]],
+        );
+    }
+    solver
+        .merge(nodes[0], nodes[1], TermId::new(50))
+        .expect("merge");
+    solver
+        .merge(nodes[1], nodes[2], TermId::new(51))
+        .expect("merge");
+    solver
+        .merge(nodes[6], nodes[7], TermId::new(52))
+        .expect("merge");
+    // A congruence from an argument merge: f(a, c) and f(b, c) with a = b.
+    let g = 4u32;
+    let _ = solver.intern_app(TermId::new(200), g, [nodes[4], nodes[6]]);
+    let _ = solver.intern_app(TermId::new(201), g, [nodes[5], nodes[6]]);
+    solver
+        .merge(nodes[4], nodes[5], TermId::new(53))
+        .expect("merge");
+
+    let snapshot = solver.class_member_snapshot();
+    for idx in 0..solver.node_count() as u32 {
+        let rep = solver.find_immutable(idx);
+        let listed: Vec<TermId> = solver
+            .class_members(rep)
+            .into_iter()
+            .filter_map(|node| solver.node_term(node))
+            .collect();
+        assert_eq!(
+            snapshot.members_of(rep),
+            listed.as_slice(),
+            "the class of node {idx}"
+        );
+        assert!(
+            listed.iter().all(|&t| ids.contains(&t) || t.raw() >= 100),
+            "only interned terms"
+        );
+        if rep != idx {
+            assert!(
+                snapshot.members_of(idx).is_empty(),
+                "a non-root indexes nothing"
+            );
+        }
+    }
+    assert!(snapshot.members_of(solver.node_count() as u32).is_empty());
+    assert!(snapshot.members_of(u32::MAX).is_empty());
+    // The applications of g share their classes, and the snapshot answers them.
+    let entries = solver.function_application_entries(g);
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].arg_reps, entries[1].arg_reps);
+    assert_eq!(entries[0].result_rep, entries[1].result_rep);
+    let result = snapshot.members_of(entries[0].result_rep);
+    assert!(result.contains(&TermId::new(200)) && result.contains(&TermId::new(201)));
 }
 
 #[test]

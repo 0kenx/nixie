@@ -5090,6 +5090,15 @@ impl Solver {
         self.model_euf().function_application_entries(func_id)
     }
 
+    /// The member lists of every congruence class of the E-graph state the
+    /// model reads, built in one pass. Every entry of
+    /// [`euf_function_entries`](Self::euf_function_entries) names its
+    /// classes by the representatives this snapshot is indexed by, so one
+    /// snapshot serves all the functions a model reading asks for.
+    pub(crate) fn euf_class_members(&self) -> nixie_theories::euf::ClassMembers {
+        self.model_euf().class_member_snapshot()
+    }
+
     fn model_euf(&self) -> &EufSolver {
         self.model_euf_snapshot.as_deref().unwrap_or(&self.euf)
     }

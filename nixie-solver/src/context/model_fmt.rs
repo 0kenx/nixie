@@ -255,12 +255,60 @@ fn render_eval_value(
     }
 }
 
+/// The member lists of every congruence class of the E-graph state a model
+/// is read from: one snapshot per reading pass, shared by every function it
+/// reads.
+pub(in crate::context) type EufClassMembers = nixie_theories::euf::ClassMembers;
+
+/// One application of a function while its interpretation is read: the
+/// congruence classes of its arguments and of its result, by representative.
+///
+/// An application the EUF solver holds reads its classes' members from the
+/// snapshot ([`EufClassMembers`]). One a specialized solver owns without
+/// interning it is not in that state; its row carries the member lists
+/// itself.
+struct AppRow {
+    entry: nixie_theories::euf::FuncAppEntry,
+    /// The argument classes' member lists (in order) and the result class's,
+    /// for a row the snapshot does not hold.
+    owned: Option<Box<AppRowMembers>>,
+}
+
+struct AppRowMembers {
+    args: Vec<Vec<TermId>>,
+    result: Vec<TermId>,
+}
+
+impl AppRow {
+    /// The number of arguments.
+    fn arity(&self) -> usize {
+        self.entry.arg_reps.len()
+    }
+
+    /// The members of argument class `i`, ascending by node index.
+    fn arg_members<'a>(&'a self, class_members: &'a EufClassMembers, i: usize) -> &'a [TermId] {
+        match &self.owned {
+            Some(owned) => &owned.args[i],
+            None => class_members.members_of(self.entry.arg_reps[i]),
+        }
+    }
+
+    /// The members of the result class, ascending by node index.
+    fn result_members<'a>(&'a self, class_members: &'a EufClassMembers) -> &'a [TermId] {
+        match &self.owned {
+            Some(owned) => &owned.result,
+            None => class_members.members_of(self.entry.result_rep),
+        }
+    }
+}
+
 impl Context {
     pub(super) fn func_interp_reading(
         &self,
         func_name: &str,
         solver_model: &crate::solver::Model,
         class_values: &class_values::ClassValues,
+        class_members: &EufClassMembers,
         assert_function: bool,
     ) -> Option<(RawFuncInterp, bool)> {
         let mut is_function = true;
@@ -299,43 +347,68 @@ impl Context {
         };
 
         // Pull congruence-closed application entries from the EUF solver.  Each
-        // entry already has its argument and result classes canonicalized, so
-        // congruence (e.g. f(a) == f(b) when a == b) is applied for us.
-        let mut euf_entries = self.solver.euf_function_entries(func_id);
+        // entry names its argument and result classes by representative,
+        // canonicalized through the union-find, so congruence (e.g. f(a) ==
+        // f(b) when a == b) is applied for us.  A class's members are read
+        // from the snapshot by that representative – once for every function
+        // this reading asks for, where each entry used to own a copy of the
+        // whole member list of each of its classes.
+        let mut rows: Vec<AppRow> = self
+            .solver
+            .euf_function_entries(func_id)
+            .into_iter()
+            .map(|entry| AppRow { entry, owned: None })
+            .collect();
         // Specialized solvers (notably finite fields) can own an application
         // without interning it into EUF. Its checked model entry is equally
         // part of the function's interpretation.
+        let euf_result_classes: FxHashSet<u32> =
+            rows.iter().map(|row| row.entry.result_rep).collect();
         let mut applications: Vec<_> = solver_model.assignments().keys().copied().collect();
         applications.sort_unstable();
         for term in applications {
             let Some(TermKind::Apply { func, args }) = self.terms.get(term).map(|t| &t.kind) else {
                 continue;
             };
-            if self.terms.resolve_str(*func) != func_name
-                || euf_entries
-                    .iter()
-                    .any(|entry| entry.result_class_terms.contains(&term))
+            if self.terms.resolve_str(*func) != func_name {
+                continue;
+            }
+            // An application the EUF solver holds is a row already: its class
+            // is the result class of one of them.
+            if self
+                .solver
+                .euf_class_representative(term)
+                .is_some_and(|rep| euf_result_classes.contains(&rep))
             {
                 continue;
             }
-            euf_entries.push(nixie_theories::euf::FuncAppEntry {
-                arg_reps: args
-                    .iter()
-                    .map(|&arg| {
-                        self.solver
-                            .euf_class_representative(arg)
-                            .unwrap_or(arg.raw())
-                    })
-                    .collect(),
-                arg_class_terms: args
-                    .iter()
-                    .map(|&arg| self.solver.euf_class_terms(arg))
-                    .collect(),
-                result_rep: self
-                    .solver
-                    .euf_class_representative(term)
-                    .unwrap_or(term.raw()),
-                result_class_terms: vec![term],
+            // The argument classes as the snapshot lists them; an argument
+            // outside the closure is a class of its own.
+            let class_of = |arg: TermId| -> Vec<TermId> {
+                match self.solver.euf_class_representative(arg) {
+                    Some(rep) => class_members.members_of(rep).to_vec(),
+                    None => vec![arg],
+                }
+            };
+            rows.push(AppRow {
+                entry: nixie_theories::euf::FuncAppEntry {
+                    arg_reps: args
+                        .iter()
+                        .map(|&arg| {
+                            self.solver
+                                .euf_class_representative(arg)
+                                .unwrap_or(arg.raw())
+                        })
+                        .collect(),
+                    result_rep: self
+                        .solver
+                        .euf_class_representative(term)
+                        .unwrap_or(term.raw()),
+                },
+                owned: Some(Box::new(AppRowMembers {
+                    args: args.iter().map(|&arg| class_of(arg)).collect(),
+                    result: vec![term],
+                })),
             });
         }
 
@@ -366,14 +439,16 @@ impl Context {
         let mut seen_arg_keys: crate::prelude::HashMap<Vec<String>, (Vec<u64>, String)> =
             crate::prelude::HashMap::new();
         let mut entries: Vec<(Vec<String>, String)> = Vec::new();
-        let mut deferred: Vec<(&nixie_theories::euf::FuncAppEntry, String)> = Vec::new();
-        for entry in &euf_entries {
+        let mut deferred: Vec<(&AppRow, String)> = Vec::new();
+        for row in &rows {
             // Resolve the result value first: skip applications whose class has
             // no concrete model value (an unconstrained application contributes
             // nothing observable beyond the else-branch).
-            let Some(val_str) =
-                self.class_value_string(&entry.result_class_terms, solver_model, class_values)
-            else {
+            let Some(val_str) = self.class_value_string(
+                row.result_members(class_members),
+                solver_model,
+                class_values,
+            ) else {
                 continue;
             };
 
@@ -386,10 +461,14 @@ impl Context {
             // argument the model left open was rendered at `#b00` first and
             // won the deduplication (`#P2b-34`).  The else-value covers the
             // point honestly instead.
-            let exact: Option<Vec<String>> = entry
-                .arg_class_terms
-                .iter()
-                .map(|members| self.class_value_string(members, solver_model, class_values))
+            let exact: Option<Vec<String>> = (0..row.arity())
+                .map(|i| {
+                    self.class_value_string(
+                        row.arg_members(class_members, i),
+                        solver_model,
+                        class_values,
+                    )
+                })
                 .collect();
             let arg_strs = match exact {
                 Some(args) => args,
@@ -397,16 +476,14 @@ impl Context {
                     // Keep it for a second pass: the sort default is a guess,
                     // and a guess must never take the tuple a real entry
                     // needs.
-                    deferred.push((entry, val_str));
+                    deferred.push((row, val_str));
                     continue;
                 }
             };
 
-            let class_keys: Vec<u64> = entry
-                .arg_class_terms
-                .iter()
-                .map(|members| {
-                    members
+            let class_keys: Vec<u64> = (0..row.arity())
+                .map(|i| {
+                    row.arg_members(class_members, i)
                         .first()
                         .map_or(u64::MAX, |&member| self.class_key(member))
                 })
@@ -428,18 +505,20 @@ impl Context {
         // Second pass: entries whose argument the model left open.  The
         // corresponding sort default stands in, but only for a tuple no exact
         // entry claimed.
-        for (entry, val_str) in deferred {
-            let arg_strs: Vec<String> = entry
-                .arg_class_terms
-                .iter()
+        for (row, val_str) in deferred {
+            let arg_strs: Vec<String> = (0..row.arity())
                 .enumerate()
-                .map(|(i, members)| {
-                    self.class_value_string(members, solver_model, class_values)
-                        .unwrap_or_else(|| {
-                            decl.arg_sorts
-                                .get(i)
-                                .map_or_else(|| "?".to_string(), |&s| self.default_value(s))
-                        })
+                .map(|(i, _)| {
+                    self.class_value_string(
+                        row.arg_members(class_members, i),
+                        solver_model,
+                        class_values,
+                    )
+                    .unwrap_or_else(|| {
+                        decl.arg_sorts
+                            .get(i)
+                            .map_or_else(|| "?".to_string(), |&s| self.default_value(s))
+                    })
                 })
                 .collect();
             if seen_arg_keys.contains_key(&arg_strs) {
@@ -461,8 +540,9 @@ impl Context {
         func_name: &str,
         solver_model: &crate::solver::Model,
         class_values: &class_values::ClassValues,
+        class_members: &EufClassMembers,
     ) -> Option<RawFuncInterp> {
-        self.func_interp_reading(func_name, solver_model, class_values, true)
+        self.func_interp_reading(func_name, solver_model, class_values, class_members, true)
             .map(|(interp, _)| interp)
     }
 
@@ -650,7 +730,8 @@ impl Context {
         }
         let solver_model = self.published_model()?;
         let class_values = self.build_class_values(solver_model);
-        self.func_interp_from(func_name, solver_model, &class_values)
+        let class_members = self.solver.euf_class_members();
+        self.func_interp_from(func_name, solver_model, &class_values, &class_members)
     }
 
     /// Resolve an equivalence class (its member `TermId`s) to a formatted model

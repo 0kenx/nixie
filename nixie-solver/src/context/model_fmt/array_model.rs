@@ -912,6 +912,8 @@ impl Context {
             return lines;
         };
         let class_values = self.build_class_values(solver_model);
+        // One class-member snapshot for every interpretation this prints.
+        let class_members = self.solver.euf_class_members();
         let uninterpreted: Vec<(String, Vec<SortId>, SortId)> = self
             .declared_funs
             .iter()
@@ -925,9 +927,13 @@ impl Context {
         let assert_function = !self.goal_is_quantified();
         for (name, arg_sorts, ret_sort) in uninterpreted {
             let name = name.as_str();
-            let Some(((entries, else_value, arity), _)) =
-                self.func_interp_reading(name, solver_model, &class_values, assert_function)
-            else {
+            let Some(((entries, else_value, arity), _)) = self.func_interp_reading(
+                name,
+                solver_model,
+                &class_values,
+                &class_members,
+                assert_function,
+            ) else {
                 continue;
             };
             let params: Vec<String> = arg_sorts

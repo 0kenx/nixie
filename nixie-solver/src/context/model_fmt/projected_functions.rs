@@ -9,6 +9,7 @@ impl Context {
             return false;
         };
         let classes = self.build_class_values(&model);
+        let class_members = self.solver.euf_class_members();
         let names: Vec<_> = self
             .declared_funs
             .iter()
@@ -27,7 +28,7 @@ impl Context {
         let mut replacements = Vec::new();
         for name in names {
             let Some(((entries, _, _), _)) =
-                self.func_interp_reading(&name, &model, &classes, false)
+                self.func_interp_reading(&name, &model, &classes, &class_members, false)
             else {
                 continue;
             };

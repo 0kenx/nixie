@@ -256,8 +256,16 @@ impl Context {
             return Ok(out);
         };
         let class_values = self.build_class_values(&solver_model);
+        // One class-member snapshot for every table this reads.
+        let class_members = self.solver.euf_class_members();
         for name in self.uninterpreted_function_names() {
-            match self.read_printed_table(&name, &solver_model, &class_values, parse) {
+            match self.read_printed_table(
+                &name,
+                &solver_model,
+                &class_values,
+                &class_members,
+                parse,
+            ) {
                 TableReading::Absent => {}
                 TableReading::Read(table) if self.table_is_closed(&table, parse) => {
                     out.insert(name, table);
@@ -303,8 +311,16 @@ impl Context {
             return (out, unreadable);
         };
         let class_values = self.build_class_values(&solver_model);
+        // One class-member snapshot for every table this reads.
+        let class_members = self.solver.euf_class_members();
         for name in self.uninterpreted_function_names() {
-            match self.read_printed_table(&name, &solver_model, &class_values, parse) {
+            match self.read_printed_table(
+                &name,
+                &solver_model,
+                &class_values,
+                &class_members,
+                parse,
+            ) {
                 TableReading::Absent => {}
                 TableReading::Read(table) if self.table_is_closed(&table, parse) => {
                     out.insert(name, table);
@@ -334,6 +350,7 @@ impl Context {
         name: &str,
         solver_model: &crate::solver::Model,
         class_values: &super::class_values::ClassValues,
+        class_members: &super::EufClassMembers,
         parse: &mut ParseBack,
     ) -> TableReading {
         // Two entries at one argument tuple with different values (the
@@ -342,7 +359,7 @@ impl Context {
         // `(get-model)` prints them – the first entry at a tuple wins –
         // and the certificate judges that function.
         let Some(((entries, else_text, arity), _)) =
-            self.func_interp_reading(name, solver_model, class_values, false)
+            self.func_interp_reading(name, solver_model, class_values, class_members, false)
         else {
             return TableReading::Absent;
         };

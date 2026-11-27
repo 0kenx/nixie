@@ -106,18 +106,49 @@ impl ENodeFingerprint {
 /// All representatives are canonical equivalence-class node indices (taken
 /// through `find`), so applications whose arguments are pairwise congruent share
 /// identical `arg_reps`/`result_rep` and collapse onto the same value class.
+/// An entry names its classes and carries no member list: the members are read
+/// from the [`ClassMembers`] snapshot taken alongside it, by representative.
 #[derive(Debug, Clone)]
 pub struct FuncAppEntry {
     /// Canonical class representative (node index) of each argument, in order.
     pub arg_reps: SmallVec<[u32; 4]>,
-    /// Every `TermId` interned into each argument's equivalence class, in the
-    /// same order as `arg_reps`.  A model builder can scan these to find a
-    /// member that carries a concrete value.
-    pub arg_class_terms: SmallVec<[Vec<TermId>; 4]>,
     /// Canonical class representative (node index) of the application result.
     pub result_rep: u32,
-    /// Every `TermId` interned into the result's equivalence class.
-    pub result_class_terms: Vec<TermId>,
+}
+
+/// The member `TermId`s of every congruence class of one E-graph state:
+/// built in one pass by [`EufSolver::class_member_snapshot`], read by
+/// representative through [`ClassMembers::members_of`].
+///
+/// One snapshot serves every function an interpretation is read for under
+/// that state. An entry used to own a copy of every member of each of its
+/// argument and result classes, so n applications whose arguments fall into
+/// classes of n members copied n² term ids – 2,048 congruent unary
+/// applications copied 8,388,608 of them (32 MiB) for two distinct lists.
+#[derive(Debug, Default)]
+pub struct ClassMembers {
+    /// `offsets[i]..offsets[i + 1]` slices `members` for the node `i`: its
+    /// class's members when `i` is a root, nothing when it is not.
+    offsets: Vec<u32>,
+    /// Every node's term, grouped by class root, each class ascending by
+    /// node index – the order [`EufSolver::class_members`] lists nodes in.
+    members: Vec<TermId>,
+}
+
+impl ClassMembers {
+    /// The members of the class whose representative is `rep`, ascending by
+    /// node index. Empty for a node that is not a root of the state the
+    /// snapshot was taken of, or not a node of it at all.
+    #[must_use]
+    pub fn members_of(&self, rep: u32) -> &[TermId] {
+        let rep = rep as usize;
+        if rep + 1 >= self.offsets.len() {
+            return &[];
+        }
+        self.members
+            .get(self.offsets[rep] as usize..self.offsets[rep + 1] as usize)
+            .unwrap_or(&[])
+    }
 }
 
 /// A term node in the E-graph
@@ -1165,11 +1196,8 @@ impl EufSolver {
     /// records:
     /// - `arg_reps`: the canonical equivalence-class representative (node index,
     ///   obtained via [`find_immutable`](Self::find_immutable)) of each argument,
-    /// - `arg_class_terms`: every `TermId` interned into each argument's class –
-    ///   so the caller can pick whichever member carries a concrete model value,
     /// - `result_rep`: the canonical class representative of the application
-    ///   itself,
-    /// - `result_class_terms`: every `TermId` interned into the result's class.
+    ///   itself.
     ///
     /// Because the argument and result classes are taken through `find`, two
     /// applications whose arguments are pairwise congruent (e.g. `f(a)` and
@@ -1177,55 +1205,74 @@ impl EufSolver {
     /// caller can therefore deduplicate on `arg_reps` and rely on congruence
     /// having already collapsed them onto the same value class.
     ///
+    /// The members of a class – which the caller scans for one that carries a
+    /// concrete model value – are read from a [`ClassMembers`] snapshot taken
+    /// of this state, once for every function read, not copied into each entry.
+    ///
     /// This is a read-only `O(nodes)` scan (it never mutates the union-find, so
     /// no path compression occurs) and is intended for the post-`Sat` model
     /// extraction path, not the hot solving loop.
     #[must_use]
     pub fn function_application_entries(&self, func_id: u32) -> Vec<FuncAppEntry> {
-        // Single O(nodes) pass: bucket every node's TermId under its canonical
-        // class representative.  This avoids the O(apps × nodes) blow-up of
-        // calling `class_members` once per application.
-        let mut class_to_terms: FxHashMap<u32, Vec<TermId>> = FxHashMap::default();
-        for idx in 0..self.nodes.len() as u32 {
-            let rep = self.uf.find_no_compress(idx);
-            class_to_terms
-                .entry(rep)
-                .or_default()
-                .push(self.nodes[idx as usize].term);
-        }
-
         let mut entries = Vec::new();
         for (idx, node) in self.nodes.iter().enumerate() {
             if !node.is_app() || node.func != func_id {
                 continue;
             }
-
-            // Canonical class rep of each argument plus the member TermIds of
-            // that class (for value resolution by the caller).
-            let mut arg_reps: SmallVec<[u32; 4]> = SmallVec::with_capacity(node.args.len());
-            let mut arg_class_terms: SmallVec<[Vec<TermId>; 4]> =
-                SmallVec::with_capacity(node.args.len());
-            for &arg in &node.args {
-                let rep = self.uf.find_no_compress(arg);
-                arg_reps.push(rep);
-                arg_class_terms.push(class_to_terms.get(&rep).cloned().unwrap_or_default());
-            }
-
+            let arg_reps = node
+                .args
+                .iter()
+                .map(|&arg| self.uf.find_no_compress(arg))
+                .collect();
             let result_rep = self.uf.find_no_compress(idx as u32);
-            let result_class_terms = class_to_terms.get(&result_rep).cloned().unwrap_or_default();
-
             entries.push(FuncAppEntry {
                 arg_reps,
-                arg_class_terms,
                 result_rep,
-                result_class_terms,
             });
         }
         entries
     }
 
+    /// The member terms of every congruence class of the current state, in
+    /// one `O(nodes)` pass ([`ClassMembers`]).
+    ///
+    /// Read-only like [`function_application_entries`](Self::function_application_entries),
+    /// and taken once for the model that reads several functions: every
+    /// [`FuncAppEntry`] of that model names its classes by the same
+    /// representatives this snapshot is indexed by.
+    #[must_use]
+    pub fn class_member_snapshot(&self) -> ClassMembers {
+        let n = self.nodes.len();
+        let reps: Vec<u32> = (0..n as u32)
+            .map(|idx| self.uf.find_no_compress(idx))
+            .collect();
+        let mut counts = vec![0u32; n + 1];
+        for &rep in &reps {
+            counts[rep as usize] += 1;
+        }
+        // The exclusive prefix sum: `offsets[i]` is where class `i`'s
+        // members begin, `offsets[n]` the total.
+        let mut offsets = vec![0u32; n + 1];
+        for i in 0..n {
+            offsets[i + 1] = offsets[i] + counts[i];
+        }
+        // Nodes in index order, so each class's members come out in index order.
+        let mut members = vec![TermId::new(0); n];
+        for (idx, &rep) in reps.iter().enumerate() {
+            let slot = &mut offsets[rep as usize];
+            members[*slot as usize] = self.nodes[idx].term;
+            *slot += 1;
+        }
+        // Each fill moved its class's start up to the class's end: the end
+        // of class `i` is the start of class `i + 1`, so one slot back.
+        offsets.pop();
+        offsets.insert(0, 0);
+        ClassMembers { offsets, members }
+    }
+
     /// Get all members of an equivalence class (all node indices with the same representative).
-    /// This is an O(n) scan; for performance-critical paths, consider caching.
+    /// This is an O(n) scan; for every class at once take a
+    /// [`class_member_snapshot`](Self::class_member_snapshot) instead.
     pub fn class_members(&self, class_rep: u32) -> Vec<u32> {
         let rep = self.uf.find_no_compress(class_rep);
         let mut members = Vec::new();

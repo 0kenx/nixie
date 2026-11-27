@@ -649,7 +649,9 @@ impl Context {
             .map(|&arg| self.class_value_string(&[arg], model, class_values))
             .collect();
         let arg_strs = arg_strs?;
-        let (entries, else_value, _) = self.func_interp_from(&name, model, class_values)?;
+        let class_members = self.solver.euf_class_members();
+        let (entries, else_value, _) =
+            self.func_interp_from(&name, model, class_values, &class_members)?;
         Some(
             entries
                 .into_iter()
