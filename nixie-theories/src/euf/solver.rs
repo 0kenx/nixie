@@ -185,11 +185,15 @@ struct Diseq {
     rhs: u32,
     /// Reason for the disequality
     reason: TermId,
-    /// `ordered_pair(find(lhs), find(rhs))` as of the last `assert_diseq` or
-    /// pair-rewrite in `propagate`.  Kept in lockstep with the union-find so
+    /// `(find(lhs), find(rhs))` as of the last `assert_diseq` or pair-rewrite
+    /// in `propagate`.  Kept in lockstep with the union-find so
     /// [`EufSolver::are_proven_disequal`] can answer from the
     /// `diseq_pair_counts` map in O(1) instead of re-walking the watch list
     /// and re-finding both endpoints of every watched disequality per query.
+    ///
+    /// Sorted when written by `assert_diseq`; a merge keeps each side's
+    /// position, so a rewritten key can land unsorted and be missed by the
+    /// lookup (see the key rewrite in `congruence.rs`).
     cached_pair: (u32, u32),
 }
 
@@ -339,25 +343,19 @@ pub struct EufSolver {
     /// Refcounted map from `ordered_pair(find(lhs), find(rhs))` of every *live*
     /// asserted disequality to how many disequalities currently share that key.
     /// Maintained incrementally: `assert_diseq` counts its key in, and every
-    /// merge rewrites the cached keys of the disequalities watched on either
-    /// merged class (a key can only change when one of its endpoint classes
-    /// merges, and the watch lists cover exactly those disequalities).  Lets
-    /// [`Self::are_proven_disequal`] answer with two root lookups + one hash
-    /// probe instead of walking (and re-finding) the whole per-class watch list.
+    /// merge rewrites the cached keys of the disequalities watched on the
+    /// losing class (a key can only change when one of its endpoint classes
+    /// merges, and the losing class's watch list holds exactly the
+    /// disequalities with an endpoint there – the surviving root keeps its
+    /// id, so a key on the winning side reads the same before and after).
+    /// Lets [`Self::are_proven_disequal`] answer with two root lookups + one
+    /// hash probe instead of walking (and re-finding) the whole per-class
+    /// watch list.
     diseq_pair_counts: FxHashMap<(u32, u32), u32>,
     /// Undo trail for `diseq_pair_counts` mutations, replayed LIFO by `pop()`.
     diseq_pair_trail: Vec<DiseqPairTrailEntry>,
     /// Scope checkpoints into `diseq_pair_trail`, parallel to `sig_trail_limits`.
     diseq_pair_trail_limits: Vec<usize>,
-    /// Per-disequality generation stamps used to deduplicate the walk of both
-    /// merged classes' watch lists during a merge event.
-    diseq_stamp: Vec<u64>,
-    /// Generation counter for `diseq_stamp`.  u64: the wrap case is not merely
-    /// unlikely but physically unreachable (each stamped merge costs at least a
-    /// few cycles, so 2^64 stamped merges exceeds any machine's lifetime), and
-    /// a wrap would make a stale stamp collide with the live generation and
-    /// silently skip a cached-pair rewrite.
-    diseq_stamp_gen: u64,
     /// Watch lists for equality atoms, indexed by node id: every registered
     /// [`EqAtomWatch`] whose endpoint `a` or `b` is currently in this node's
     /// class.  Migrated on merge exactly like `use_list`, so a merge only
@@ -582,8 +580,6 @@ impl EufSolver {
             diseq_pair_counts: FxHashMap::default(),
             diseq_pair_trail: Vec::new(),
             diseq_pair_trail_limits: Vec::new(),
-            diseq_stamp: Vec::new(),
-            diseq_stamp_gen: 0,
             atom_watch: Vec::new(),
             atom_watch_trail: Vec::new(),
             atom_watch_trail_limits: Vec::new(),
@@ -864,7 +860,6 @@ impl EufSolver {
             reason,
             cached_pair,
         });
-        self.diseq_stamp.push(0);
         self.diseq_watch_push(ra, idx);
         if ra != rb {
             self.diseq_watch_push(rb, idx);
@@ -1410,7 +1405,6 @@ impl Theory for EufSolver {
                 self.first_app_node = None;
             }
             self.diseqs.truncate(state.num_diseqs);
-            self.diseq_stamp.truncate(state.num_diseqs);
             self.uf.pop();
 
             // Also truncate related structures. Truncation removes the adjacency
@@ -1615,8 +1609,6 @@ impl Theory for EufSolver {
         self.diseq_pair_counts.clear();
         self.diseq_pair_trail.clear();
         self.diseq_pair_trail_limits.clear();
-        self.diseq_stamp.clear();
-        self.diseq_stamp_gen = 0;
         self.atom_watch.clear();
         self.atom_watch_trail.clear();
         self.atom_watch_trail_limits.clear();

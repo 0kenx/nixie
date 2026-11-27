@@ -23,6 +23,12 @@ use core::mem;
 use nixie_core::ast::TermId;
 use smallvec::SmallVec;
 
+/// A disequality watch entry naming no live disequality.  The watch lists
+/// only ever hold live indices (a popped scope's appends are removed with
+/// its disequalities), so this is an invariant violation; the explanation
+/// that meets one is abandoned whole – never a partial reason set.
+struct StaleWatch;
+
 impl EufSolver {
     /// Check for conflicts.
     ///
@@ -173,35 +179,112 @@ impl EufSolver {
 
     /// Explain why `a` and `b` are proven disequal, or `None` if they are not
     /// (or the justifying disequality cannot be fully explained).
+    ///
+    /// The witness is the first disequality between the two classes on the
+    /// watch list of `a`'s class.  That rule is what the search has always
+    /// seen and it is kept exactly: when several disequalities join the two
+    /// classes, which one is named decides the reason literal of the
+    /// propagation built on it, and with it the search's trajectory.  The
+    /// witness is sought at the cost of the *shorter* of the two classes'
+    /// watch lists – a disequality between two classes sits on both – and
+    /// `a`'s list is walked only when the shorter one holds more than one
+    /// candidate, to learn which of them it names first.  Only the witness is
+    /// copied out before its proof is built; the list is not cloned.  Naming
+    /// the shared endpoint of 8,000 disequalities first used to clone and
+    /// walk all 8,000 entries once per explained pair.
     pub fn try_explain_diseq(&mut self, a: u32, b: u32) -> Option<Vec<TermId>> {
         let ra = self.uf.find(a);
         let rb = self.uf.find(b);
         if ra == rb {
             return None;
         }
-        let watches = self.diseq_watch.get(ra as usize)?.clone();
-        for idx in watches {
-            let (lhs, rhs, reason) = {
-                let d = self.diseqs.get(idx as usize)?;
-                (d.lhs, d.rhs, d.reason)
-            };
-            let dl = self.uf.find(lhs);
-            let dr = self.uf.find(rhs);
-            let (side_a, side_b) = if dl == ra && dr == rb {
-                (lhs, rhs)
-            } else if dl == rb && dr == ra {
-                (rhs, lhs)
-            } else {
-                continue;
-            };
-            let mut expl = self.try_explain_equality(a, side_a)?;
-            if reason.raw() != 0 {
-                expl.push(reason);
-            }
-            expl.extend(self.try_explain_equality(b, side_b)?);
-            return Some(expl);
+        let (side_a, side_b, reason) = self.diseq_witness(ra, rb)?;
+        let mut expl = self.try_explain_equality(a, side_a)?;
+        if reason.raw() != 0 {
+            expl.push(reason);
         }
-        None
+        expl.extend(self.try_explain_equality(b, side_b)?);
+        Some(expl)
+    }
+
+    /// The live disequality that explains why classes `ra` and `rb` are
+    /// apart, as `(endpoint in ra, endpoint in rb, reason)`, or `None` when
+    /// no live disequality joins them or a watch index is stale.
+    ///
+    /// Selection rule: the first match on `ra`'s watch list, whichever list
+    /// is walked to find it (see [`Self::try_explain_diseq`]).
+    fn diseq_witness(&self, ra: u32, rb: u32) -> Option<(u32, u32, TermId)> {
+        let list = |root: u32| {
+            self.diseq_watch
+                .get(root as usize)
+                .map_or(&[][..], Vec::as_slice)
+        };
+        let (list_a, list_b) = (list(ra), list(rb));
+        if list_a.len() <= list_b.len() {
+            return self.first_diseq_between(list_a, ra, rb).ok().flatten();
+        }
+        // `rb`'s list is strictly the shorter one.  It holds every candidate
+        // too, so a lone match is the witness `ra`'s list would name.
+        let mut lone: Option<(u32, u32, TermId)> = None;
+        let mut several = false;
+        for &idx in list_b {
+            match self.diseq_sides(idx, ra, rb) {
+                Err(StaleWatch) => return None,
+                Ok(None) => {}
+                Ok(Some(sides)) => {
+                    if lone.is_some() {
+                        several = true;
+                    } else {
+                        lone = Some(sides);
+                    }
+                }
+            }
+        }
+        if several {
+            // Only `ra`'s list order says which witness the rule names, and
+            // it is walked no more than it always was.
+            self.first_diseq_between(list_a, ra, rb).ok().flatten()
+        } else {
+            lone
+        }
+    }
+
+    /// The first disequality on `list` whose endpoints sit in classes `ra`
+    /// and `rb`, as `(endpoint in ra, endpoint in rb, reason)`.
+    fn first_diseq_between(
+        &self,
+        list: &[u32],
+        ra: u32,
+        rb: u32,
+    ) -> Result<Option<(u32, u32, TermId)>, StaleWatch> {
+        for &idx in list {
+            if let Some(sides) = self.diseq_sides(idx, ra, rb)? {
+                return Ok(Some(sides));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Disequality `idx` with its endpoints ordered `(in ra, in rb, reason)`
+    /// when it joins exactly those two classes; `Ok(None)` when it joins
+    /// some other pair.
+    fn diseq_sides(
+        &self,
+        idx: u32,
+        ra: u32,
+        rb: u32,
+    ) -> Result<Option<(u32, u32, TermId)>, StaleWatch> {
+        let d = self.diseqs.get(idx as usize).ok_or(StaleWatch)?;
+        let dl = self.uf.find_no_compress(d.lhs);
+        let dr = self.uf.find_no_compress(d.rhs);
+        let sides = if dl == ra && dr == rb {
+            Some((d.lhs, d.rhs, d.reason))
+        } else if dl == rb && dr == ra {
+            Some((d.rhs, d.lhs, d.reason))
+        } else {
+            None
+        };
+        Ok(sides)
     }
 
     /// Explain why two nodes are equal, or report that it cannot be done.

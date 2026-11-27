@@ -398,69 +398,61 @@ impl EufSolver {
                 self.class_value[new_root as usize] = merged;
             }
 
-            // ======== O(1) proven-disequality index maintenance ========
+            // ======== O(1) proven-disequality index + eager violation check ========
             //
-            // Every live disequality watched on *either* merged class has a
-            // `cached_pair` naming `root_a` or `root_b`; rewrite those keys to
-            // `new_root` so `are_proven_disequal` stays an exact O(1) map
-            // probe.  A disequality can sit on both lists (one endpoint per
-            // class), so stamp-dedupe the walk of the two lists.  Walking only
-            // the loser's list (as the violation scan below does) would miss
-            // `(winner, elsewhere)` pairs, whose key also just changed.
-            self.diseq_stamp_gen = self.diseq_stamp_gen.wrapping_add(1);
-            for list_root in [new_root, other_root] {
-                let dw_len = self.diseq_watch.get(list_root as usize).map_or(0, Vec::len);
-                for i in 0..dw_len {
-                    let didx = self.diseq_watch[list_root as usize][i] as usize;
-                    if self.diseq_stamp.get(didx).copied() == Some(self.diseq_stamp_gen)
-                        || didx >= self.diseqs.len()
-                    {
-                        continue;
-                    }
-                    if let Some(s) = self.diseq_stamp.get_mut(didx) {
-                        *s = self.diseq_stamp_gen;
-                    }
-                    let old = self.diseqs[didx].cached_pair;
-                    let new = (
-                        if old.0 == root_a || old.0 == root_b {
-                            new_root
-                        } else {
-                            old.0
-                        },
-                        if old.1 == root_a || old.1 == root_b {
-                            new_root
-                        } else {
-                            old.1
-                        },
-                    );
-                    if new != old {
-                        self.dec_diseq_pair(old);
-                        self.inc_diseq_pair(new);
-                        self.diseqs[didx].cached_pair = new;
-                        if !self.diseq_pair_trail_limits.is_empty() {
-                            self.diseq_pair_trail.push(DiseqPairTrailEntry::Rewrote {
-                                idx: didx as u32,
-                                old,
-                            });
-                        }
-                    }
-                }
-            }
-
-            // Eager disequality check: every disequality watched on the loser
-            // class (`other_root`) has an endpoint whose class just merged into
-            // `new_root`. Test each for violation (both endpoints now equal),
-            // then copy it onto `new_root`'s watch list so future merges keep
-            // testing it. This replaces check_conflicts' O(diseqs) full scan –
-            // the dominant EUF cost – with O(watched-by-this-class) per merge.
-            // Violation now reads the freshly-rewritten `cached_pair`: both
-            // endpoints in one class ⟺ the pair collapsed to `(R, R)`.
+            // One walk over the LOSING class's watch list does three jobs.
+            // Every live disequality with an endpoint in the loser's class is
+            // on `diseq_watch[other_root]` (the list migration below keeps that
+            // invariant), and those are exactly the disequalities whose
+            // `cached_pair` changes: a key names the loser's root on one side,
+            // and that root id has just ceased to exist.  A key on the
+            // *winning* class's list never changes – `new_root` is one of the
+            // two merged roots (union by rank keeps the winner's id), so a
+            // `(winner, elsewhere)` key reads the same before and after.
+            //
+            // 1. rewrite the key onto `new_root`.  The rewrite keeps each
+            //    side's position, so a key whose loser side was the *larger*
+            //    root, moved onto a root below the other side, lands
+            //    unsorted: `(b, c)` with `c` the loser becomes `(b, a)` with
+            //    `a < b`, and the lookup (`are_proven_disequal`), which probes
+            //    `ordered_pair`, misses it.  That is a known defect of the
+            //    index, unchanged here and recorded with its fix and what
+            //    the fix exposes in
+            //    `docs/studies/2026-11-26-losing-class-list-model-rows-ground-collector.md`;
+            // 2. test for violation: both endpoints in one class ⟺ the pair
+            //    just collapsed to `(R, R)`;
+            // 3. copy the entry onto `new_root`'s list so later merges keep
+            //    testing it (multiplicities included: `pop()` removes watch
+            //    appends one per trail entry).
+            //
+            // A disequality can sit on the loser's list twice (one endpoint
+            // in each of two classes that merged into the loser earlier); the
+            // rewrite is idempotent – the second visit finds no side still
+            // naming `other_root` – so no per-entry stamp is needed.  This
+            // replaces both the two-list stamped walk and the separate
+            // violation scan: merging 8,000 singleton classes into one, each
+            // with one disequality, visited 32 million winner-list entries
+            // whose keys stayed the same.
             let dw_len = self
                 .diseq_watch
                 .get(other_root as usize)
                 .map_or(0, Vec::len);
             for i in 0..dw_len {
                 let didx = self.diseq_watch[other_root as usize][i];
+                let old = self.diseqs[didx as usize].cached_pair;
+                if old.0 == other_root || old.1 == other_root {
+                    let new = (
+                        if old.0 == other_root { new_root } else { old.0 },
+                        if old.1 == other_root { new_root } else { old.1 },
+                    );
+                    self.dec_diseq_pair(old);
+                    self.inc_diseq_pair(new);
+                    self.diseqs[didx as usize].cached_pair = new;
+                    if !self.diseq_pair_trail_limits.is_empty() {
+                        self.diseq_pair_trail
+                            .push(DiseqPairTrailEntry::Rewrote { idx: didx, old });
+                    }
+                }
                 let d = &self.diseqs[didx as usize];
                 if self.pending_diseq_conflict.is_none() && d.cached_pair.0 == d.cached_pair.1 {
                     self.pending_diseq_conflict = Some(didx);

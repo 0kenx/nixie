@@ -1066,6 +1066,130 @@ fn scoped_diseq_vanishes_from_pair_index_on_pop() {
     assert!(!s.are_proven_disequal(b, c), "the merge is gone too");
 }
 
+/// The merge walk visits the losing class's list only; a disequality that
+/// sits on that list twice is rewritten and counted once.
+///
+/// Only a *violated* disequality can sit on one list twice: its two endpoint
+/// classes merged, so the loser's copy landed beside the winner's own.  The
+/// walk keeps running after a conflict is recorded (later merges of the same
+/// batch still maintain the index), and its rewrite is idempotent – the
+/// second visit finds no side still naming the lost root.
+#[test]
+fn a_disequality_listed_twice_on_the_losers_list_is_rewritten_once() {
+    let mut s = EufSolver::new();
+    let x1 = s.intern(TermId::new(1));
+    let x2 = s.intern(TermId::new(2));
+    let y1 = s.intern(TermId::new(3));
+    let y2 = s.intern(TermId::new(4));
+    let y3 = s.intern(TermId::new(5));
+    let y4 = s.intern(TermId::new(6));
+
+    s.assert_diseq(x1, x2, TermId::new(10));
+    s.merge(x1, x2, TermId::new(11)).expect("x1=x2");
+    assert_eq!(
+        s.diseq_watch[x1 as usize],
+        vec![0, 0],
+        "once from its own assertion, once from the merged class's list"
+    );
+    assert_eq!(s.diseqs[0].cached_pair, (x1, x1));
+    assert_eq!(s.diseq_pair_counts.get(&(x1, x1)), Some(&1));
+
+    // A class of rank 2, so that x1's class (rank 1) loses the next merge.
+    s.merge(y1, y2, TermId::new(12)).expect("y1=y2");
+    s.merge(y3, y4, TermId::new(13)).expect("y3=y4");
+    s.merge(y1, y3, TermId::new(14)).expect("y1=y3");
+    s.merge(x1, y1, TermId::new(15)).expect("x1=y1");
+    assert_eq!(s.find_immutable(x1), y1, "x1's class lost the merge");
+    assert_eq!(
+        s.diseq_watch[y1 as usize],
+        vec![0, 0],
+        "both copies migrated"
+    );
+    assert_eq!(s.diseqs[0].cached_pair, (y1, y1));
+    assert_eq!(
+        s.diseq_pair_counts.get(&(y1, y1)),
+        Some(&1),
+        "counted once, not once per copy"
+    );
+    assert_eq!(s.diseq_pair_counts.get(&(x1, x1)), None);
+
+    // The scope trail carries the one rewrite, and the pop replays it once.
+    let mut t = EufSolver::new();
+    let x1 = t.intern(TermId::new(1));
+    let x2 = t.intern(TermId::new(2));
+    let y1 = t.intern(TermId::new(3));
+    let y2 = t.intern(TermId::new(4));
+    let y3 = t.intern(TermId::new(5));
+    let y4 = t.intern(TermId::new(6));
+    t.merge(y1, y2, TermId::new(12)).expect("y1=y2");
+    t.merge(y3, y4, TermId::new(13)).expect("y3=y4");
+    t.merge(y1, y3, TermId::new(14)).expect("y1=y3");
+    t.assert_diseq(x1, x2, TermId::new(10));
+    t.push();
+    t.merge(x1, x2, TermId::new(11)).expect("x1=x2");
+    t.merge(x1, y1, TermId::new(15)).expect("x1=y1");
+    assert_eq!(t.diseq_pair_counts.get(&(y1, y1)), Some(&1));
+    t.pop();
+    assert_eq!(t.diseqs[0].cached_pair, (x1, x2));
+    assert_eq!(t.diseq_pair_counts.get(&(x1, x2)), Some(&1));
+    assert_eq!(t.diseq_pair_counts.len(), 1);
+}
+
+/// `try_explain_diseq` names the witness the search has always seen – the
+/// first disequality between the two classes on the *first argument's* class
+/// list – whichever list is the shorter one, and also when the arguments are
+/// reversed.
+#[test]
+fn diseq_explanation_keeps_the_first_arguments_witness_through_the_shorter_list() {
+    // Class A: a1 ∪ a2, list [d1, d2]; class B: b1 ∪ b2, list [d2, d1] –
+    // the two lists name the same two disequalities in opposite orders.
+    let mut s = EufSolver::new();
+    let a1 = s.intern(TermId::new(1));
+    let a2 = s.intern(TermId::new(2));
+    let b1 = s.intern(TermId::new(3));
+    let b2 = s.intern(TermId::new(4));
+    let c = s.intern(TermId::new(5));
+    s.assert_diseq(a1, b1, TermId::new(101));
+    s.assert_diseq(a2, b2, TermId::new(102));
+    s.merge(a1, a2, TermId::new(111)).expect("a1=a2");
+    s.merge(b2, b1, TermId::new(112)).expect("b2=b1");
+    assert_eq!(s.find_immutable(b1), b2, "the first argument won the tie");
+    // A third disequality hangs off A alone, so A's list is the longer one.
+    s.assert_diseq(a1, c, TermId::new(103));
+    assert_eq!(s.diseq_watch[a1 as usize], vec![0, 1, 2]);
+    assert_eq!(s.diseq_watch[b2 as usize], vec![1, 0]);
+
+    let forward = s.try_explain_diseq(a1, b2).expect("a1≠b2");
+    assert_eq!(
+        forward,
+        vec![TermId::new(101), TermId::new(112)],
+        "several witnesses: the first on a1's list, d1"
+    );
+    let backward = s.try_explain_diseq(b2, a1).expect("b2≠a1");
+    assert_eq!(
+        backward,
+        vec![TermId::new(102), TermId::new(111)],
+        "b2's list is walked first and names d2"
+    );
+    // One witness between A and C: found on the shorter list either way,
+    // with each side's own path into the witness endpoint explained.
+    assert_eq!(s.try_explain_diseq(a1, c), Some(vec![TermId::new(103)]));
+    assert_eq!(s.try_explain_diseq(c, a1), Some(vec![TermId::new(103)]));
+    assert_eq!(
+        s.try_explain_diseq(a2, c),
+        Some(vec![TermId::new(111), TermId::new(103)])
+    );
+    assert_eq!(
+        s.try_explain_diseq(c, a2),
+        Some(vec![TermId::new(103), TermId::new(111)])
+    );
+    assert!(
+        s.try_explain_diseq(b2, c).is_none(),
+        "B and C are not proven apart"
+    );
+    assert!(s.try_explain_diseq(a1, a2).is_none(), "one class");
+}
+
 /// The equality-atom watch queue fires exactly when a merge (or a fresh
 /// disequality) forces the atom, and a pop makes the atom eligible again by
 /// bumping the epoch.
