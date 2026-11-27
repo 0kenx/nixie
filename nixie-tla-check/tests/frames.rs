@@ -436,7 +436,7 @@ Inv == \A n \in DOMAIN token : token[n] > 0
 // ---- issue #29: temporal properties as lassoes ----
 
 /// Lasso checks go through the same `claim`-shaped helper, but with the
-/// temporal entry point; the outcome is the ordinary one — a violating
+/// temporal entry point; the outcome is the ordinary one – a violating
 /// lasso is a `Violation`, a bound with none is `NoViolationWithin`.
 fn lasso(spec: &str, prop: &str, depth: u32) -> Outcome {
     let parsed = nixie_tla_syntax::parse_file(spec).expect("parses");
@@ -470,13 +470,16 @@ Next == x' = IF x = 0 THEN 1 ELSE 0
 ====
 "#;
     for (prop, want) in [
-        // A two-state cycle's lasso is **three** steps: `InLoop` turns true
-        // on the step into the repeated state, and the close needs the state
-        // after it (s2 = s1 here, so the loop is s1→s2→s1).
-        ("BoxFalse == [](x = 1)", Outcome::Violation { step: 3 }),
+        // A two-state cycle's shortest lasso is **two** steps, `s0 → s1 →
+        // s0`, the loop starting in the first state (`__InLoop` turns true
+        // on the step into it). It was found at three, rotated to start in
+        // `s1`, while the tableau also fixed `unroll` at `Init`: for a loop
+        // starting in the first state that contradicts the step-0 equation
+        // whenever a `[]` argument is false there (see `temporal.rs`).
+        ("BoxFalse == [](x = 1)", Outcome::Violation { step: 2 }),
         ("BoxTrue == [](x < 2)", Outcome::NoViolationWithin(4)),
         // A diamond is refuted as soon as the loop is shown to never hit
-        // its operand — at the close s2 = s1, one state before a box needs.
+        // its operand – at the close s2 = s1, one state before a box needs.
         ("DiaFalse == <>(x = 5)", Outcome::Violation { step: 2 }),
         ("DiaTrue == <>(x = 1)", Outcome::NoViolationWithin(4)),
     ] {
@@ -490,10 +493,10 @@ Next == x' = IF x = 0 THEN 1 ELSE 0
 }
 
 /// The bound is honest: on a counter that reaches 3 at step 3 and stays,
-/// the lasso closes at s4 = s3, so `<>(x = 5)` — never true — is refuted at
+/// the lasso closes at s4 = s3, so `<>(x = 5)` – never true – is refuted at
 /// depth 4 and **not at depth 3** (no lasso of 3 steps or fewer exists:
 /// s0..s3 are all distinct). "Nothing within k" is a bound, never a proof.
-/// And `<>(x = 3)` *holds* on that lasso — the lasso is a real behaviour.
+/// And `<>(x = 3)` *holds* on that lasso – the lasso is a real behaviour.
 #[test]
 fn the_bound_is_where_the_lasso_closes() {
     let src = r#"
@@ -528,7 +531,9 @@ DiamondsBad == <><><><><>(x = 2)
 ====
 "#;
     assert_eq!(lasso(src, "Boxes", 6), Outcome::NoViolationWithin(6));
-    assert_eq!(lasso(src, "BoxesBad", 6), Outcome::Violation { step: 3 });
+    // The cycle `(0,1) → (1,0) → (0,1)`, two steps, the loop starting in
+    // the first state – where `x = 1` is false.
+    assert_eq!(lasso(src, "BoxesBad", 6), Outcome::Violation { step: 2 });
     assert_eq!(lasso(src, "DiamondsBad", 6), Outcome::Violation { step: 2 });
 }
 
@@ -594,7 +599,7 @@ Next == x' = x
 }
 
 /// Issue #44, end to end: the lasso encoding's depth-8 query on a bounded
-/// counter was answered a wrong `unsat` by the in-process solver — an
+/// counter was answered a wrong `unsat` by the in-process solver – an
 /// inprocessing round ran inside the `push` scope and its retirements
 /// rested on scope-owned clauses. With the round confined to the base
 /// scope (and inprocessing **on**, the shipped default), the lasso is

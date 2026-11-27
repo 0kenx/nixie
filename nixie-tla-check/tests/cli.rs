@@ -1428,7 +1428,13 @@ fn a_violating_lasso_is_exit_12_with_a_loop_field() {
     assert!(r.out.contains("a lasso of"), "{}", r.out);
     let file = std::fs::read_to_string(dir.join("violation1.itf.json")).expect("the ITF file");
     let doc: serde_json::Value = serde_json::from_str(&file).expect("JSON");
-    assert_eq!(doc["loop"], serde_json::json!(2), "{doc}");
+    // The shortest lasso: `s0 -> s1 -> s0`, the loop starting in the first
+    // state (`__InLoop` turns true on the step into it). It used to be
+    // found one step longer, rotated to start in `s1`: the tableau fixed
+    // `unroll` at `Init` as well as by its step-0 equation, and for a loop
+    // starting in the first state the two contradict each other whenever
+    // a `[]` argument is false there (`temporal.rs`).
+    assert_eq!(doc["loop"], serde_json::json!(1), "{doc}");
     // The spec's variables and `__InLoop` are shown; the tableau's
     // bookkeeping is not.
     let vars: Vec<&str> = doc["vars"]
@@ -1449,7 +1455,7 @@ fn a_violating_lasso_is_exit_12_with_a_loop_field() {
 }
 
 /// No violating lasso within the bound is exit **0**, and the message says
-/// it is a bound — never that the property holds.
+/// it is a bound – never that the property holds.
 #[test]
 fn no_violating_lasso_is_exit_0_and_says_bound() {
     let dir = scratch("lasso-ok");
@@ -1470,7 +1476,7 @@ fn no_violating_lasso_is_exit_0_and_says_bound() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `--inv=<a temporal formula>` is exit **255** — Apalache's integration
+/// `--inv=<a temporal formula>` is exit **255** – Apalache's integration
 /// corpus has this exact cell (`check --inv=FalseLiveness LongPrefix.tla`
 /// → `EXITCODE: ERROR (255)`). A temporal formula asked for as an invariant
 /// is refused before any pass runs, under `--temporal` too.
@@ -1545,7 +1551,7 @@ fn a_cfg_property_is_checked_beside_the_invariants() {
         &std::fs::read_to_string(out.join("violation1.itf.json")).expect("the ITF file"),
     )
     .expect("JSON");
-    assert_eq!(doc["loop"], serde_json::json!(2), "{doc}");
+    assert_eq!(doc["loop"], serde_json::json!(1), "{doc}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1717,7 +1723,7 @@ fn fairness_in_a_temporal_property_is_declined_by_name() {
 
 /// Issue #44: a temporal check does not look for deadlocks unless asked.
 /// The lasso encoding's "state with no successor" is a question about the
-/// encoding's variables — and on a spec with a ranged variable the search
+/// encoding's variables – and on a spec with a ranged variable the search
 /// for one is the hardest query of the run (seconds to minutes per depth
 /// against microseconds for the property itself). `--deadlock` turns it
 /// back on.
@@ -1747,7 +1753,7 @@ Never == [](x = 1)
     // The run never asked the deadlock question (no `Deadlock` outcome).
     assert!(r.out.contains("a lasso of"), "{}", r.out);
     assert!(!r.out.contains("Deadlock"), "{}", r.out);
-    // Explicitly asked for, the search runs — and finds none on a lasso
+    // Explicitly asked for, the search runs – and finds none on a lasso
     // whose loop state has a successor by construction.
     let r = run(&[
         "check",

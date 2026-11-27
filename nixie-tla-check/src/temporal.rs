@@ -275,7 +275,22 @@ impl Tableau {
                 let unroll = v(&unroll_name);
                 let prev = v(&prev_name);
                 let initial = Kera::Bool(is_box).rc();
-                self.init.push(eq(Rc::clone(&unroll), Rc::clone(&initial)));
+                // Only the **lookback** is fixed at `Init`. Apalache's
+                // `TableauEncoder` also fixes `unroll` there (`auxVarInitEx`,
+                // TRUE for `[]`, FALSE for `<>`), and its step-0 equation
+                // then contradicts that for every lasso whose loop starts in
+                // state 0: `unroll@0 = prev@0 /\ (~InLoop@1 \/ arg@0)` is
+                // FALSE there when a box argument fails in state 0 (or TRUE
+                // for a diamond argument that holds), while `Init` says the
+                // opposite. Such a lasso is then unrepresentable, and its
+                // violation is found only one step later, rotated to start
+                // in state 1 – or, within a bound that reaches the shorter
+                // form only, not at all: `<>(x = 1)` on the 2-cycle
+                // `(0,0) -> (1,0) -> (0,0)` was "not violated by any lasso
+                // of 2 steps or fewer". Leaving `unroll@0` to its equation
+                // is exact in every case – `prev@0` is the neutral element
+                // the product starts from – and adds lassoes, never removes
+                // one. (Found while testing fairness, issue #47.)
                 self.init.push(eq(Rc::clone(&prev), initial));
                 // node <=> outer(arg, node') — a `Next` equation only: it
                 // reads the node's next value. (`Init` sets just the
