@@ -268,6 +268,17 @@ fn the_type1_subset_parses() {
             open: false,
         },
     );
+    // A record may be written with square brackets, as Apalache's `record`
+    // rule reads it (`ewd998/AsyncTerminationDetection.tla`'s alias).
+    round(
+        "[a: Int, b: Str]",
+        Type::Rec {
+            fields: [("a".to_string(), Type::Int), ("b".to_string(), Type::Str)]
+                .into_iter()
+                .collect(),
+            open: false,
+        },
+    );
     // Apalache's annotations end with `;` more often than not.
     round(
         "Str -> Int;",

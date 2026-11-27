@@ -183,6 +183,10 @@ enum Tok {
     RAngle,
     LBrace,
     RBrace,
+    /// `[` – a record may be written `[a: Int, b: Str]` as well as
+    /// `{a: Int, b: Str}` (Apalache's `record` and `recordFromRow`).
+    LBracket,
+    RBracket,
     Comma,
     Colon,
     Semi,
@@ -263,6 +267,14 @@ fn tokenize(src: &str) -> Result<Vec<Tok>, AnnotationError> {
             }
             '}' => {
                 out.push(Tok::RBrace);
+                i += 1;
+            }
+            '[' => {
+                out.push(Tok::LBracket);
+                i += 1;
+            }
+            ']' => {
+                out.push(Tok::RBracket);
                 i += 1;
             }
             ',' => {
@@ -382,7 +394,12 @@ impl Parser {
                 self.expect(&Tok::RAngle, "to close the tuple")?;
                 Ok(Type::Tuple(parts))
             }
-            Tok::LBrace => {
+            Tok::LBrace | Tok::LBracket => {
+                let closing = if tok == Tok::LBrace {
+                    Tok::RBrace
+                } else {
+                    Tok::RBracket
+                };
                 let mut fields = std::collections::BTreeMap::new();
                 // A trailing **bare identifier** is a row variable:
                 // `{ from: Str, term: Int, a }` names a record that has
@@ -407,7 +424,7 @@ impl Parser {
                         break;
                     }
                 }
-                self.expect(&Tok::RBrace, "to close the record")?;
+                self.expect(&closing, "to close the record")?;
                 Ok(Type::Rec {
                     fields,
                     open: row_tail.is_some(),
