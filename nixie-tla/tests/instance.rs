@@ -74,6 +74,78 @@ fn a_named_instance_substitutes_its_with_clause() {
     assert!(!out.contains("\"c\""), "Inner's own name leaked: {out}");
 }
 
+/// A declared **operator** constant is substituted by an operator:
+/// `CONSTANT P(_, _)` in the instantiated module, `WITH P <- Q` in the
+/// instance, and every `P(a, b)` inside the module is `Q(a, b)`. Lowered as
+/// a value, the replacement never applied and `P` stayed an opaque constant
+/// the encoder declines (`ConstantOperatorImpl.tla`, a cell of Apalache's
+/// suite). A `LAMBDA` is an operator too.
+#[test]
+fn an_operator_constant_is_substituted_by_an_operator() {
+    let s = Scratch::new(
+        "operator",
+        &[
+            (
+                "Inner.tla",
+                "---- MODULE Inner ----\nCONSTANTS A, B, P(_, _)\nGood == \\E a \\in A, b \\in B: P(a, b)\n====\n",
+            ),
+            (
+                "Outer.tla",
+                "---- MODULE Outer ----\nEqual(x, y) == x = y\nI == INSTANCE Inner WITH A <- {0, 1}, B <- {1, 2}, P <- Equal\n\
+                 L == INSTANCE Inner WITH A <- {0, 1}, B <- {2, 3}, P <- LAMBDA x, y: x + 1 = y\n\
+                 A == I!Good\nB == L!Good\n====\n",
+            ),
+        ],
+    );
+    let out = lower_in(&s, "Outer.tla", "A");
+    assert!(
+        out.contains("Eq("),
+        "the replacement operator's body is applied: {out}"
+    );
+    assert!(out.contains("\"1\""), "{out}");
+    assert!(
+        !out.contains("Opaque(\"P\""),
+        "the operator constant stayed opaque: {out}"
+    );
+    assert!(!out.contains("Opaque(\"Equal\""), "{out}");
+    let out = lower_in(&s, "Outer.tla", "B");
+    assert!(
+        out.contains("Arith(Add"),
+        "the LAMBDA's body is applied: {out}"
+    );
+    assert!(!out.contains("Opaque(\"P\""), "{out}");
+}
+
+/// The replacement must take as many arguments as the declaration: a
+/// mismatch is reported at the instance, by name.
+#[test]
+fn an_operator_replacement_of_the_wrong_arity_is_reported() {
+    let s = Scratch::new(
+        "operator-arity",
+        &[
+            (
+                "Inner.tla",
+                "---- MODULE Inner ----\nCONSTANT P(_, _)\nGood == P(1, 2)\n====\n",
+            ),
+            (
+                "Outer.tla",
+                "---- MODULE Outer ----\nOne(x) == x = 1\nI == INSTANCE Inner WITH P <- One\nA == I!Good\n====\n",
+            ),
+        ],
+    );
+    let spec = Loader::new()
+        .load(&s.path("Outer.tla"))
+        .expect("spec loads");
+    let root = spec.root_module().expect("root module");
+    let mut low = Lowerer::new();
+    low.add_spec(&spec);
+    let err = low.lower_named(root, "A").expect_err("the arity is wrong");
+    assert!(
+        err.to_string().contains("argument") && err.to_string().contains("P"),
+        "{err}"
+    );
+}
+
 #[test]
 fn an_unsubstituted_declaration_takes_the_same_name_here() {
     // TLA+ substitutes a declared name with no `WITH` clause by the same-named

@@ -100,6 +100,12 @@ enum SubstSource<'a> {
     /// A function definition `f[x \\in S] == e` visible at the instance,
     /// which denotes its function value.
     Fun(String, &'a [Bound], &'a Expr),
+    /// An **operator** substituted for a declared operator constant –
+    /// `INSTANCE M WITH P <- Q` where the instantiated module declares
+    /// `CONSTANT P(_, _)` and `Q` takes arguments. Applied at each use of
+    /// `P` inside `M`, as an operator parameter is; never lowered to one
+    /// value, because an operator has none.
+    Op(Def<'a>),
 }
 
 /// The instance being looked through while lowering.
@@ -111,6 +117,9 @@ enum SubstSource<'a> {
 struct InstanceCtx<'a> {
     module: &'a Module,
     subst: HashMap<String, KeraRef>,
+    /// The operator substitutions of this instance, by the declared name
+    /// they replace (see [`SubstSource::Op`]).
+    ops: HashMap<String, Def<'a>>,
 }
 
 /// What a `LET`'s definitions shadowed – each name's previous binding, in
@@ -1337,6 +1346,9 @@ enum Frame<'a> {
         /// Names the popped substitution values belong to, in order – every
         /// substituted name, `WITH` and implicit alike.
         subst_names: Vec<String>,
+        /// The operator substitutions, in order – carried in the frame, not
+        /// on the value stack: an operator has no value to push.
+        subst_ops: Vec<(String, Def<'a>)>,
         /// The member's own parameters, bound to the popped arguments.
         member_params: Vec<(String, usize)>,
     },
@@ -2983,6 +2995,7 @@ impl<'a> Lowerer<'a> {
                 Frame::PushInstanceCtx {
                     module,
                     subst_names,
+                    subst_ops,
                     member_params,
                 } => {
                     // Arguments were pushed last, so they come off first.
@@ -3018,7 +3031,8 @@ impl<'a> Lowerer<'a> {
                     // declared symbol, hard error) live in
                     // `resolve_implicit`, where the spans still point at the
                     // instance rather than at a late name error.
-                    self.ctx.push(Rc::new(InstanceCtx { module, subst }));
+                    let ops: HashMap<String, Def<'a>> = subst_ops.into_iter().collect();
+                    self.ctx.push(Rc::new(InstanceCtx { module, subst, ops }));
                     self.scopes.push(scope);
                 }
                 Frame::PopInstanceCtx => {
@@ -3594,19 +3608,41 @@ impl<'a> Lowerer<'a> {
             .map(|d| d.name.name.clone())
             .chain(target.variables().iter().map(|v| v.name.clone()))
             .collect();
+        // A declared **operator** constant (`CONSTANT P(_, _)`) is replaced
+        // by an operator, not a value: `INSTANCE ConstantOperator WITH
+        // AreGood <- Equal` makes every `AreGood(a, b)` inside the module
+        // `Equal(a, b)`. Lowered as a value, the replacement was an opaque
+        // `AreGood` the encoder had no rule for (`ConstantOperatorImpl.tla`).
+        let arity_of = |n: &str| -> usize {
+            target
+                .constants()
+                .iter()
+                .find(|d| d.name.name == n)
+                .map_or(0, |d| d.arity)
+        };
         let mut subst_names: Vec<String> = Vec::new();
         let mut subst_sources: Vec<SubstSource<'a>> = Vec::new();
+        let mut subst_ops: Vec<(String, Def<'a>)> = Vec::new();
         for (n, e) in &inst.with {
+            if arity_of(n) > 0 {
+                let def = self.operator_replacement(e, n, arity_of(n), span)?;
+                subst_ops.push((n.clone(), def));
+                continue;
+            }
             subst_names.push(n.clone());
             subst_sources.push(SubstSource::Expr(e));
         }
         for d in declared {
-            if subst_names.contains(&d) {
+            if subst_names.contains(&d) || subst_ops.iter().any(|(n, _)| n == &d) {
                 continue;
             }
-            let src = self.resolve_implicit(&d, inst, span)?;
-            subst_names.push(d);
-            subst_sources.push(src);
+            match self.resolve_implicit(&d, inst, span)? {
+                SubstSource::Op(def) => subst_ops.push((d, def)),
+                src => {
+                    subst_names.push(d);
+                    subst_sources.push(src);
+                }
+            }
         }
 
         stack.push(Frame::PopInstanceCtx);
@@ -3614,6 +3650,7 @@ impl<'a> Lowerer<'a> {
         stack.push(Frame::PushInstanceCtx {
             module: target,
             subst_names,
+            subst_ops,
             member_params,
         });
         // Arguments last so they are on top of the value stack.
@@ -3627,6 +3664,7 @@ impl<'a> Lowerer<'a> {
                 SubstSource::Fun(name, bounds, body) => {
                     stack.push(Frame::ExpandFun(name, bounds, body));
                 }
+                SubstSource::Op(_) => {}
             }
         }
         Ok(())
@@ -3663,12 +3701,29 @@ impl<'a> Lowerer<'a> {
         if let Some(v) = self.ctx.last().and_then(|c| c.subst.get(name)) {
             return Ok(SubstSource::Value(Rc::clone(v)));
         }
+        // An operator substituted by an enclosing instance composes too.
+        if let Some(def) = self.ctx.last().and_then(|c| c.ops.get(name)) {
+            return Ok(SubstSource::Op(def.clone()));
+        }
         if let Some(v) = self.constants.get(name) {
             return Ok(SubstSource::Value(Rc::clone(v)));
         }
         if let Some(def) = self.defs.get(name) {
             if def.params.is_empty() {
                 return Ok(SubstSource::Expr(def.body));
+            }
+            // A same-named operator for a declared operator constant – the
+            // implicit form of `WITH P <- Q`.
+            let arity = inst
+                .module
+                .constants()
+                .iter()
+                .find(|d| d.name.name == *name)
+                .map_or(0, |d| d.arity);
+            if arity > 0 {
+                return self
+                    .check_replacement_arity(def, name, arity, span)
+                    .map(SubstSource::Op);
             }
             return Err(LowerError::unsupported(
                 &format!("`{name}`"),
@@ -3724,11 +3779,105 @@ impl<'a> Lowerer<'a> {
         false
     }
 
+    /// The operator a `WITH` replacement names, for a declared operator
+    /// constant of `arity` arguments: an operator definition in scope, an
+    /// operator parameter, or a `LAMBDA`. Its parameters must match the
+    /// declared arity; anything else is reported at the instance.
+    fn operator_replacement(
+        &self,
+        e: &'a Expr,
+        name: &str,
+        arity: usize,
+        span: Span,
+    ) -> Result<Def<'a>> {
+        let mut kind = e;
+        while let ExprKind::Paren(inner) | ExprKind::Label { body: inner, .. } = &kind.kind {
+            kind = inner;
+        }
+        match &kind.kind {
+            ExprKind::Name(q) if !q.is_qualified() => {
+                let id = q.base().expect("a name has a base");
+                if let Some(def) = self.defs.get(&id.name) {
+                    return if def.params.is_empty() {
+                        Err(LowerError::unsupported(
+                            &format!("`{name}`"),
+                            &format!(
+                                "it is declared with {arity} argument(s) in the instantiated \
+                                 module, and the operator substituting for it takes none"
+                            ),
+                            span,
+                        ))
+                    } else {
+                        self.check_replacement_arity(def, name, arity, span)
+                    };
+                }
+                if let Some(Binding::Op { params, body }) = self.lookup(&id.name) {
+                    let def = Def {
+                        params: params.clone(),
+                        body,
+                        cacheable: false,
+                    };
+                    return self.check_replacement_arity(&def, name, arity, span);
+                }
+                Err(LowerError::unsupported(
+                    &format!("`{name}`"),
+                    "it is declared an operator in the instantiated module; the operator \
+                     substituting for it must be a defined operator name or a `LAMBDA`",
+                    span,
+                ))
+            }
+            ExprKind::Lambda { params, body } => {
+                let def = Def {
+                    params: params.iter().map(|p| (p.name.clone(), 0)).collect(),
+                    body,
+                    cacheable: false,
+                };
+                self.check_replacement_arity(&def, name, arity, span)
+            }
+            _ => Err(LowerError::unsupported(
+                &format!("`{name}`"),
+                &format!(
+                    "it is declared with {arity} argument(s) in the instantiated module, so \
+                     the operator substituting for it must take as many"
+                ),
+                span,
+            )),
+        }
+    }
+
+    /// A replacement operator's arity against the declared one.
+    fn check_replacement_arity(
+        &self,
+        def: &Def<'a>,
+        name: &str,
+        arity: usize,
+        span: Span,
+    ) -> Result<Def<'a>> {
+        if def.params.len() != arity {
+            return Err(LowerError::new(
+                LowerErrorKind::Arity {
+                    name: name.to_string(),
+                    expected: arity,
+                    found: def.params.len(),
+                },
+                span,
+            ));
+        }
+        Ok(Def {
+            params: def.params.clone(),
+            body: def.body,
+            cacheable: false,
+        })
+    }
+
     /// Resolve a bare name through the instance being looked through, if any.
     fn ctx_resolve(&self, name: &str) -> Option<CtxResolution<'a>> {
         let ctx = self.ctx.last()?;
         if let Some(v) = ctx.subst.get(name) {
             return Some(CtxResolution::Value(Rc::clone(v)));
+        }
+        if let Some(def) = ctx.ops.get(name) {
+            return Some(CtxResolution::Def(def.clone()));
         }
         let def = self.module_defs.get(&ctx.module.name.name)?.get(name)?;
         Some(CtxResolution::Def(def.clone()))
