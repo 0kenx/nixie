@@ -536,16 +536,7 @@ impl Context {
                 self.format_value_at(*value, decl.term)
             } else if let Some(val) = solver_model.get(decl.term) {
                 self.format_value_at(val, decl.term)
-            } else if let Some(chain) =
-                self.array_model_value(decl.term, decl.sort, solver_model, &class_values)
-            {
-                // An array is never *assigned* a value term – there is no
-                // literal for "the function `{0 ↦ 5}` extended by 0" – so
-                // before `#P2b-34` it fell through to the sort default and
-                // printed `((as const …) #x00)` beside its own `select`
-                // entries saying otherwise.  The published reads are that
-                // function; a `store` chain over the default is how SMT-LIB
-                // spells it.
+            } else if let Some(chain) = self.removed_array_arm(decl, solver_model, &class_values) {
                 chain
             } else if let Some(witness) = self
                 .is_uninterpreted_sort(decl.sort)
@@ -582,6 +573,36 @@ impl Context {
         }
 
         Some(model)
+    }
+
+    /// The arm that used to follow `solver_model.get` in [`Self::model_rows`],
+    /// kept only as its own oracle: it handed whatever reached it to the
+    /// array renderer – arrays having been answered above, a *non-array*
+    /// constant with no model entry.  For a scalar sort the renderer can only
+    /// answer `None` (the constant's class holds no array: no constant
+    /// default, no `store` member, no read, no store to inherit), but it
+    /// established that by walking the class, the model's assignments and the
+    /// whole term arena, once per constant.  4,096 unconstrained `Int`
+    /// constants spent 70 ms there for rows that cost 0.4 ms.
+    ///
+    /// Returns `None` always.  Under `debug_assertions` it runs the renderer
+    /// first and asserts the `None`, so every dev-profile model rendering
+    /// checks the argument the arm's removal rests on; a release build folds
+    /// the call away.
+    #[inline]
+    fn removed_array_arm(
+        &self,
+        decl: &super::DeclaredConst,
+        solver_model: &crate::solver::Model,
+        class_values: &class_values::ClassValues,
+    ) -> Option<String> {
+        debug_assert!(
+            self.array_model_value(decl.term, decl.sort, solver_model, class_values)
+                .is_none(),
+            "the array renderer answered for the non-array constant {}",
+            decl.name
+        );
+        None
     }
 
     fn published_model_withheld(&self) -> bool {
