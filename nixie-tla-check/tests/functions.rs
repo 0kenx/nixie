@@ -296,3 +296,33 @@ fn a_shorter_tuple_is_not_the_same_function() {
     fails("<<2, 4>> = [i \\in 1..3 |-> 2 * i]");
     fails("<<2, 4, 6>> = [i \\in 2..4 |-> 2 * i]");
 }
+
+/// `IF c THEN f ELSE g` is a function: its domain is `IF c THEN DOMAIN f
+/// ELSE DOMAIN g` and its graph the same choice of graphs – exact, since the
+/// value is `f` or `g` whole. It was refused as "a function where a single
+/// value is needed", and the lasso encoding writes one such `IF` for every
+/// function-valued state variable (`__saved_f' = IF … THEN __saved_f ELSE
+/// f`), so no specification with a function variable reached a liveness
+/// check (`Bug2107.tla`, three cells of Apalache's suite).
+#[test]
+fn an_if_over_functions_is_the_function_chosen_whole() {
+    holds(r#"DOMAIN (IF x = 0 THEN [a \in {1} |-> 1] ELSE [a \in {1, 2} |-> 2]) = {1}"#);
+    fails(r#"DOMAIN (IF x = 0 THEN [a \in {1} |-> 1] ELSE [a \in {1, 2} |-> 2]) = {1, 2}"#);
+    holds(r#"(IF x = 1 THEN [a \in {1} |-> 1] ELSE [a \in {1, 2} |-> 2])[2] = 2"#);
+    holds(r#"(IF x = 0 THEN [a \in {1} |-> 1] ELSE [a \in {1, 2} |-> 2]) = [a \in {1} |-> 1]"#);
+}
+
+/// An `IF` over sets, in candidate form on either side: the candidates of
+/// both, each present only where its side is chosen. A set-valued term on
+/// both sides is a set-sorted `ite`; one of each form is promoted to the
+/// term form, as a binary set operation promotes its operands.
+#[test]
+fn an_if_over_sets_keeps_each_sides_members_on_its_side() {
+    holds(r#"(IF x = 0 THEN {1, 2} ELSE {3}) = {1, 2}"#);
+    fails(r#"(IF x = 0 THEN {1, 2} ELSE {3}) = {3}"#);
+    holds(r#"(IF x = 1 THEN {1, 2} ELSE {3}) = {3}"#);
+    // Ranges have only the candidate form.
+    holds(r#"(IF x = 1 THEN 1..2 ELSE 3..5) = {3, 4, 5}"#);
+    fails(r#"(IF x = 0 THEN 1..2 ELSE 3..5) = {3, 4, 5}"#);
+    holds(r#"\A y \in (IF x = 0 THEN 1..2 ELSE 3..5) : y <= 2"#);
+}

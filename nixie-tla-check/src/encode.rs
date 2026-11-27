@@ -1453,9 +1453,102 @@ impl Encoder {
             }
             Kera::Ite(c, t, e) => {
                 let c = self.go(c, tm)?;
-                let t = self.go(t, tm)?;
-                let e = self.go(e, tm)?;
-                scalar(tm.mk_ite(c, t, e))
+                let (tv, ev) = (self.value(t, tm)?, self.value(e, tm)?);
+                // An `IF` over values that are not one term, read part by
+                // part. A function is a domain and a graph, and `IF c THEN f
+                // ELSE g` is a function whose domain is `IF c THEN DOMAIN f
+                // ELSE DOMAIN g` and whose graph is the same choice of
+                // graphs – exact, since it is `f` or `g` whole. A set in
+                // candidate form is the candidates of both sides, the one
+                // side's present only where `c`, the other's only where
+                // `~c`: membership is a disjunction over candidates, so a
+                // value on both sides is counted twice and correctly.
+                //
+                // The lasso encoding writes one such `IF` for **every**
+                // function-valued state variable (`__saved_f' = IF __InLoop'
+                // = __InLoop THEN __saved_f ELSE f`), and refused it as "a
+                // function where a single value is needed": no specification
+                // with a function variable reached a liveness check
+                // (`Bug2107.tla`, three cells of Apalache's suite).
+                match (&*tv, &*ev) {
+                    (
+                        Value::Fun {
+                            domain: dt,
+                            array: at,
+                        },
+                        Value::Fun {
+                            domain: de,
+                            array: ae,
+                        },
+                    ) => {
+                        let domain = tm.mk_ite(c, *dt, *de);
+                        let array = tm.mk_ite(c, *at, *ae);
+                        Ok(Rc::new(Value::Fun { domain, array }))
+                    }
+                    (Value::Set(_), Value::Set(_))
+                    | (Value::Set(_), Value::Scalar(_))
+                    | (Value::Scalar(_), Value::Set(_)) => {
+                        let repr = |v: &Rc<Value>| match &**v {
+                            Value::Set(cell) => Some(SetRepr::Arena(cell.clone())),
+                            Value::Scalar(t) if self.element_sort_of(*t, tm).is_ok() => {
+                                Some(SetRepr::Native(*t))
+                            }
+                            _ => None,
+                        };
+                        match (repr(&tv), repr(&ev)) {
+                            (Some(x @ SetRepr::Native(_)), Some(y @ SetRepr::Native(_))) => {
+                                let (SetRepr::Native(x), SetRepr::Native(y)) = (x, y) else {
+                                    unreachable!("matched Native above");
+                                };
+                                scalar(tm.mk_ite(c, x, y))
+                            }
+                            (Some(SetRepr::Arena(x)), Some(SetRepr::Arena(y))) => {
+                                let mut members = Vec::new();
+                                for m in &x.members {
+                                    members.push(Member {
+                                        value: Rc::clone(&m.value),
+                                        present: tm.mk_and([c, m.present]),
+                                    });
+                                }
+                                let not_c = tm.mk_not(c);
+                                for m in &y.members {
+                                    members.push(Member {
+                                        value: Rc::clone(&m.value),
+                                        present: tm.mk_and([not_c, m.present]),
+                                    });
+                                }
+                                self.mk_set(members)
+                            }
+                            (Some(x), Some(y)) => {
+                                // One side in each form: to the native form,
+                                // as `set_pair` promotes – an arena set is a
+                                // union of singletons, so it can always be
+                                // written out, and a native one may be an
+                                // opaque variable that has no candidates.
+                                let (p, q) = match (&x, &y) {
+                                    (SetRepr::Native(p), SetRepr::Arena(q)) => {
+                                        let elem = self.element_sort_of(*p, tm)?;
+                                        (*p, self.native_set_of(&q.members, elem, tm)?)
+                                    }
+                                    (SetRepr::Arena(p), SetRepr::Native(q)) => {
+                                        let elem = self.element_sort_of(*q, tm)?;
+                                        (self.native_set_of(&p.members, elem, tm)?, *q)
+                                    }
+                                    _ => unreachable!("one side of each form, checked above"),
+                                };
+                                scalar(tm.mk_ite(c, p, q))
+                            }
+                            _ => Err(EncodeError::Unsupported(
+                                "an `IF` over a set and a value of another shape".into(),
+                            )),
+                        }
+                    }
+                    _ => {
+                        let t = self.reify(&tv, tm)?;
+                        let e = self.reify(&ev, tm)?;
+                        scalar(tm.mk_ite(c, t, e))
+                    }
+                }
             }
             // Equality is structural: extensional for sets, `=` otherwise.
             //
