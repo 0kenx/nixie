@@ -38,11 +38,26 @@ echo "arm:    $NIXIE_TLA"
 STORE="$REPO/precompile/apalache-0.63.0/benchmark/tla_parity"
 mkdir -p "$STORE"
 
-MAX_CELLS="$MAX_CELLS" python3 - "$SCRIPT_DIR" <<'PY' > /tmp/parity_tla_cells.json
-import json, os, sys
+# Scratch files private to this run: two concurrent runs (a full one and a
+# cell subset) shared /tmp/parity_tla_lines, and the later one truncated it
+# under the earlier one's `read` loop, which then stopped after 40 cells.
+CELLS_JSON="$(mktemp)"
+LINES="$(mktemp)"
+trap 'rm -f "$CELLS_JSON" "$LINES"' EXIT
+# `CELL_MATCH=<regex>` keeps the cells whose argv matches; `CELL_IDS=a,b`
+# keeps those ids. For re-running a class of cells (every Agree-Violation,
+# say) without the prefix.
+MAX_CELLS="$MAX_CELLS" python3 - "$SCRIPT_DIR" <<'PY' > "$CELLS_JSON"
+import json, os, re, sys
 d = json.load(open(sys.argv[1] + '/corpus.json'))
-cells = d['cells'][:int(os.environ.get('MAX_CELLS', '40'))]
-json.dump(cells, sys.stdout)
+cells = d['cells']
+if os.environ.get('CELL_MATCH'):
+    pat = re.compile(os.environ['CELL_MATCH'])
+    cells = [c for c in cells if pat.search(' '.join(c['argv']))]
+if os.environ.get('CELL_IDS'):
+    ids = set(os.environ['CELL_IDS'].split(','))
+    cells = [c for c in cells if c['id'] in ids]
+json.dump(cells[:int(os.environ.get('MAX_CELLS', '40'))], sys.stdout)
 PY
 
 run_cell () {  # $1 arm-binary  $2 out-dir  rest: argv
@@ -51,27 +66,43 @@ run_cell () {  # $1 arm-binary  $2 out-dir  rest: argv
   ( cd "$WORK" && taskset -c 0-7 timeout 300 "$bin" "$@" >"$out/stdout" 2>"$out/stderr"; echo "$?" >"$out/code" ) || echo 124 >"$out/code"
 }
 
-n=0; agree_ok=0; agree_viol=0; agree_dl=0; agree_ref=0; mismatch=0; inconclusive=0; declined=0
-python3 - <<'PY' > /tmp/parity_tla_lines
-import json
-for c in json.load(open('/tmp/parity_tla_cells.json')):
-    # One field for the options: `argv` is `mode, options…, spec`, and the
-    # spec is its own field. (One field per option misaligned every cell with
-    # two or more options – `read` gives the last variable the remainder – and
-    # those cells were skipped as "no <option>".)
-    print('\t'.join([c['id'], c['mode'], ' '.join(c['argv'][1:-1]), c['spec'], str(c['expected_exit'])]))
+n=0; agree_ok=0; agree_viol=0; agree_dl=0; agree_ref=0; mismatch=0; inconclusive=0; declined=0; oracle_failed=0
+python3 - "$CELLS_JSON" <<'PY' > "$LINES"
+import json, sys
+# One field for the options: `argv` is `mode, options…, spec`, and the spec
+# is its own field. (One field per option misaligned every cell with two or
+# more options – `read` gives the last variable the remainder – and those
+# cells were skipped as "no <option>".) The separator is the ASCII unit
+# separator: a tab is IFS whitespace, so an EMPTY options field (`check
+# Spec.tla`) collapsed and the exit code landed in `spec`.
+US = chr(31)
+for c in json.load(open(sys.argv[1])):
+    print(US.join([c['id'], c['mode'], ' '.join(c['argv'][1:-1]), c['spec'], str(c['expected_exit'])]))
 PY
 
-while IFS=$'\t' read -r id mode argv_prefix spec expected; do
+while IFS=$'\x1f' read -r id mode argv_prefix spec expected; do
   n=$((n+1))
-  SPEC_PATH="$(cd "$APALACHE_SRC_DIR" && find . -name "$spec" | head -1)"
+  # A cell's spec may carry a directory (`antipatterns/fold-except/X.tla`):
+  # `find -name` matches basenames only, so the path is tried first.
+  SPEC_PATH="$(cd "$APALACHE_SRC_DIR" && { [ -f "$spec" ] && echo "./$spec"; } || find . -name "$spec" | head -1)"
   [ -n "$SPEC_PATH" ] || { echo "SKIP $id: no $spec" >&2; n=$((n-1)); continue; }
   SPEC_PATH="$APALACHE_SRC_DIR/$SPEC_PATH"
   WORK="$(mktemp -d)"
-  cp "$SPEC_PATH" "$WORK/"
+  # At the spec's own relative path: the cell's argv names it that way
+  # (`antipatterns/fold-except/X.tla`), and a copy at the top of the work
+  # directory gave both tools a file that was not there.
+  mkdir -p "$WORK/$(dirname "$spec")"
+  cp "$SPEC_PATH" "$WORK/$spec"
   for cfg in "$APALACHE_SRC_DIR/${spec%.tla}"*.cfg; do
-    [ -e "$cfg" ] && cp "$cfg" "$WORK/"
+    [ -e "$cfg" ] && cp "$cfg" "$WORK/$(dirname "$spec")/"
   done
+  # A spec in a subdirectory may EXTEND its siblings (`MC_FoldExcept3`
+  # extends `FoldExcept`); they come along.
+  case "$spec" in */*)
+    for dep in "$(dirname "$SPEC_PATH")"/*.tla; do
+      [ -e "$dep" ] && cp "$dep" "$WORK/$(dirname "$spec")/"
+    done;;
+  esac
   ODIR="$WORK/out"; mkdir -p "$ODIR"
 
   # --- oracle arm (stored; never re-run an existing cell) ---
@@ -94,9 +125,12 @@ while IFS=$'\t' read -r id mode argv_prefix spec expected; do
           else echo NoError; fi ;;
       12) echo Error ;;
       # `Unknown` is an answer too – the honest one (exit 255, "The outcome
-      # is: Unknown") – and it is Inconclusive, never a mismatch.
+      # is: Unknown") – and it is Inconclusive, never a mismatch. Any other
+      # 255 gave no verdict (a refused option, a role the module lacks):
+      # `Refused`, which is a decline like 75.
       255) if grep -q "The outcome is: Unknown" "$2" 2>/dev/null; then echo Unknown
-          else echo "Exit$1"; fi ;;
+          elif grep -q "The outcome is:" "$2" 2>/dev/null; then echo "Exit$1"
+          else echo Refused; fi ;;
       *)  echo "Exit$1" ;;
     esac
   }
@@ -104,23 +138,51 @@ while IFS=$'\t' read -r id mode argv_prefix spec expected; do
   x_v="$(verdict "$x_code" "$WORK/nixie/stdout")"
 
   cls=Inconclusive
-  case "$x_v" in Exit75|Exit120|Exit150) cls=Declined;; esac
+  case "$x_v" in Exit75|Exit120|Exit150|Refused) cls=Declined;; esac
   if [ "$a_v" = NoError ]  && [ "$x_v" = NoError ];  then cls=Agree-Ok; agree_ok=$((agree_ok+1));
   elif [ "$a_v" = TooShort ] && [ "$x_v" = TooShort ]; then cls=Agree-Ok; agree_ok=$((agree_ok+1));
-  elif [ "$a_v" = Error ]  && [ "$x_v" = Error ];    then cls=Agree-Violation; agree_viol=$((agree_viol+1));
+  elif [ "$a_v" = Error ]  && [ "$x_v" = Error ];    then
+    # The counterexample length must also agree: both tools search lengths
+    # in increasing order, so each one's first counterexample is the
+    # shortest, and two different shortest lengths are two different
+    # answers about the specification. Apalache prints the first violated
+    # state as `State N: state invariant … violated.`; Nixie as
+    # `counterexample 1: N step(s)`. A length neither output names (a
+    # deadlock, a lasso) is not held against the cell.
+    # (`|| true` on the grep: no match is an empty length, not the exit
+    # `set -o pipefail` would give the assignment – and the script.)
+    # An action invariant is violated on a transition: Apalache reports it at
+    # the state the transition leaves ("State 0: action invariant ..."), Nixie
+    # as the step taken ("1 step(s)") - the same counterexample, counted from
+    # one end or the other.
+    a_viol="$(grep -m1 -E '^State [0-9]+: .*violated' "$WORK/apalache.out" 2>/dev/null || true)"
+    a_len="$(printf '%s\n' "$a_viol" | awk '{print $2}' | tr -d ':')"
+    case "$a_viol" in
+      *"action invariant"*) [ -n "$a_len" ] && a_len="$((a_len + 1))";;
+    esac
+    x_len="$({ grep -m1 -E '^counterexample 1: [0-9]+ step' "$WORK/nixie/stdout" 2>/dev/null || true; } | awk '{print $3}')"
+    if [ -n "$a_len" ] && [ -n "$x_len" ] && [ "$a_len" != "$x_len" ]; then
+      cls=Agree-Violation-DiffLength; mismatch=$((mismatch+1))
+    else cls=Agree-Violation; agree_viol=$((agree_viol+1)); fi
   elif [ "$a_v" = Deadlock ] && [ "$x_v" = Deadlock ]; then cls=Agree-Deadlock; agree_dl=$((agree_dl+1));
   # Both refuse the cell with the same non-verdict exit code (a malformed
   # configuration, say): an agreement that it cannot be checked, reported
   # apart from the verdict classes and never as a mismatch.
   elif [ "$a_v" = "$x_v" ] && echo "$a_v" | grep -q '^Exit' && [ "$a_v" != Exit124 ]; then cls=Agree-Refused; agree_ref=$((agree_ref+1));
+  # The oracle itself failed (any exit that is not a verdict of its own:
+  # 1 is its crash, 255 its configuration and type errors) – a cell with no
+  # oracle verdict to compare against. Reported apart from Inconclusive,
+  # because it is the drop-in superset's own count: the cells where Nixie
+  # answers and the oracle does not are visible in the rows.
+  elif echo "$a_v" | grep -q '^Exit' && [ "$a_v" != Exit124 ] && [ "$a_v" != "$x_v" ]; then cls=OracleFailed; oracle_failed=$((oracle_failed+1))
   elif [ "$cls" != Declined ]; then
-    if [ "$a_v" = "Exit124" ] || [ "$x_v" = "Exit124" ] || [ "$x_v" = Unknown ] || echo "$a_v" | grep -q Exit1; then
+    if [ "$a_v" = "Exit124" ] || [ "$x_v" = "Exit124" ] || [ "$x_v" = Unknown ]; then
       cls=Inconclusive; inconclusive=$((inconclusive+1))
     else cls=MISMATCH; mismatch=$((mismatch+1)); fi
   else declined=$((declined+1)); fi
   echo -e "$id\t$a_v\t$x_v\t$cls\t$spec"
   rm -rf "$WORK"
-done < /tmp/parity_tla_lines
+done < "$LINES"
 
 echo
 echo "cells compared : $n"
@@ -130,7 +192,8 @@ echo "  Agree-Deadlk : $agree_dl"
 echo "  Agree-Refus. : $agree_ref"
 echo "  Declined     : $declined"
 echo "  Inconclusive : $inconclusive"
+echo "  OracleFailed : $oracle_failed"
 echo "  MISMATCH     : $mismatch"
-[ "$mismatch" -gt 0 ] && exit 1
+[ "$mismatch" -gt 0 ] && exit 1   # a length disagreement counts as a mismatch
 [ "$n" -gt 0 ] || { echo "zero compared cells" >&2; exit 1; }
 exit 0
