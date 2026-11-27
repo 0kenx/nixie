@@ -744,3 +744,37 @@ Inv == TRUE
     let err = types_err(src, "Inv");
     assert!(err.contains("conflicts"), "{err}");
 }
+
+/// A `LET` definition's annotation is checked **out of context**, and a
+/// body that reads the enclosing operator's parameters has a shape the
+/// context gives it: `s == <<p[1] + d[1], p[2] + d[2]>>` in `move(p, d)`
+/// (`SlidingPuzzlesTyped.tla`), checked with `p` and `d` untyped, is
+/// ambiguous. That is not an error in the annotation – the main inference
+/// types the body where the operator is used – so the check is skipped
+/// rather than failed; the first version failed it, exit 120 on a
+/// specification the oracle accepts. A contradiction that needs no context
+/// is still the type error it is.
+#[test]
+fn a_let_annotation_that_needs_its_enclosing_parameters_is_not_checked() {
+    let src = r#"
+---- MODULE OutOfContext ----
+EXTENDS Integers
+\* @type: (<<Int, Int>>, <<Int, Int>>) => Bool;
+Move(p, d) ==
+    LET \* @type: <<Int, Int>>;
+        s == <<p[1] + d[1], p[2] + d[2]>>
+    IN s[1] > 0
+VARIABLE x
+Init == x = 0
+Next == x' = x
+Inv == Move(<<1, 2>>, <<3, 4>>)
+====
+"#;
+    assert_eq!(claim(src, "Inv"), Outcome::NoViolationWithin(0));
+    let wrong = src.replace("s == <<p[1] + d[1], p[2] + d[2]>>", "s == 1");
+    let err = types_err(&wrong, "Inv");
+    assert!(
+        err.contains("does not match its body") || err.contains("does not check against"),
+        "{err}"
+    );
+}

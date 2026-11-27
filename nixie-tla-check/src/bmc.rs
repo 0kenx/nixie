@@ -1135,9 +1135,13 @@ impl Bmc {
         // parameters assumed at their annotated types, the result unified.
         // A signature that names no operator, or one of the wrong arity,
         // is a defect in the specification and is reported as such.
+        // The third element: the signature belongs to a `LET` definition,
+        // whose body may read the enclosing operator's parameters – a check
+        // that has to know what is and is not in its context.
         let mut signatures: Vec<(
             &nixie_tla_syntax::module::Annotation,
             nixie_tla::annotations::ParsedSignature,
+            bool,
         )> = Vec::new();
         // The alias table resolves an uppercase name and a `$name` reference
         // against the spec's `@typeAlias: NAME = ...` definitions (issue
@@ -1186,7 +1190,7 @@ impl Bmc {
                                     ann.name
                                 ))
                             })?;
-                        signatures.push((ann, sig));
+                        signatures.push((ann, sig, false));
                         continue;
                     }
                     return Err(SetupError::Types(format!(
@@ -1223,7 +1227,7 @@ impl Bmc {
                             ))
                         })?,
                 };
-                signatures.push((ann, sig));
+                signatures.push((ann, sig, true));
                 continue;
             }
             if let Err(e) = nixie_tla::annotations::assume_with_aliases(
@@ -1242,7 +1246,7 @@ impl Bmc {
         // Check each operator signature against its operator's body, in a
         // throwaway lowerer and inference so nothing this reads lands in
         // the real caches (the same discipline the `.cfg` probe uses).
-        for (ann, sig) in &signatures {
+        for (ann, sig, let_scoped) in &signatures {
             // The anchor the attach pass chose is the *definition* this
             // signature belongs to – a module-level operator or a `LET`
             // definition inside a body, whichever the comment precedes.
@@ -1308,12 +1312,31 @@ impl Bmc {
                     ))
                 })?;
             }
-            let got = check.infer(&body_k).map_err(|e| {
-                SetupError::Types(format!(
-                    "the operator-signature annotation on `{name}` does not check against its \
-                 body: {e}"
-                ))
-            })?;
+            let got = match check.infer(&body_k) {
+                Ok(t) => t,
+                // Out of context, not wrong. A `LET` definition's body may
+                // read the *enclosing* operator's parameters, whose shapes
+                // only that operator's own signature – or its uses – settle:
+                // `s == <<p[1] + d[1], p[2] + d[2]>>` in `move(p, d)`
+                // (`SlidingPuzzlesTyped.tla`), checked with `p` and `d`
+                // untyped, is ambiguous. The annotation is not in error, and
+                // the check is skipped, said out loud – the main inference
+                // types the body in context where the operator is used.
+                Err(nixie_tla::TypeError::Ambiguous { .. }) if *let_scoped => {
+                    eprintln!(
+                        "note: the @type: annotation on `{name}` (a `LET` definition) is not \
+                         checked: its body's shape depends on the enclosing operator's \
+                         parameters"
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    return Err(SetupError::Types(format!(
+                        "the operator-signature annotation on `{name}` does not check against \
+                         its body: {e}"
+                    )));
+                }
+            };
             let want = nixie_tla::annotations::intern_for_check(
                 &mut check,
                 &sig.result,
