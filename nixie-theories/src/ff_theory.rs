@@ -613,45 +613,183 @@ pub fn check_conjunction(
             // the tiny odd primes the oracle tests exercise; declines the
             // 254-bit case to the GB path.
             let bits = modulus.bits() * vars.len().max(1) as u64;
-            if bits <= 22 {
-                // The linear core runs even on enumeration-eligible goals:
-                // an inconsistent linear system is refuted in one pass
-                // WITH a checkable certificate, where the exhaustive
-                // search has none – certified mode would otherwise
-                // decline every tiny-field UNSAT (the F_3..F_13 goals).
-                // 𝔽₂ has no Montgomery form (even modulus) and skips
-                // straight to the exhaustive path.
-                if let Ok(f) = FieldCtx::new(modulus.clone()) {
-                    match encode_generators(manager, field, &f, assertions, budget_steps) {
-                        Ok((_enc, generators)) => match linear_core(&f, field, generators) {
-                            FrontResult::Inconsistent(core, certificate) => {
-                                return FfOutcome::Unsat(FfCore {
-                                    fact_indices: core.into_iter().collect(),
-                                    certificate,
-                                });
-                            }
-                            FrontResult::Rewritten(..) => {}
-                        },
-                        Err(outcome) => return outcome,
+            // 𝔽₂ has no Montgomery form (even modulus): the exhaustive
+            // path alone.
+            let Ok(f) = FieldCtx::new(modulus.clone()) else {
+                if bits <= 22 {
+                    return enumerate_outcome(
+                        manager,
+                        field,
+                        &modulus,
+                        &vars,
+                        assertions,
+                        budget_steps,
+                    );
+                }
+                return FfOutcome::InvalidModel(
+                    "even modulus with too many variables for enumeration".to_string(),
+                );
+            };
+            let (enc, generators) =
+                match encode_generators(manager, field, &f, assertions, budget_steps) {
+                    Ok(encoded) => encoded,
+                    Err(outcome) => return outcome,
+                };
+            if generators.iter().all(|g| is_linear(&g.poly)) {
+                // A goal whose generators are all linear is decided here,
+                // at any number of variables: the core's reduced rows give
+                // the point directly (`linear_point`), and an inconsistent
+                // row is the certified UNSAT it always was. Neither
+                // enumeration nor the cascade runs: eight pinned variables
+                // of 𝔽₇ (pⁿ > 2²²) used to go to the cascade and run for
+                // minutes, growing past the gigabytes, with no verdict –
+                // and seven went through 7⁷ points.
+                match linear_core(&f, field, generators.clone()) {
+                    FrontResult::Inconsistent(core, certificate) => {
+                        return FfOutcome::Unsat(FfCore {
+                            fact_indices: core.into_iter().collect(),
+                            certificate,
+                        });
+                    }
+                    FrontResult::Rewritten(rows, _) => {
+                        if let Some(model) = linear_point(&f, &enc, &vars, &rows, &generators) {
+                            return FfOutcome::Model(model);
+                        }
                     }
                 }
-                match enumerate(manager, field, &modulus, &vars, assertions, budget_steps) {
-                    outcome @ (FfOutcome::Model(_)
-                    | FfOutcome::Unsat(_)
-                    | FfOutcome::OutOfBudget { .. }
-                    | FfOutcome::InvalidModel(_)) => outcome,
-                    FfOutcome::Exhausted { .. } => FfOutcome::Exhausted { certificate: None },
+            } else if bits <= 22 {
+                // The linear core runs even on enumeration-eligible goals:
+                // an inconsistent linear system is refuted in one pass WITH
+                // a checkable certificate, where the exhaustive search has
+                // none – certified mode would otherwise decline every
+                // tiny-field UNSAT (the F_3..F_13 goals).
+                if let FrontResult::Inconsistent(core, certificate) =
+                    linear_core(&f, field, generators)
+                {
+                    return FfOutcome::Unsat(FfCore {
+                        fact_indices: core.into_iter().collect(),
+                        certificate,
+                    });
                 }
-            } else {
-                let Ok(f) = FieldCtx::new(modulus) else {
-                    return FfOutcome::InvalidModel(
-                        "even modulus with too many variables for enumeration".to_string(),
-                    );
-                };
-                grobner_path(manager, field, &f, assertions, budget_steps)
+                return enumerate_outcome(
+                    manager,
+                    field,
+                    &modulus,
+                    &vars,
+                    assertions,
+                    budget_steps,
+                );
+            }
+            // A nonlinear goal beyond the enumeration cap: the cascade,
+            // on the encoding made here (it does not encode again).
+            grobner_path(field, &f, enc, generators, budget_steps)
+        }
+    }
+}
+
+/// The exhaustive search's verdict, in the outcome vocabulary: branch
+/// exhaustion with no certificate is `Exhausted`.
+fn enumerate_outcome(
+    manager: &TermManager,
+    field: FieldId,
+    modulus: &BigUint,
+    vars: &[TermId],
+    assertions: &[TermId],
+    budget_steps: u64,
+) -> FfOutcome {
+    match enumerate(manager, field, modulus, vars, assertions, budget_steps) {
+        outcome @ (FfOutcome::Model(_)
+        | FfOutcome::Unsat(_)
+        | FfOutcome::OutOfBudget { .. }
+        | FfOutcome::InvalidModel(_)) => outcome,
+        FfOutcome::Exhausted { .. } => FfOutcome::Exhausted { certificate: None },
+    }
+}
+
+/// Whether every term of `p` has total degree at most one – the
+/// generators `linear_core` rows and [`linear_point`] reads.
+fn is_linear(p: &MPoly) -> bool {
+    p.terms_iter().all(|(m, _)| m.total_degree() <= 1)
+}
+
+/// The point of a goal whose generators are all linear, once the linear
+/// core has found them consistent.
+///
+/// `rows` is the core's output for such a goal: every generator is a
+/// reduced pivot row `c_p·x_p + Σ c_v·v + c₀` with `x_p` the row's
+/// smallest variable, and no `v` is another row's pivot (the core
+/// eliminated each pivot from every other row). So the variables no row
+/// pivots on are free and take 0, and each pivot reads `−(c₀ + Σ c_v·
+/// value(v)) / c_p`. The reading rests on a check, not on that shape:
+/// the point is evaluated into every ORIGINAL generator as a polynomial
+/// and the model is returned only if all vanish. Every variable of the
+/// goal enters the point explicitly – `MPoly::eval_all` reads a variable
+/// missing from the assignment as 1, not 0.
+///
+/// The model gives each field-sorted term of the goal its variable's
+/// value; the encoder's disequality witnesses and bitsum sums are not
+/// terms and stay out, as in every model here. Compound terms are not in
+/// it either: the validator folds them from their parts.
+fn linear_point(
+    f: &FieldCtx,
+    enc: &Encoder,
+    vars: &[TermId],
+    rows: &[FrontGen],
+    originals: &[FrontGen],
+) -> Option<FfModel> {
+    use nixie_math::polynomial::Var;
+    let mut point: FxHashMap<Var, Limbs> = FxHashMap::default();
+    for g in originals {
+        for (m, _) in g.poly.terms_iter() {
+            for vp in m.vars() {
+                point.entry(vp.var).or_insert_with(|| f.zero());
             }
         }
     }
+    let zero = f.zero();
+    for row in rows {
+        let mut terms: Vec<(Var, Limbs)> = Vec::new();
+        let mut constant = zero.clone();
+        for (m, c) in row.poly.terms_iter() {
+            if m.is_unit() {
+                constant = c.clone();
+            } else if m.total_degree() == 1 {
+                terms.push((m.vars()[0].var, c.clone()));
+            } else {
+                return None;
+            }
+        }
+        let pivot = terms.iter().map(|(v, _)| *v).min()?;
+        let mut value = constant;
+        for (v, c) in &terms {
+            if *v != pivot {
+                value = f.add(&value, &f.mul(c, point.get(v).unwrap_or(&zero)));
+            }
+        }
+        value = f.neg(&value);
+        let leading = &terms.iter().find(|(v, _)| *v == pivot)?.1;
+        let inv = f.inv(leading)?;
+        point.insert(pivot, f.mul(&value, &inv));
+    }
+    if originals
+        .iter()
+        .any(|g| !f.is_zero(&g.poly.eval_all(f, &point)))
+    {
+        return None;
+    }
+    let mut model = FfModel {
+        values: FxHashMap::default(),
+    };
+    for (&term, &var) in &enc.var_index {
+        let value = point.get(&var).cloned().unwrap_or_else(|| f.zero());
+        model.insert(term, f.to_biguint(&value));
+    }
+    for &term in vars {
+        if model.value_of(term).is_none() {
+            model.insert(term, BigUint::from(0u8));
+        }
+    }
+    Some(model)
 }
 
 /// Step 1, shared by the decision procedure and certificate
@@ -1232,19 +1370,16 @@ fn window_grobner_basis(
     }
 }
 
-/// The GB + FindZero path (odd primes).
+/// The GB + FindZero path (odd primes), on an encoding the caller has
+/// made ([`encode_generators`]) and found nonlinear: `check_conjunction`
+/// encodes once for the whole decision.
 fn grobner_path(
-    manager: &TermManager,
     field: FieldId,
     f: &FieldCtx,
-    assertions: &[TermId],
+    enc: Encoder<'_>,
+    generators: Vec<FrontGen>,
     budget_steps: u64,
 ) -> FfOutcome {
-    // ======== Step 1: encode (two passes) ========
-    let (enc, generators) = match encode_generators(manager, field, f, assertions, budget_steps) {
-        Ok(x) => x,
-        Err(outcome) => return outcome,
-    };
     if generators.is_empty() {
         let mut model = FfModel {
             values: FxHashMap::default(),

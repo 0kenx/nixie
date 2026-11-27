@@ -668,3 +668,29 @@ fn equalities_between_field_variables_alone_are_decided() {
     "#);
     assert_eq!(out[0], "unsat", "{out:?}");
 }
+
+/// Eight variables pinned to constants – pⁿ > 2²² for 𝔽₇, past the
+/// enumeration cap – used to go to the Gröbner cascade and run for
+/// minutes with no verdict. A goal whose generators are all linear is
+/// decided by the linear core now, at any count: the reduced rows give
+/// the point.
+#[test]
+fn eight_pinned_variables_read_sat() {
+    for n in [8usize, 256] {
+        let mut script = String::from("(set-logic QF_FF)\n");
+        for i in 0..n {
+            script.push_str(&format!("(declare-const x{i} (_ FiniteField 7))\n"));
+        }
+        for i in 0..n {
+            script.push_str(&format!("(assert (= x{i} #f{}m7))\n", i % 7));
+        }
+        script.push_str("(check-sat)\n(get-value (x0 x1))\n");
+        let out = run(&script);
+        assert_eq!(out[0], "sat", "n = {n}: {out:?}");
+        assert!(
+            out[1].contains("#f0m7") && out[1].contains("#f1m7"),
+            "n = {n}: x0 = 0, x1 = 1: {}",
+            out[1]
+        );
+    }
+}

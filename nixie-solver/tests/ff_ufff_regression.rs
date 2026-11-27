@@ -370,3 +370,32 @@ fn verdicts_are_deterministic() {
     assert_eq!(a[0], b[0]);
     assert!(a[0] == "sat" || a[0] == "unsat" || a[0] == "unknown");
 }
+
+/// Four applications of one function, every argument 1 and every result
+/// 0: `unknown` after 6 s before the linear core answered a consistent
+/// system itself. The per-field slice holds the four arguments and the
+/// four applications as eight ring variables – past the enumeration cap
+/// – and the cascade ran out the node budget.
+#[test]
+fn four_applications_of_one_function_with_equal_results_are_sat() {
+    for n in [4usize, 64] {
+        let mut script = String::from(
+            "(set-logic QF_UFFF)\n(declare-fun f ((_ FiniteField 7)) (_ FiniteField 7))\n",
+        );
+        for i in 0..n {
+            script.push_str(&format!("(declare-const x{i} (_ FiniteField 7))\n"));
+        }
+        for i in 0..n {
+            script.push_str(&format!("(assert (= x{i} #f1m7))\n"));
+            script.push_str(&format!("(assert (= (f x{i}) #f0m7))\n"));
+        }
+        script.push_str("(check-sat)\n(get-value (x0 (f x0)))\n");
+        let out = run(&script);
+        assert_eq!(out[0], "sat", "n = {n}: {out:?}");
+        assert!(
+            out[1].contains("#f1m7") && out[1].contains("#f0m7"),
+            "n = {n}: x0 = 1, f(x0) = 0: {}",
+            out[1]
+        );
+    }
+}
