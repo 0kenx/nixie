@@ -1646,6 +1646,21 @@ impl Encoder {
                     .map(|t| Rc::new(Value::Scalar(t)))
                     .ok_or_else(|| EncodeError::Unsupported(format!("`{name}` as a set")))
             }
+            // `x \in SUBSET Int` holds of every set of integers: the type
+            // checker gave `x` a set sort over `Int`, and every member of it
+            // is an integer. Read as a membership in the powerset of a set
+            // to enumerate, it declined as "`Int` used as a value" – which is
+            // what refused `TypeOkay == myVariable \in [P -> SUBSET Int]`
+            // (`FunInInfiniteSubset.tla`). `SUBSET Nat` is not read this
+            // way: its members must also be non-negative, and the set
+            // theory has no "every member" to say it with.
+            Kera::In(a, s) if matches!(s.as_ref(), Kera::Powerset(base) if standard_set(base) == Some("Int")) =>
+            {
+                // Encoded, not skipped: its encoding may record a domain or
+                // a witness that another occurrence reads.
+                let _ = self.go(a, tm)?;
+                scalar(tm.mk_bool(true))
+            }
             // `x \in a..b` is `a <= x /\ x <= b` – Apalache's own rewrite
             // (`ExprOptimizer`), and the difference between a range with a
             // symbolic bound being checkable and not: the arena needs ground

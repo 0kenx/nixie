@@ -326,3 +326,13 @@ fn an_if_over_sets_keeps_each_sides_members_on_its_side() {
     fails(r#"(IF x = 0 THEN 1..2 ELSE 3..5) = {3, 4, 5}"#);
     holds(r#"\A y \in (IF x = 0 THEN 1..2 ELSE 3..5) : y <= 2"#);
 }
+
+/// `x \in SUBSET Int` holds of every set of integers, and is read as
+/// `TRUE` rather than as a membership in a powerset to enumerate – which
+/// declined as "`Int` used as a value" (`FunInInfiniteSubset.tla`'s
+/// `TypeOkay == myVariable \in [P -> SUBSET Int]`).
+#[test]
+fn membership_in_the_powerset_of_the_integers_holds() {
+    holds(r"{1, 2} \in SUBSET Int");
+    holds(r"{} \in SUBSET Int");
+}
