@@ -18,7 +18,9 @@ same run says now:
 | **MISMATCH** | **0** | **0** |
 
 109 verdict agreements against 94; no cell moved from an agreement to a
-decline, an `Unknown` or a mismatch. The 15 cells that moved are listed in
+decline, an `Unknown` or a mismatch. (The second pass, below, continues
+both columns: 129 agreements, OracleFailed 44 – 47 of the 72 above were
+not the oracle's crashes but its usage banner, a harness artifact.) The 15 cells that moved are listed in
 `bench/tla_apalache_parity/METHODOLOGY.md` ("Standing result,
 2026-11-27").
 
@@ -225,7 +227,7 @@ reading.
   `AsyncTerminationDetection.tla` at the type checker, where the baseline
   reaches `undecided`: the over-tight `LET` check of the annotations commit
   ("the shape of `d[2]` is ambiguous"), on a `LET` definition that reads the
-  enclosing operator's parameters. With the fix (`8faa6c12`) the module
+  enclosing operator's parameters. With the fix (`10bf7e56`) the module
   passes the type checker again (`nixie-tla typecheck`: no errors), and its
   corpus re-run was still inside the solver when this was written – one
   process, 70 minutes in, on a machine at load 30–60. The six other modules
@@ -249,23 +251,185 @@ reading.
   suite timeout (`a_pluscal_bound_the_spec_cannot_exceed_holds`, 600 s)
   times out the same on untouched `main` under the same load.
 
-## Remaining, by size
+## Second pass (the same day): the next tier
+
+Seven commits on top of the first pass's, each a class the declined list
+names:
+
+* **Dead code, two items** (`theories, sat`): `attach_definition_truths_to`
+  is called from `nlsat` alone and that module is behind a feature the TLA
+  crates' dependency edge does not enable; `set_last_blocker` is
+  `cfg(test)`-only and its one user is a test module behind `bcp-work`.
+  Both carry their users' `cfg` now – nothing deleted, and
+  `cargo check --workspace --all-targets` under the default features
+  reports no dead code.
+* **An operator constant substituted by an operator through `INSTANCE`**
+  (`ConstantOperatorImpl`, a cell whose real oracle answer the re-run gave
+  the first pass: `NoError`). `WITH AreGood <- Equal` made every
+  `AreGood(a, b)` inside the module an opaque constant. An instance context
+  carries operator substitutions beside value ones now; a defined operator,
+  an operator parameter or a `LAMBDA`, at the declared arity.
+* **`\E delta \in Nat \ {0}`** (`FoldExcept.tla`, two cells) is
+  skolemized as `\E delta \in Nat` is, and – the half the first test
+  found, with its invariants accidentally the wrong way round – the
+  **replay** reads the witness's membership structurally too: a correct
+  counterexample came back `Unknown` while the evaluator tried to
+  materialise `Nat \ {0}`. Both cells: declined for `Nat` as a value, now
+  encoded and `Unknown` on the 6-step query.
+* **`2^100`** (a ground base and exponent) is one literal, the
+  evaluator's own; `2^256` (`SafeMath`, two cells) stays declined with a
+  truer reason: the replay's integers are 128-bit. Arbitrary-precision
+  replay is the piece those two need.
+* **`x \in SUBSET Int`** is `TRUE` (`FunInInfiniteSubset`: `NoError`, as
+  the oracle).
+* **A fold whose step writes the accumulator at the element's own key**
+  (`![p, q]` with `p == pair[1]`, `q == pair[2]` over `Proc \X Proc`) is
+  order-free, as the single-key form already was (`MC_FoldExcept3`, two
+  cells: declined for a "non-commutative" fold, now `Unknown` on the 6-step
+  query). A key naming only some components still declines.
+* **A record written `[a: Int, b: Str]`** in a type annotation –
+  Apalache's second spelling of one, which the reader lacked; found by
+  the corpus A/B below, the one module that moved backwards.
+* **An `INSTANCE` of a built-in module** (`INSTANCE Apalache`, `LOCAL
+  INSTANCE Bags` inside the community `BagsExt`) resolves its members by
+  name instead of refusing the specification. The two cells move on to what
+  the community modules themselves lack: `SortSeq` has no TLA+ definition
+  (TLC implements it in Java, Apalache's `__rewire_sequences_ext_in_apalache`
+  defines it). The drop-in needs the oracle's rewire modules.
+
+### Parity after the second pass
+
+The same harness, four shards, on a machine at load 40–85:
+
+| class | first pass | second pass |
+|---|---:|---:|
+| Agree-Ok | 75 | **88** |
+| Agree-Violation | 26 | 27 |
+| Agree-Violation-Shorter | 5 | 5 |
+| Agree-Refused | 3 | 9 |
+| Declined | 43 | 45 |
+| Inconclusive | 31 | 37 |
+| OracleFailed | 72 | **44** |
+| **MISMATCH** | **0** | **0** |
+
+129 verdict agreements against 109. **No cell moved backwards.** And most
+of the movement is the oracle's, not Nixie's – the finding of this pass:
+
+#### 47 stored oracle answers were the oracle's usage banner
+
+The worktree for this pass was created without the symlink to the oracle's
+store, so the harness – believing the store empty – re-ran the oracle on
+every cell, against its own rule. Reading the fresh answers against the
+stored ones: on the 204 cells whose stored answer was a real verdict they
+were identical, cell for cell. On 47 the stored answer was not a verdict
+at all but `apalache-mc [options] command …`, exit 1: the CLI refusing a
+malformed argv, printed when those cells were first run under the two
+harness bugs fixed on 2026-11-26 (an empty options field collapsing so
+that the exit code landed in the spec's place; a multi-option cell
+misread). The fix corrected every later invocation, but a stored answer is
+never re-run, and the exception the methodology makes for "a cell the
+harness kept the oracle from running" had been applied to one cell only.
+For a day the tables said "OracleFailed (72): unchanged in nature – the
+oracle's crash on its own cells", and nobody had opened the files.
+
+Given a real question, the oracle answers `NoError` on 19 of the 47,
+`Error` on 3, refuses 14, and crashes on 11 (the genuine count). Against
+those 47: Agree-Ok 11, Agree-Violation 1, Agree-Refused 6, Inconclusive 4,
+Declined 6, OracleFailed 19. The 47 old entries sit beside the first pass's
+eight in `tla_parity_artifacts_20261127`; the store holds the fixed
+harness's answers.
+
+A smaller lesson from the same run: the binary was rebuilt into the
+harness's path while four shards were spawning it, and the five cells
+whose Nixie lasso is one step shorter than the oracle's lost that lasso
+line and were counted plain `Agree-Violation`; re-run clean, they are
+`Agree-Violation-Shorter` again.
+
+### Gates (second pass)
+
+* Workspace `cargo clippy --all-features --all-targets -- -D warnings`,
+  `cargo fmt --all -- --check`, `cargo doc --no-deps --all-features`: clean;
+  `cargo check --workspace --all-targets` under the default features: no
+  dead code.
+* TLA crates, 721 tests: **720 pass**, 1 times out (the same PlusCal check),
+  1 skipped.
+* New tests: `instance` (+2), `skolem`, `encode` (`2^100`),
+  `functions` (`SUBSET Int`), `folds` (the tuple key, with a control).
+### Corpus A/B (second pass)
+
+The same recipe and the same baseline logs as the first pass's (`main` @
+`9b3982d7`, reproducing 81 / 21 / 7 / 58 / 275 / 465), both passes over
+the 907 modules:
+
+| | no-violation | violation | deadlock | undecided | blocked | skipped |
+|---|---:|---:|---:|---:|---:|---:|
+| baseline | 81 | 21 | 7 | 58 | 275 | 465 |
+| both passes | **84** | 21 | 7 | 58 | **271** | 465 |
+
+* The first pass's two (`TestAnnotations` clean, `Test1182` `undecided`),
+  this pass's `ConstantOperatorImpl`, and `tlaplus-examples`'
+  `TwoPhase/MCTwoPhase.tla`: `INSTANCE TwoPhase`, with `TwoPhase`'s
+  `CONSTANT XInit(_), XAct(_, _, _)` substituted implicitly by the
+  same-named operators – "does not lower to the kernel" before, checked
+  clean now.
+* **Zero verdict regressions – after one was found and fixed.** The first
+  binary of this pass failed `ewd998/AsyncTerminationDetection.tla`'s type
+  checker: its alias is a record written `[ … ]`, a spelling the
+  annotation reader did not have, and the first pass had just made an
+  unparseable alias a reported error (as Apalache does). Read now
+  (the commit that reads it – "a record in a type annotation may be written
+  `[a: Int, b: Str]`"); the module type-checks and lowers again, and its class
+  under the harness is `undecided` once more, as on the baseline (re-run
+  with the final binary, 200 s). The table above counts it so.
+* Eight `blocked` modules state a later refusal than before – an annotation
+  read, an operator substituted – all within `blocked`.
+
+### What the "single value is needed" cells are
+
+Six cells – `pr.tla`, `Test1226`, `Paxos`'s `Inv`, `TestBags`, `Bug540`,
+`MC_LamportMutexTyped` – refuse with "a set / a function where a single
+value is needed", and they are one feature: a function appearing **as a
+value inside another structure**. `\E po \in [Nodes -> [Nodes ->
+BOOLEAN]]` quantifies over a function set; `SetAsFun({<<SetAsFun(…), "x">>})`
+and `BagUnion({A1, A2})` put functions in tuples and sets. A function is a
+domain and a graph here, so it has no one term; giving it one (a datatype
+pair, read back through selectors, with `eq_values`' extensional equality
+kept) is an encoder change of its own, not a reading to add.
+
+### `Gen`: the recipe, not the change
+
+`Gen(n)` is three cells (`Bug2973` ×2, `Bug3158`). The oracle's `GenRule`
+generates an arbitrary value of the result type within a size bound: for a
+scalar exactly a fresh constant, which would be sound and exact here; for
+sets and functions the bound is part of the meaning, and an unconstrained
+set or array over-approximates it. A scalar-only rule needs the node's
+inferred type, so it belongs after inference (rewrite `Opaque("Gen", [n])`
+of scalar type to a fresh free constant there); compound types keep
+declining by name.
+
+## Remaining, by size (after both passes)
 
 * **#20's heartland** – 9 cells "a set-valued term with no candidate list to
-  enumerate" (`SUBSET (1..N)` as a quantifier's domain, `\E x \in v`) and 6
-  "a set / a function where a single value is needed" (the candidate
-  representation under a place that needs one term).
-* **Solver capacity** – the 31 `Inconclusive`: `HandshakeWithTypes`, the
-  `y2k`/TwoPhase/ERC20 family at length, `Invariants` (4, `Unknown` at the
-  0-step query), `FunExcept`, `PickPerf`; #50's integer witnesses, #29's
-  four `Range` cells.
+  enumerate" (`SUBSET (1..N)` as a quantifier's domain, `\E x \in v`,
+  `letpoly`) and 6 "a set / a function where a single value is needed":
+  functions as values inside other structures (above).
+* **Solver capacity** – the 37 `Inconclusive`: `HandshakeWithTypes` ×5,
+  `Invariants` ×4 (`Unknown` at the 0-step query), `y2k_instance` ×2,
+  `NoLoopsNoProblems` ×2 (the `Range` family #29 records), `MC_FoldExcept3`
+  ×2, `FunExcept` ×3, `PickPerf` ×2, and one each on eleven others; #50's
+  integer witnesses.
+* **The oracle's rewire modules** – the community modules' TLC-overridden
+  operators (`SortSeq`, …) have no TLA+ definition; Apalache ships
+  `__rewire_*_in_apalache` with them defined and annotated. `TestSequencesExt`,
+  `TestBagsExt`, `TestFiniteSetsExt`, `TestSequences` (`\o` with a symbolic
+  right side), and `TestCommunityFunctions`' type mismatch all wait on it.
 * **Features, one cell or two each:** trace invariants (`Invariants.tla`),
-  `INSTANCE` of a built-in module (`TestSequencesExt`), an operator
-  substituted through `INSTANCE` (`ConstantOperatorImpl`'s `AreGood`),
-  `Int`/`Nat` as a value (4, #22), `^` with a large or symbolic exponent (3),
-  a bare `LAMBDA` (2), `[S -> T]` as a value, `BagAdd`, `\o` with a symbolic
-  right side.
-* **`TestCommunityFunctions`** – a type mismatch (`Str` and `Int`) in the
-  community `Functions` module, not yet run down.
+  `Int` as a function domain (`InfDomFun`: `[i \in Int |-> 0]`), `Gen` (3,
+  the recipe above), `^` with a result past 128 bits (`SafeMath` ×2:
+  arbitrary-precision replay) or a symbolic exponent (`Bug1136`), a bare
+  `LAMBDA` in the community folds, `[S -> T]` as a value (`OracleFunSet`,
+  `test1`, `EmptyFunctionSet`, `Bug2772`), `$CaseNoMatch`, `BagAdd`.
+* **Deliberate:** recursion and self-reference (6 cells), a non-AC fold with
+  a non-injective key, `--timeout-smt`.
 * **#48** unbounded liveness, **#50**, **#51** (a decision), **#30**
   (deferred by design): untouched.
