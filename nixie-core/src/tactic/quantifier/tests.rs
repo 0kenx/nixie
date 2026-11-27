@@ -834,3 +834,189 @@ fn quantifier_instantiation_handles_a_shared_dag_quickly() {
         "shared-DAG traversal must not re-expand exponentially"
     );
 }
+
+/// The retired collector, kept as the oracle: the scope- and pattern-aware
+/// query run over every subterm on its own, in `collect_subterms`' order,
+/// with the same skips and the same cross-call deduplication.  Returns every
+/// sort's candidate list in order.
+fn per_subterm_query_candidates(
+    assertions: &[TermId],
+    manager: &TermManager,
+) -> rustc_hash::FxHashMap<SortId, Vec<TermId>> {
+    let mut lists: rustc_hash::FxHashMap<SortId, Vec<TermId>> = rustc_hash::FxHashMap::default();
+    let mut all: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+    for &assertion in assertions {
+        for subterm in crate::ast::traversal::collect_subterms(assertion, manager) {
+            if all.contains(&subterm) || !manager.free_vars_including_patterns(subterm).is_empty() {
+                continue;
+            }
+            let Some(term) = manager.get(subterm) else {
+                continue;
+            };
+            match &term.kind {
+                TermKind::True
+                | TermKind::False
+                | TermKind::Forall { .. }
+                | TermKind::Exists { .. } => continue,
+                _ => {}
+            }
+            all.insert(subterm);
+            lists.entry(term.sort).or_default().push(subterm);
+        }
+    }
+    lists
+}
+
+/// The collector answers per subterm what the per-subterm query answered –
+/// same candidates, same order, for every sort – while reading a subterm's
+/// groundness off its children's.  The terms cover each binding form (a
+/// `Forall` whose trigger binds nothing free and one whose trigger leaks a
+/// free variable, a closed and an open `let`, a closed and an open `match`),
+/// shared subterms, variables and literals, and a term already collected by
+/// an earlier `collect` call.
+#[test]
+fn ground_term_collector_matches_the_per_subterm_query() {
+    use crate::ast::MatchCase;
+    let mut m = setup_manager();
+    let int = m.sorts.int_sort;
+    let bool_sort = m.sorts.bool_sort;
+
+    let x = m.mk_var("x", int);
+    let y = m.mk_var("y", int);
+    let a = m.mk_var("a", int);
+    let v = m.mk_var("v", int);
+    let one = m.mk_int(1);
+    let two = m.mk_int(2);
+    let f1 = m.mk_apply("f", [one], int);
+    let fx = m.mk_apply("f", [x], int);
+    let sum = m.mk_add([f1, two]);
+    let open = m.mk_add([x, one]);
+    let g_f1_f1 = m.mk_apply("g", [f1, f1], int);
+    let shared = m.mk_eq(g_f1_f1, f1);
+    let g_open = m.mk_apply("g", [x, one], int);
+    let p_fx = m.mk_apply("P", [fx], bool_sort);
+    let closed_quant = m.mk_forall_with_patterns([("x", int)], p_fx, [[fx]]);
+    let gxy = m.mk_apply("g", [x, y], int);
+    let q_x = m.mk_apply("Q", [x], bool_sort);
+    let leaking_quant = m.mk_forall_with_patterns([("x", int)], q_x, [[gxy]]);
+    let a_plus_a = m.mk_add([a, a]);
+    let let_closed = m.mk_let([("a", one)], a_plus_a);
+    let let_open = m.mk_let([("a", x)], a_plus_a);
+    let cases: SmallVec<[MatchCase; 4]> = [
+        MatchCase {
+            constructor: None,
+            bindings: SmallVec::new(),
+            body: two,
+        },
+        MatchCase {
+            constructor: Some(m.intern_str("succ")),
+            bindings: [m.intern_str("v")].into_iter().collect(),
+            body: m.mk_add([v, one]),
+        },
+    ]
+    .into_iter()
+    .collect();
+    let match_closed = m.intern(
+        TermKind::Match {
+            scrutinee: f1,
+            cases: cases.clone(),
+        },
+        int,
+    );
+    let match_open = m.intern(
+        TermKind::Match {
+            scrutinee: x,
+            cases,
+        },
+        int,
+    );
+    let y_eq_f1 = m.mk_eq(y, f1);
+    let exists = m.mk_exists([("y", int)], y_eq_f1);
+
+    // Ordinary operators over the two quantifiers: their groundness is the
+    // quantifier's, read out of the memo.
+    let wraps_closed = m.mk_not(closed_quant);
+    let wraps_leaking = m.mk_not(leaking_quant);
+
+    let assertions = vec![
+        sum,
+        open,
+        shared,
+        g_open,
+        closed_quant,
+        leaking_quant,
+        wraps_closed,
+        wraps_leaking,
+        let_closed,
+        let_open,
+        match_closed,
+        match_open,
+        exists,
+        x,
+        one,
+        f1,
+        y,
+        m.mk_true(),
+        two,
+    ];
+    let expected = per_subterm_query_candidates(&assertions, &m);
+    assert!(expected.len() >= 2, "both sorts have candidates");
+    // The oracle itself: a closed binder is a candidate (only quantifiers
+    // are skipped, by kind), an open one is not; and a quantifier's
+    // groundness shows only through an operator over it.
+    let ints = |t: &TermId| expected.get(&int).is_some_and(|l| l.contains(t));
+    let bools = |t: &TermId| expected.get(&bool_sort).is_some_and(|l| l.contains(t));
+    for ground in [&let_closed, &match_closed, &sum, &g_f1_f1, &f1, &one, &two] {
+        assert!(
+            ints(ground),
+            "{ground:?} is a ground Int candidate: {expected:?}"
+        );
+    }
+    for open in [&let_open, &match_open, &a_plus_a, &x, &y] {
+        assert!(!ints(open), "{open:?} must not be a candidate");
+    }
+    assert!(
+        bools(&shared),
+        "the equality over ground terms is a ground Bool candidate: {expected:?}"
+    );
+    assert!(bools(&wraps_closed), "{expected:?}");
+    assert!(!bools(&wraps_leaking), "{expected:?}");
+    assert!(
+        !ints(&closed_quant) && !bools(&closed_quant),
+        "skipped by kind"
+    );
+
+    let mut per_call = GroundTermCollector::new();
+    for &assertion in &assertions {
+        per_call.collect(assertion, &m);
+    }
+    let mut from_goal = GroundTermCollector::new();
+    from_goal.collect_from_goal(&Goal::new(assertions.clone()), &m);
+    for collector in [&per_call, &from_goal] {
+        let sorts: rustc_hash::FxHashSet<SortId> = collector.sorts().copied().collect();
+        assert_eq!(sorts, expected.keys().copied().collect());
+        for (sort, list) in &expected {
+            assert_eq!(collector.get_terms(*sort), list.as_slice(), "sort {sort:?}");
+        }
+        assert_eq!(
+            collector.len(),
+            expected.values().map(Vec::len).sum::<usize>()
+        );
+    }
+
+    // `clear` forgets the memo with the lists: a collector reused on the same
+    // terms collects them again, in the same order.
+    let mut reused = per_call;
+    reused.clear();
+    assert!(reused.is_empty());
+    for &assertion in &assertions {
+        reused.collect(assertion, &m);
+    }
+    for (sort, list) in &expected {
+        assert_eq!(
+            reused.get_terms(*sort),
+            list.as_slice(),
+            "after clear, sort {sort:?}"
+        );
+    }
+}
