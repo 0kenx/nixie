@@ -399,7 +399,7 @@ snapshot with `class_members` for every node of a merged E-graph; the three
   constants (`x_i = #f1m7`, `v_i = #f0m7`): n = 3 `sat` in 5 ms (6
   variables, enumerated); **n = 4 – eight variables, 24 bits – no verdict
   in 60 s**. A model of a consistent linear core would answer each in one
-  pass.
+  pass – and does, the same day: `2026-11-27-ff-linear-core-point.md`.
 * **`QF_UFFF` with four applications of one function answers `unknown` in
   6 s** (five: 17 s; 200: 22 s), three in 17 ms, on the base and the
   candidate alike. Evidently the same cause – not traced: the per-field
