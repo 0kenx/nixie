@@ -113,6 +113,13 @@ struct InstanceCtx<'a> {
     subst: HashMap<String, KeraRef>,
 }
 
+/// What a `LET`'s definitions shadowed – each name's previous binding, in
+/// the order they were entered – for [`Lowerer::exit_let`] to restore.
+type LetScope<'a> = (
+    Vec<(String, Option<Def<'a>>)>,
+    Vec<(String, Option<Instantiation<'a>>)>,
+);
+
 /// A user operator definition available for inlining.
 #[derive(Debug, Clone)]
 struct Def<'a> {
@@ -1120,6 +1127,17 @@ pub struct Lowerer<'a> {
     /// `RECURSIVE` keyword. Expanding it reproduces the body inside itself and
     /// the only thing that stops is the lowering budget.
     recursing: std::collections::HashSet<String>,
+    /// The zero-argument `LET` definitions in scope, during the temporal
+    /// walk, whose bodies are temporal-level themselves: the level report
+    /// knows module-level names only, so `LET T == [](x < 2) IN T /\ …`
+    /// would read `T` as a state-level leaf and lower its body by the
+    /// ordinary path, where `[]` has no kernel form.
+    let_temporal: std::collections::HashSet<String>,
+    /// Whether a subscripted action lowers to a **step term** – set only
+    /// while the temporal walk lowers an action-level operand of `[]`/`<>`
+    /// ([`Self::lower_action_leaf`]). Everywhere else `[A]_v` is refused:
+    /// an action is spec structure, not a kernel expression.
+    action_leaves: bool,
     scopes: Vec<HashMap<String, Binding<'a>>>,
     /// Binder names chosen during `expand`, keyed by the surface node's start
     /// offset so that `build` can recover them. The walk visits each node's
@@ -1341,6 +1359,8 @@ impl<'a> Lowerer<'a> {
             ctx: Vec::new(),
             funs: HashMap::new(),
             recursing: std::collections::HashSet::new(),
+            let_temporal: std::collections::HashSet::new(),
+            action_leaves: false,
             scopes: Vec::new(),
             binder_names: HashMap::new(),
             cache: HashMap::new(),
@@ -1942,12 +1962,79 @@ impl<'a> Lowerer<'a> {
             return self.temporal_walk(inner, levels, span);
         }
         match &expr.kind {
-            ExprKind::Prefix { op, operand, .. } if op == "[]" => Ok(Temporal::Always(Box::new(
-                self.temporal_walk(operand, levels, span)?,
-            ))),
-            ExprKind::Prefix { op, operand, .. } if op == "<>" => Ok(Temporal::Eventually(
-                Box::new(self.temporal_walk(operand, levels, span)?),
-            )),
+            ExprKind::Prefix { op, operand, .. } if op == "[]" || op == "<>" => {
+                let inner = Self::transparent(operand);
+                // An **action-level** operand with no temporal operator
+                // inside is one leaf, read on each step: `<>(<<x' = x + 1>>_x)`,
+                // `<>[]([x' = x + 1]_x)` (`TemporalPropsOverActions.tla`).
+                // The tableau states a box/diamond node's equations in
+                // `Next` alone, on the current state and the next one, which
+                // is exactly where an action means anything – the reading
+                // Apalache's `TableauEncoder` gives the actions it finds
+                // here. Deeper than that, under a propositional node, an
+                // action leaf would reach an `Init` equation, where a prime
+                // means nothing: refused by name below.
+                let arg = if !self.is_temporal_kind(inner, levels, false)
+                    && Self::has_prime_or_action(inner)
+                {
+                    Temporal::Node(self.lower_action_leaf(inner)?)
+                } else {
+                    self.temporal_walk(inner, levels, span)?
+                };
+                Ok(if op == "[]" {
+                    Temporal::Always(Box::new(arg))
+                } else {
+                    Temporal::Eventually(Box::new(arg))
+                })
+            }
+            // `A /\ B` and `A \/ B` with a temporal operand are
+            // propositional tableau nodes over their operands' nodes
+            // (`NestedTemporalInBool.tla`: `[](y < 1 \/ <>(y = 1))`, and
+            // `x = 0 /\ []TRUE` in `NoTemporalOperatorsInTemporalProp`). The
+            // parser delivers these connectives as infix operators; only a
+            // bulleted list was read before.
+            ExprKind::Infix { op, lhs, rhs, .. }
+                if matches!(op.as_str(), "/\\" | "\\/")
+                    && (self.is_temporal(lhs, levels) || self.is_temporal(rhs, levels)) =>
+            {
+                let l = Box::new(self.temporal_walk(lhs, levels, span)?);
+                let r = Box::new(self.temporal_walk(rhs, levels, span)?);
+                Ok(if op == "/\\" {
+                    Temporal::And(l, r)
+                } else {
+                    Temporal::Or(l, r)
+                })
+            }
+            // A `LET` around the temporal structure (`LetIn.tla` writes
+            // `LET Plus(a, b) == a + b IN LET var1 == x IN []<>(…)`): its
+            // definitions are in scope for the state-level leaves below, as
+            // they are for an ordinary lowering. Apalache's inliner removes
+            // every `LET` before its temporal pass sees the formula.
+            ExprKind::Let { defs, body } => {
+                let (saved, saved_insts) = self.enter_let(defs)?;
+                // Which of the definitions are temporal-level themselves – a
+                // zero-argument operator whose body is – so a use of it in
+                // the body is expanded rather than lowered as a leaf. In
+                // source order, so a definition may name an earlier one.
+                let mut temporal_defs: Vec<String> = Vec::new();
+                for d in defs {
+                    if let nixie_tla_syntax::UnitKind::OpDef {
+                        name, params, body, ..
+                    } = &d.kind
+                        && params.is_empty()
+                        && self.is_temporal(body, levels)
+                    {
+                        self.let_temporal.insert(name.name.clone());
+                        temporal_defs.push(name.name.clone());
+                    }
+                }
+                let out = self.temporal_walk(body, levels, span);
+                for name in temporal_defs {
+                    self.let_temporal.remove(&name);
+                }
+                self.exit_let((saved, saved_insts));
+                out
+            }
             ExprKind::Prefix { op, operand, .. } if op == "~" => {
                 // `~` is propositional only if its operand is temporal; a
                 // state-level `~P` is a leaf.
@@ -2030,32 +2117,44 @@ impl<'a> Lowerer<'a> {
                     unreachable!("matched Name above");
                 };
                 let name = q.path.last().map_or(String::new(), |i| i.name.clone());
-                let body = self
-                    .lower_module
-                    .ok_or_else(|| {
-                        LowerError::unsupported(
-                            &format!("`{name}`"),
-                            "a temporal-level name with no module to resolve against",
-                            span,
-                        )
-                    })?
-                    .units
-                    .iter()
-                    .find_map(|u| match &u.kind {
-                        nixie_tla_syntax::UnitKind::OpDef { name: n, body, .. }
-                            if n.name == name =>
-                        {
-                            Some(body)
-                        }
-                        _ => None,
-                    })
-                    .ok_or_else(|| {
-                        LowerError::unsupported(
-                            &format!("`{name}`"),
-                            "a temporal-level name with no operator definition in this module",
-                            span,
-                        )
-                    })?;
+                // A `LET`-bound definition of that name is in scope first
+                // (`LET T == [](…) IN T /\ P`), as it is for an ordinary
+                // lowering; then the module's own.
+                let scoped = self
+                    .defs
+                    .get(&name)
+                    .filter(|d| d.params.is_empty())
+                    .map(|d| d.body);
+                let body = match scoped {
+                    Some(body) => body,
+                    None => {
+                        self.lower_module
+                            .ok_or_else(|| {
+                                LowerError::unsupported(
+                                    &format!("`{name}`"),
+                                    "a temporal-level name with no module to resolve against",
+                                    span,
+                                )
+                            })?
+                            .units
+                            .iter()
+                            .find_map(|u| match &u.kind {
+                                nixie_tla_syntax::UnitKind::OpDef { name: n, body, .. }
+                                    if n.name == name =>
+                                {
+                                    Some(body)
+                                }
+                                _ => None,
+                            })
+                            .ok_or_else(|| {
+                                LowerError::unsupported(
+                                    &format!("`{name}`"),
+                                    "a temporal-level name with no operator definition in this                                      module",
+                                    span,
+                                )
+                            })?
+                    }
+                };
                 self.temporal_walk(body, levels, span)
             }
             ExprKind::Fairness { .. } => refuse(
@@ -2094,6 +2193,49 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// An expression without its parentheses and labels.
+    fn transparent(mut e: &'a Expr) -> &'a Expr {
+        while let ExprKind::Paren(inner) | ExprKind::Label { body: inner, .. } = &e.kind {
+            e = inner;
+        }
+        e
+    }
+
+    /// Lower an action-level operand of `[]`/`<>` as one leaf: the ordinary
+    /// lowering, with `[A]_v` and `<<A>>_v` read as step terms for this one
+    /// expression (`action_leaves`).
+    fn lower_action_leaf(&mut self, expr: &'a Expr) -> Result<KeraRef> {
+        self.action_leaves = true;
+        let out = self.lower(expr);
+        self.action_leaves = false;
+        out
+    }
+
+    /// `UNCHANGED v` as a step term: componentwise for a tuple, as
+    /// `UNCHANGED <<a, b>>` is.
+    fn step_unchanged(subscript: &KeraRef) -> KeraRef {
+        let same = |x: &KeraRef| Kera::Eq(Kera::Prime(Rc::clone(x)).rc(), Rc::clone(x)).rc();
+        if let Kera::Tuple(items) = subscript.as_ref() {
+            return Kera::And(items.iter().map(same).collect()).rc();
+        }
+        same(subscript)
+    }
+
+    /// `v' # v` as a step term: for a tuple, **some** component changes –
+    /// the exact negation of [`Self::step_unchanged`], as `<<A>>_<<a, b>>`
+    /// is `A /\ (a' # a \/ b' # b)`, not `A /\ a' # a /\ b' # b`.
+    fn step_changed(subscript: &KeraRef) -> KeraRef {
+        if let Kera::Tuple(items) = subscript.as_ref() {
+            return Kera::Or(items.iter().map(Self::differs).collect()).rc();
+        }
+        Self::differs(subscript)
+    }
+
+    /// `x' # x`.
+    fn differs(x: &KeraRef) -> KeraRef {
+        Kera::Not(Kera::Eq(Kera::Prime(Rc::clone(x)).rc(), Rc::clone(x)).rc()).rc()
+    }
+
     /// Whether a state-level leaf hides a prime, an `ENABLED`, a
     /// subscripted action or a fairness construct below an ordinary
     /// operator – `~(x' = x)`, `x' + 1 > y`, `ENABLED A`. Explicit-stack.
@@ -2115,8 +2257,22 @@ impl<'a> Lowerer<'a> {
     /// resolved is **not** temporal – the leaf then lowers, and the lowering
     /// refuses what it cannot do, by name.
     ///
-    /// Explicit-stack: the expression is user-written and arbitrarily deep.
+    /// [`Self::is_temporal`] is this with an **action** counted as not
+    /// state-level, which is how a parent node decides that it needs a
+    /// tableau node; with `actions` false an action is action-level, one
+    /// level below temporal, and a box's or a diamond's action operand is a
+    /// leaf of the tableau rather than a node there is no rule for.
     fn is_temporal(&self, expr: &Expr, levels: &nixie_tla_syntax::LevelReport) -> bool {
+        self.is_temporal_kind(expr, levels, true)
+    }
+
+    /// [`Self::is_temporal`] with the action reading chosen by `actions`.
+    fn is_temporal_kind(
+        &self,
+        expr: &Expr,
+        levels: &nixie_tla_syntax::LevelReport,
+        actions: bool,
+    ) -> bool {
         use nixie_tla_syntax::{ExprKind, Level};
         let mut work = vec![expr];
         while let Some(e) = work.pop() {
@@ -2134,6 +2290,7 @@ impl<'a> Lowerer<'a> {
                     work.push(lhs);
                     work.push(rhs);
                 }
+                ExprKind::Action { .. } if !actions => {}
                 ExprKind::Fairness { .. }
                 | ExprKind::Action { .. }
                 | ExprKind::UnboundedQuant { .. } => {
@@ -2141,7 +2298,9 @@ impl<'a> Lowerer<'a> {
                 }
                 ExprKind::Name(q) => {
                     let name = q.path.last().map_or(String::new(), |i| i.name.clone());
-                    if levels.level_of(&name) == Some(Level::Temporal) {
+                    if levels.level_of(&name) == Some(Level::Temporal)
+                        || self.let_temporal.contains(&name)
+                    {
                         return true;
                     }
                 }
@@ -2867,27 +3026,7 @@ impl<'a> Lowerer<'a> {
                     self.scopes.pop();
                 }
                 Frame::PopLetDefs(saved_defs, saved_insts) => {
-                    for (name, prev) in saved_defs {
-                        match prev {
-                            Some(d) => {
-                                self.defs.insert(name, d);
-                            }
-                            None => {
-                                self.defs.remove(&name);
-                                self.funs.remove(&name);
-                            }
-                        }
-                    }
-                    for (name, prev) in saved_insts {
-                        match prev {
-                            Some(i) => {
-                                self.instances.insert(name, i);
-                            }
-                            None => {
-                                self.instances.remove(&name);
-                            }
-                        }
-                    }
+                    self.exit_let((saved_defs, saved_insts))
                 }
                 // `f[x \in S] == e` at a use site: it denotes a *value*, so
                 // it expands as `[x \in S |-> e]`.
@@ -3863,6 +4002,134 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
+    /// Make a `LET`'s definitions visible for the body that follows –
+    /// operators, functions and named instances, each shadowing what it
+    /// shadows – and return what [`Self::exit_let`] restores afterwards.
+    fn enter_let(&mut self, defs: &'a [nixie_tla_syntax::ast::Unit]) -> Result<LetScope<'a>> {
+        let mut saved: Vec<(String, Option<Def<'a>>)> = Vec::new();
+        let mut saved_insts: Vec<(String, Option<Instantiation<'a>>)> = Vec::new();
+        for d in defs {
+            match &d.kind {
+                UnitKind::OpDef {
+                    name, params, body, ..
+                } => {
+                    let def = Def {
+                        params: params
+                            .iter()
+                            .map(|p| (p.name.name.clone(), p.arity))
+                            .collect(),
+                        body,
+                        cacheable: false,
+                    };
+                    saved.push((name.name.clone(), self.defs.insert(name.name.clone(), def)));
+                }
+                UnitKind::FnDef {
+                    name, bounds, body, ..
+                } => {
+                    self.funs
+                        .insert(name.name.clone(), (bounds.as_slice(), body));
+                    saved.push((name.name.clone(), None));
+                }
+                // `LET M == INSTANCE A [WITH …] IN …`: the instance is
+                // scoped exactly like the definitions around it –
+                // visible in the `IN` body, restored afterwards, and
+                // shadowing a module-level instance of the same name
+                // for that extent. test59.tla's `Next` is the case.
+                UnitKind::ModuleDef {
+                    name,
+                    params,
+                    instance,
+                    ..
+                } => {
+                    let Some(target) = self.modules.get(&instance.module.name).copied() else {
+                        return Err(LowerError::unsupported(
+                            &format!("`{}`!…", name.name),
+                            &format!(
+                                "the instantiated module `{}` was not found on the \
+                                     search path",
+                                instance.module.name
+                            ),
+                            d.span,
+                        ));
+                    };
+                    let inst = Instantiation {
+                        module: target,
+                        // The declaring scope is the module the walk
+                        // is inside (or an instance member of it);
+                        // recorded at use time, not here, because at
+                        // this point only the frames know.
+                        source: None,
+                        with: instance
+                            .substitutions
+                            .iter()
+                            .map(|(n, e)| (n.name.clone(), e))
+                            .collect(),
+                        params: params.iter().map(|p| p.name.name.clone()).collect(),
+                    };
+                    saved_insts.push((
+                        name.name.clone(),
+                        self.instances.insert(name.name.clone(), inst),
+                    ));
+                }
+                // A bare `INSTANCE M` unit cannot appear inside a
+                // `LET` (its grammar is `name == INSTANCE …`), and the
+                // parser cannot produce it there. If that ever
+                // changes, refusing is the honest outcome – dropping
+                // it silently would surface much later as a
+                // name-resolution error pointing at the use.
+                UnitKind::Instance { .. } => {
+                    return Err(LowerError::unsupported(
+                        "an `INSTANCE` inside `LET`",
+                        "a `LET`-scoped instance must be named, `M == INSTANCE …`",
+                        d.span,
+                    ));
+                }
+                UnitKind::Recursive(_) => {
+                    return Err(LowerError::unsupported(
+                        "`RECURSIVE` inside `LET`",
+                        "a recursive operator has no finite unfolding; rewrite it as a \
+                             fold over a finite set, or a function `[x \\in S |-> …]`",
+                        d.span,
+                    ));
+                }
+                UnitKind::ConstantDecl(_)
+                | UnitKind::VariableDecl(_)
+                | UnitKind::Extends(_)
+                | UnitKind::Assume { .. }
+                | UnitKind::Theorem { .. }
+                | UnitKind::ProofDirective(_)
+                | UnitKind::Separator
+                | UnitKind::Submodule(_) => {}
+            }
+        }
+        Ok((saved, saved_insts))
+    }
+
+    /// Restore the bindings a `LET`'s definitions shadowed, in the same order.
+    fn exit_let(&mut self, (saved_defs, saved_insts): LetScope<'a>) {
+        for (name, prev) in saved_defs {
+            match prev {
+                Some(d) => {
+                    self.defs.insert(name, d);
+                }
+                None => {
+                    self.defs.remove(&name);
+                    self.funs.remove(&name);
+                }
+            }
+        }
+        for (name, prev) in saved_insts {
+            match prev {
+                Some(i) => {
+                    self.instances.insert(name, i);
+                }
+                None => {
+                    self.instances.remove(&name);
+                }
+            }
+        }
+    }
+
     fn expand(
         &mut self,
         e: &'a Expr,
@@ -4711,107 +4978,19 @@ impl<'a> Lowerer<'a> {
                     self.expand_product_binder(e, bounds, body, stack);
                 }
             }
+            // A subscripted action: its action and its subscript, lowered
+            // like any binary node's operands. `build` makes a step term of
+            // them where the temporal walk asked for one (`action_leaves`)
+            // and refuses the node by name everywhere else, as it always did.
+            ExprKind::Action {
+                body, subscript, ..
+            } => {
+                stack.push(Frame::Build(e, 2));
+                stack.push(Frame::Expand(subscript));
+                stack.push(Frame::Expand(body));
+            }
             ExprKind::Let { defs, body } => {
-                let mut saved: Vec<(String, Option<Def<'a>>)> = Vec::new();
-                let mut saved_insts: Vec<(String, Option<Instantiation<'a>>)> = Vec::new();
-                for d in defs {
-                    match &d.kind {
-                        UnitKind::OpDef {
-                            name, params, body, ..
-                        } => {
-                            let def = Def {
-                                params: params
-                                    .iter()
-                                    .map(|p| (p.name.name.clone(), p.arity))
-                                    .collect(),
-                                body,
-                                cacheable: false,
-                            };
-                            saved.push((
-                                name.name.clone(),
-                                self.defs.insert(name.name.clone(), def),
-                            ));
-                        }
-                        UnitKind::FnDef {
-                            name, bounds, body, ..
-                        } => {
-                            self.funs
-                                .insert(name.name.clone(), (bounds.as_slice(), body));
-                            saved.push((name.name.clone(), None));
-                        }
-                        // `LET M == INSTANCE A [WITH …] IN …`: the instance is
-                        // scoped exactly like the definitions around it –
-                        // visible in the `IN` body, restored afterwards, and
-                        // shadowing a module-level instance of the same name
-                        // for that extent. test59.tla's `Next` is the case.
-                        UnitKind::ModuleDef {
-                            name,
-                            params,
-                            instance,
-                            ..
-                        } => {
-                            let Some(target) = self.modules.get(&instance.module.name).copied()
-                            else {
-                                return Err(LowerError::unsupported(
-                                    &format!("`{}`!…", name.name),
-                                    &format!(
-                                        "the instantiated module `{}` was not found on the \
-                                         search path",
-                                        instance.module.name
-                                    ),
-                                    d.span,
-                                ));
-                            };
-                            let inst = Instantiation {
-                                module: target,
-                                // The declaring scope is the module the walk
-                                // is inside (or an instance member of it);
-                                // recorded at use time, not here, because at
-                                // this point only the frames know.
-                                source: None,
-                                with: instance
-                                    .substitutions
-                                    .iter()
-                                    .map(|(n, e)| (n.name.clone(), e))
-                                    .collect(),
-                                params: params.iter().map(|p| p.name.name.clone()).collect(),
-                            };
-                            saved_insts.push((
-                                name.name.clone(),
-                                self.instances.insert(name.name.clone(), inst),
-                            ));
-                        }
-                        // A bare `INSTANCE M` unit cannot appear inside a
-                        // `LET` (its grammar is `name == INSTANCE …`), and the
-                        // parser cannot produce it there. If that ever
-                        // changes, refusing is the honest outcome – dropping
-                        // it silently would surface much later as a
-                        // name-resolution error pointing at the use.
-                        UnitKind::Instance { .. } => {
-                            return Err(LowerError::unsupported(
-                                "an `INSTANCE` inside `LET`",
-                                "a `LET`-scoped instance must be named, `M == INSTANCE …`",
-                                d.span,
-                            ));
-                        }
-                        UnitKind::Recursive(_) => {
-                            return Err(LowerError::unsupported(
-                                "`RECURSIVE` inside `LET`",
-                                "a recursive operator has no finite unfolding; rewrite it as a \
-                                 fold over a finite set, or a function `[x \\in S |-> …]`",
-                                d.span,
-                            ));
-                        }
-                        UnitKind::ConstantDecl(_)
-                        | UnitKind::VariableDecl(_)
-                        | UnitKind::Extends(_)
-                        | UnitKind::Assume { .. }
-                        | UnitKind::Theorem { .. }
-                        | UnitKind::ProofDirective(_)
-                        | UnitKind::Separator
-                        | UnitKind::Submodule(_) => {}
-                    }
-                }
+                let (saved, saved_insts) = self.enter_let(defs)?;
                 stack.push(Frame::PopLetDefs(saved, saved_insts));
                 stack.push(Frame::Expand(body));
             }
@@ -5262,6 +5441,25 @@ impl<'a> Lowerer<'a> {
                 .rc()
             }
             ExprKind::Except { updates, .. } => build_except(updates, &kids, span)?,
+            ExprKind::Action { kind, .. } if self.action_leaves => {
+                // `[A]_v` is `A \/ UNCHANGED v` and `<<A>>_v` is `A /\
+                // v' # v`, the change read componentwise for a tuple
+                // subscript, as `UNCHANGED` reads it. A step term: its
+                // unprimed reads are the step's source, its primed ones the
+                // step's target – which is what the tableau's step equations
+                // give it, as Apalache's `TableauEncoder` give the actions
+                // it finds under `[]`/`<>`.
+                let action = take(0)?;
+                let subscript = take(1)?;
+                match kind {
+                    nixie_tla_syntax::ast::ActionKind::Stuttering => {
+                        Kera::Or(vec![action, Self::step_unchanged(&subscript)]).rc()
+                    }
+                    nixie_tla_syntax::ast::ActionKind::NonStuttering => {
+                        Kera::And(vec![action, Self::step_changed(&subscript)]).rc()
+                    }
+                }
+            }
             other => {
                 return Err(LowerError::unsupported(
                     &format!("{}", DescribeKind(other)),

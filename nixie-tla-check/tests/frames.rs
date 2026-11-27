@@ -572,8 +572,12 @@ Next == x' = x
 {prop}
 ====
 "#;
+    // An action as the operand of a temporal operator is a leaf the tableau
+    // reads on each step (`[]<>(x' # x)` below, `TemporalPropsOverActions`);
+    // one *beside* a temporal operator under a propositional node would
+    // reach an `Init` equation, where a prime means nothing – declined.
     for (prop, needle) in [
-        ("P == []<>(x' # x)", "prime"),
+        ("P == [](<>(x = 1) \\/ (x' # x))", "action-level"),
         ("P == WF_x(x' # x)", "fairness"),
         ("P == \\EE y : [](x = y)", "temporal quantifier"),
     ] {
@@ -596,6 +600,10 @@ Next == x' = x
         let msg = err.to_string();
         assert!(msg.contains(needle), "`{prop}` names `{needle}`: {msg}");
     }
+    // The action operand itself is read, and on `Next == x' = x` it is never
+    // taken: `x' # x` fails on every step, so `[]<>(x' # x)` has no lasso.
+    let src = base.replace("{prop}", "P == []<>(x' # x)");
+    assert_eq!(lasso(&src, "P", 3), Outcome::Violation { step: 1 });
 }
 
 /// Issue #44, end to end: the lasso encoding's depth-8 query on a bounded

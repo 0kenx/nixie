@@ -66,7 +66,7 @@ run_cell () {  # $1 arm-binary  $2 out-dir  rest: argv
   ( cd "$WORK" && taskset -c 0-7 timeout 300 "$bin" "$@" >"$out/stdout" 2>"$out/stderr"; echo "$?" >"$out/code" ) || echo 124 >"$out/code"
 }
 
-n=0; agree_ok=0; agree_viol=0; agree_dl=0; agree_ref=0; mismatch=0; inconclusive=0; declined=0; oracle_failed=0
+n=0; agree_ok=0; agree_viol=0; agree_shorter=0; agree_dl=0; agree_ref=0; mismatch=0; inconclusive=0; declined=0; oracle_failed=0
 python3 - "$CELLS_JSON" <<'PY' > "$LINES"
 import json, sys
 # One field for the options: `argv` is `mode, options…, spec`, and the spec
@@ -175,9 +175,29 @@ while IFS=$'\x1f' read -r id mode argv_prefix spec expected; do
     case "$a_viol" in
       *"action invariant"*) [ -n "$a_len" ] && a_len="$((a_len + 1))";;
     esac
-    x_len="$({ grep -m1 -E '^counterexample 1: [0-9]+ step' "$WORK/nixie/stdout" 2>/dev/null || true; } | awk '{print $3}')"
+    # A lasso is `counterexample 1: a lasso of N step(s) …`, the same count
+    # of steps as the plain form, and indented under the temporal pass that
+    # found it. Neither was read – the pattern was anchored at column 0 to
+    # the plain form – so no temporal cell's length was ever held against
+    # the oracle's.
+    x_len="$({ grep -m1 -E '^[[:space:]]*counterexample 1: (a lasso of )?[0-9]+ step' "$WORK/nixie/stdout" 2>/dev/null || true; } | sed -E 's/^[[:space:]]*counterexample 1: (a lasso of )?([0-9]+) step.*/\2/')"
     if [ -n "$a_len" ] && [ -n "$x_len" ] && [ "$a_len" != "$x_len" ]; then
-      cls=Agree-Violation-DiffLength; mismatch=$((mismatch+1))
+      # The one length disagreement the methodology documents as an oracle
+      # defect: its `TableauEncoder` fixes a box's unroll at `Init` beside
+      # a step-0 equation that contradicts it for a loop that starts one
+      # state earlier than its counterexample does, so the oracle finds such
+      # a violation one step later, rotated. Nixie leaves `unroll@0` to its
+      # equation and finds the shorter lasso (`LetIn`'s and
+      # `NestedTemporalInBool`'s `FalseLiveness`: 2 steps against 3). A
+      # temporal cell, both `Error`, exactly one step shorter, and the
+      # shorter trace replayed step by step – anything else is a mismatch.
+      if printf '%s' "$argv_prefix" | grep -q -- '--temporal=' \
+         && [ "$x_len" = "$((a_len - 1))" ] \
+         && grep -q 'independently replayed: yes' "$WORK/nixie/stdout"; then
+        cls=Agree-Violation-Shorter; agree_shorter=$((agree_shorter+1))
+      else
+        cls=Agree-Violation-DiffLength; mismatch=$((mismatch+1))
+      fi
     else cls=Agree-Violation; agree_viol=$((agree_viol+1)); fi
   elif [ "$a_v" = Deadlock ] && [ "$x_v" = Deadlock ]; then cls=Agree-Deadlock; agree_dl=$((agree_dl+1));
   # Both refuse the cell with the same non-verdict exit code (a malformed
@@ -203,6 +223,7 @@ echo
 echo "cells compared : $n"
 echo "  Agree-Ok     : $agree_ok"
 echo "  Agree-Viol.  : $agree_viol"
+echo "  Agree-Viol.-Shorter : $agree_shorter   (a temporal cell, Nixie's lasso one step shorter than the oracle's, replayed: the oracle's known tableau defect)"
 echo "  Agree-Deadlk : $agree_dl"
 echo "  Agree-Refus. : $agree_ref"
 echo "  Declined     : $declined"
