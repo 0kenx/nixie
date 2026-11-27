@@ -59,7 +59,78 @@ concurrent runs once shared `/tmp/parity_tla_lines`, and the later one
 truncated it under the earlier one's `read` loop, which stopped after 40
 cells).
 
-## Standing result (2026-11-26, all 253 cells, harness fixed)
+## Standing result (2026-11-27, all 253 cells)
+
+`main` @ `8faa6c12`, the last code commit of the parity-gaps session (seven
+commits on `9b3982d7`'s code; the study is
+`docs/studies/2026-11-27-tla-31-parity-gaps.md`), pinned oracle 0.63.0,
+every cell of the corpus: four concurrent runs of the harness over disjoint cell
+ids (its scratch files are private to a run and the oracle's store was
+complete), on a machine carrying a load of 20–45 from other work, so 14
+cells timed out at 300 s.
+
+| class | count |
+|---|---:|
+| Agree-Ok | 75 |
+| Agree-Violation | 26 |
+| Agree-Violation-Shorter | 5 |
+| Agree-Deadlock | 0 |
+| Agree-Refused | 3 |
+| Declined | 43 |
+| Inconclusive | 31 |
+| OracleFailed | 72 |
+| **MISMATCH** | **0** |
+
+(The rows sum to 255: the corpus carries two cell ids twice.)
+
+* **109 verdict agreements, 0 mismatches**, against 94 on `cc6eb36e` the
+  same morning (Agree-Ok 64, Agree-Violation 27, Agree-Refused 3; Declined
+  58, Inconclusive 21, OracleFailed 80). No cell moved from an agreement to
+  a decline, an `Unknown` or a mismatch.
+* **The 15 cells that moved.** Declined → `Agree-Ok`: `Bug1880`,
+  `Bug2107` (three cells), `LetIn`'s `Liveness`, `MegaSpec1`,
+  `NestedTemporalInBool`'s `Liveness`,
+  `NoTemporalOperatorsInTemporalProp`'s `PropertyWithTemporal`,
+  `TemporalPropsOverActions`' `Liveness`. Declined → `Agree-Violation`:
+  `TemporalPropsOverActions`' `FalseLiveness`. Declined →
+  `Agree-Violation-Shorter`: `LetIn`'s and `NestedTemporalInBool`'s
+  `FalseLiveness`. Declined → `Inconclusive`: `Invariants` (four cells,
+  now `Unknown` where the type checker refused them) and `Test1182` (a
+  timeout). `Agree-Violation` → `Agree-Violation-Shorter`, their lengths
+  read for the first time: `BoxDiamond`, `LongLoops`, `ManyBoxes`.
+* **Agree-Violation-Shorter (5):** the oracle's tableau defect with its
+  reproducers (below). Each of the five traces was replayed step by step
+  and its loop close re-evaluated by the evaluator.
+* **Declined (43), by what the checker named:** 9 a symbolic set with no
+  candidate list (#20: `Test951`, `Bug1682`, `FoldSetInInit`, the three
+  `Fix365_ExistsSubset`, `mis` ×2, `Test1425`); 6 "a set / a function where
+  a single value is needed" (the candidate representation under a place
+  that needs one term: `Paxos`, `pr`, `Test1226`, `TestBags`, `Bug540`,
+  `MC_LamportMutexTyped`); 4 `Int`/`Nat` as a value (#22); 3 `Gen`
+  (`Bug2973` ×2, `Bug3158`); 3 `^` (two exponents over the unfolding
+  budget, one symbolic); 2 over the candidate budget of 4096; 2 a
+  non-associative `ApaFoldSet` (declined on purpose, #13); 2 trace
+  invariants (`Invariants.tla`'s `TraceInv` and `BuggyTraceInv`, a
+  feature); 2 a bare `LAMBDA`; and one each: `BagAdd`, `AreGood` substituted
+  through `INSTANCE`, a function set `[S -> T]`, `\o` with a non-literal
+  right side, `UNION` of a non-set-of-sets, a set compared with a non-set,
+  `INSTANCE Apalache` (the module is built in; an instance of it is not),
+  a type mismatch (`TestCommunityFunctions`: `Str` and `Int`), an `Init`
+  that is an action (`Slicer5`), and `--timeout-smt` (refused on
+  principle).
+* **Inconclusive (31):** 14 timeouts at 300 s (`HandshakeWithTypes` ×3,
+  `y2k_instance` ×2, `NoLoopsNoProblems` ×2 – the `Range` family #29
+  records – `MC_ERC20`, `MC3_TwoPhaseTyped`, `Test1182`, `SetSndRcv`,
+  `SetAddDel`, `Consensus_epr`, `ast`) and 17 `Unknown` (`Invariants` ×4,
+  `Counter` ×2, `FunExcept` ×3, `PickPerf` ×2, and one each on six
+  others) – solver capacity (#20's remaining cells, #50), never a wrong
+  verdict.
+* **OracleFailed (72):** unchanged in nature – the oracle's crash on its
+  own cells (exit 1), its type and configuration errors – minus the eight
+  that were the harness's (above), whose real oracle answers are now
+  compared.
+
+### The 2026-11-26 standing
 
 `main` @ `47b5c438`, pinned oracle 0.63.0, every cell of the corpus with
 the harness above (multi-option cells and subdirectory specs included).
@@ -144,10 +215,38 @@ before the harness fixes below and is superseded.
 * **`Agree-Violation` did not compare lengths** although this document said
   it did. It does now, with the action-invariant rule above.
 
+### Fixed 2026-11-27
+
+* **A spec's sibling modules did not come along.** Only a spec in a
+  subdirectory received the other `.tla` files of its directory, and the
+  corpus is flat: `MC3_TwoPhaseTyped` (`INSTANCE TwoPhaseTyped`),
+  `MC3_TwoPhaseUFO`, `MC_LamportMutexTyped`, `MC_ERC20`, `y2k_cinit` and
+  `y2k_instance` (both `EXTENDS y2k`) and `ConstantOperatorImpl` ran without
+  theirs. The oracle's answer on all eight was its parse error, read by the
+  comparator as `Refused`: seven sat in `OracleFailed`, one in
+  `Agree-Refused`, and `y2k_instance` was listed as a known oracle defect on
+  that evidence. Every sibling is copied now; the eight store entries were
+  set aside under
+  `precompile/apalache-0.63.0/benchmark/tla_parity_artifacts_20261127` and
+  the oracle re-run. With real oracle answers, the cells are 1
+  `Agree-Violation`, 2 `Declined`, 5 `Inconclusive`, 0 `MISMATCH`.
+* **A lasso's length was never read.** `counterexample 1: a lasso of N
+  step(s) …` did not match the pattern for a plain counterexample, so
+  `x_len` was empty on every temporal violation and no `--temporal` cell's
+  length was compared – while the standing table said "lengths equal". The
+  step count is read now (it is the same count as the plain form), and the
+  one documented disagreement has its own class,
+  `Agree-Violation-Shorter` (see the known oracle defects).
 ## Known oracle defects (to grow, each with a reproducer)
 
-* `y2k_instance.tla` – the pinned 0.63.0 binary itself dies on this cell;
-  the mdx expectation says OK. Oracle drift, not compared.
+* ~~`y2k_instance.tla` – the pinned 0.63.0 binary itself dies on this cell;
+  the mdx expectation says OK. Oracle drift, not compared.~~ **Retracted
+  2026-11-27.** The stored answer was the harness's own: its work directory
+  lacked `y2k.tla`, which `y2k_instance` extends, and the oracle's parse
+  error (`Cannot find source file for module y2k`) was recorded as its
+  verdict. Given the module, the pinned binary answers `NoError` and
+  `Error` on its two cells, as the mdx says. See "Harness defects, fixed
+  2026-11-27".
 * 28 cells exit 1 in the pinned binary; the mdx documents the outcome as
   if the binary produced it. See `OracleFailed` above.
 * **The lasso tableau's `Init` contradicts its step-0 equation for a loop
@@ -165,6 +264,17 @@ before the harness fixes below and is superseded.
   `--temporal` cells. A cell whose Nixie counterexample is one step
   shorter than the oracle's on a temporal property is this defect, not a
   mismatch. Detail: `docs/studies/2026-11-27-tla-47-fairness.md`.
+  **Reproducers (2026-11-27):** `LetIn.tla --temporal=FalseLiveness` and
+  `NestedTemporalInBool.tla --temporal=FalseLiveness` – `<>(x + y = 2)` and
+  `<>[](x > 5)` on the swap cycle `(0, 1) ↔ (1, 0)`, false on every lasso.
+  The shortest violating lasso is `(0,1) →Step→ (1,0) →Step→ (0,1)`, two
+  steps with the cycle both states; its loop starts one state after `Init`,
+  so the oracle's `unroll@0 = TRUE` contradicts its step-0 equation there
+  and it reports the violation one step later, rotated (3 steps). The
+  comparator classes exactly this shape – a `--temporal` cell, both
+  `Error`, Nixie one step shorter, its trace independently replayed – as
+  `Agree-Violation-Shorter`, apart from `MISMATCH`; any other length
+  disagreement on a temporal cell is a mismatch.
 * **No stuttering in the lasso, on either side.** `LoopEncoder` conjoins
   the loop logic with `Next` as is, so a behaviour that stutters forever –
   which every `Init /\ [][Next]_v` specification has – is not a behaviour
