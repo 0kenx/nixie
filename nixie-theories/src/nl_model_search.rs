@@ -337,6 +337,11 @@ fn nia_search_core_on_worker(
 /// Complete a witness's Boolean half with the DEFINITION pins only,
 /// preserving any truth pins already present (case-split choices).
 /// See [`truth_pins`].
+///
+/// Called from `nlsat` alone, so it is compiled where that module is: in a
+/// build without the `nlsat` feature (the TLA crates' dependency edge is
+/// one) it was dead code under `-D warnings`.
+#[cfg(feature = "nlsat")]
 pub(crate) fn attach_definition_truths_to(
     model: &mut crate::nl_dispatch::NlSatModel,
     defs: &FxHashMap<TermId, TermId>,

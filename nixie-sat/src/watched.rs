@@ -1423,7 +1423,10 @@ impl WatchLists {
         let _ = std::fs::write(path, out);
         eprintln!("[watch-dump-post] {path}: {total} entries");
     }
-    #[cfg(test)]
+    // Compiled where its only user is (`solver::propagate::work_tests`):
+    // under `cfg(test)` alone it was dead code in a test build without
+    // `bcp-work`.
+    #[cfg(all(test, feature = "bcp-work"))]
     pub(crate) fn set_last_blocker(&mut self, lit: Lit, blocker: Lit) {
         if let Some(w) = self
             .watches
