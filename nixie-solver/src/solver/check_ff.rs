@@ -1714,32 +1714,11 @@ fn ufff_solve_node(
                 .map(|(func, args)| (t, func, args))
         })
         .collect();
-    // Group applications by function symbol (deterministic: TermId order).
-    let mut by_func: FxHashMap<nixie_core::interner::Spur, Vec<TermId>> = FxHashMap::default();
-    for (term, func, _) in &model.apps {
-        by_func.entry(*func).or_default().push(*term);
-    }
-    let mut funcs: Vec<_> = by_func
-        .into_iter()
-        .map(|(func, mut terms)| {
-            terms.sort_unstable();
-            (func, terms)
-        })
-        .collect();
-    funcs.sort_by_key(|(func, _)| func.into_inner());
-
-    for (_func, terms) in &funcs {
-        for w in 0..terms.len() {
-            for v in (w + 1)..terms.len() {
-                let a1 = terms[w];
-                let a2 = terms[v];
-                let (args1, args2) = match (
-                    model.apps.iter().find(|(t, _, _)| *t == a1),
-                    model.apps.iter().find(|(t, _, _)| *t == a2),
-                ) {
-                    (Some((_, _, x)), Some((_, _, y))) => (x, y),
-                    _ => continue,
-                };
+    for apps in apps_by_function(&model.apps) {
+        for w in 0..apps.len() {
+            for v in (w + 1)..apps.len() {
+                let (a1, a2) = (model.apps[apps[w]].0, model.apps[apps[v]].0);
+                let (args1, args2) = (&model.apps[apps[w]].2, &model.apps[apps[v]].2);
                 // Results: both must be assigned (applications of atoms
                 // are always in some slice; a missing one means the atom
                 // set and the field routing disagree – decline).
@@ -1792,6 +1771,30 @@ fn ufff_solve_node(
         }
     }
     UfffNode::Model(model)
+}
+
+/// The applications of a candidate model grouped by function symbol, as
+/// indices into `apps` (the pair scans read an application's arguments
+/// through its index; a search of the list per pair made one function's n
+/// applications an n³ walk).  Each group is ascending by the application's
+/// `TermId` and the groups ascend by symbol, so the scans visit every pair
+/// once, in the order they always did.
+fn apps_by_function(
+    apps: &[(TermId, nixie_core::interner::Spur, SmallVec<[TermId; 4]>)],
+) -> Vec<Vec<usize>> {
+    let mut by_func: FxHashMap<nixie_core::interner::Spur, Vec<usize>> = FxHashMap::default();
+    for (idx, (_, func, _)) in apps.iter().enumerate() {
+        by_func.entry(*func).or_default().push(idx);
+    }
+    let mut funcs: Vec<_> = by_func
+        .into_iter()
+        .map(|(func, mut idxs)| {
+            idxs.sort_unstable_by_key(|&i| apps[i].0);
+            (func, idxs)
+        })
+        .collect();
+    funcs.sort_by_key(|(func, _)| func.into_inner());
+    funcs.into_iter().map(|(_, idxs)| idxs).collect()
 }
 
 /// A field-and-value pair helper for the scan.
@@ -2122,30 +2125,13 @@ fn ufff_complete(
     // them breaks nothing. Compound arguments whose leaves are all
     // model-assigned cannot be moved: such a pair would have been a
     // Split in the scan; if one shows up here anyway, decline.
-    let mut apps_by_func: FxHashMap<nixie_core::interner::Spur, Vec<TermId>> = FxHashMap::default();
-    for (term, func, _) in &model.apps {
-        apps_by_func.entry(*func).or_default().push(*term);
-    }
-    let mut funcs: Vec<_> = apps_by_func
-        .into_iter()
-        .map(|(func, mut ts)| {
-            ts.sort_unstable();
-            (func, ts)
-        })
-        .collect();
-    funcs.sort_by_key(|(func, _)| func.into_inner());
+    let funcs = apps_by_function(&model.apps);
 
-    for (_func, apps) in &funcs {
+    for apps in &funcs {
         for w in 0..apps.len() {
             for v in (w + 1)..apps.len() {
-                let (a1, a2) = (apps[w], apps[v]);
-                let (args1, args2) = match (
-                    model.apps.iter().find(|(t, _, _)| *t == a1),
-                    model.apps.iter().find(|(t, _, _)| *t == a2),
-                ) {
-                    (Some((_, _, x)), Some((_, _, y))) => (x.clone(), y.clone()),
-                    _ => continue,
-                };
+                let (a1, a2) = (model.apps[apps[w]].0, model.apps[apps[v]].0);
+                let (args1, args2) = (&model.apps[apps[w]].2, &model.apps[apps[v]].2);
                 let (f1, r1) = field_and_value(manager, &model, a1)?;
                 let (f2, r2) = field_and_value(manager, &model, a2)?;
                 if f1 != f2 || r1 == r2 {
@@ -2221,17 +2207,11 @@ fn ufff_complete(
     // models did; the defaults could only collide application arguments,
     // which the repair pass above handled, and unconstrained variables,
     // which appear in no literal). One full scan, then hand it back.
-    for (_func, apps) in &funcs {
+    for apps in &funcs {
         for w in 0..apps.len() {
             for v in (w + 1)..apps.len() {
-                let (a1, a2) = (apps[w], apps[v]);
-                let (args1, args2) = match (
-                    model.apps.iter().find(|(t, _, _)| *t == a1),
-                    model.apps.iter().find(|(t, _, _)| *t == a2),
-                ) {
-                    (Some((_, _, x)), Some((_, _, y))) => (x, y),
-                    _ => continue,
-                };
+                let (a1, a2) = (model.apps[apps[w]].0, model.apps[apps[v]].0);
+                let (args1, args2) = (&model.apps[apps[w]].2, &model.apps[apps[v]].2);
                 let (f1, r1) = field_and_value(manager, &model, a1)?;
                 let (f2, r2) = field_and_value(manager, &model, a2)?;
                 if f1 != f2 || r1 == r2 {
