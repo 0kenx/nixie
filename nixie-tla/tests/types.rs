@@ -424,3 +424,26 @@ fn a_function_from_strings_accepts_field_syntax() {
     let t = free_ty(&src, "A", "IOEnv");
     assert!(matches!(t, Type::Rec { .. } | Type::Fun(_, _)), "got {t}");
 }
+
+/// `Guess` and `Gen` are never lowered, so every use of them reaches the
+/// fallback that gives one operator one monomorphic signature per name and
+/// arity. They are polymorphic in `Apalache.tla` and `ToEtcExpr.scala`, and
+/// one signature for all uses refused `TestSets.tla`: `Guess({ i \in … })`
+/// had fixed `Set(Int) => Int`, and `Guess({ T \in … })` – a set of sets –
+/// then mismatched. Each use is instantiated afresh.
+#[test]
+fn guess_and_gen_are_polymorphic_per_use() {
+    let src = module(
+        "A == /\\ Guess({ 3 }) = 3\n   /\\ Guess({ { 3 } }) \\subseteq { 3 }\n   /\\ Guess(Gen(2)) = 0",
+    );
+    assert_eq!(ty_of(&src, "A"), Type::Bool);
+    // Still an operator with a shape: a guess comes out of its argument's
+    // element type, whichever that is.
+    assert!(matches!(
+        free_ty(&module("VARIABLE S\nA == Guess(S) \\in S"), "A", "S"),
+        Type::Set(_)
+    ));
+    // And `Gen`'s bound is an integer.
+    let err = err_of(&module("A == Gen({ 3 }) = 0"), "A");
+    assert!(matches!(err, TypeError::Mismatch { .. }), "{err:?}");
+}

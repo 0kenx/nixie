@@ -2208,9 +2208,9 @@ impl<'a> Lowerer<'a> {
         // `lookup`, which covers both.)
         let k = |i: usize| Rc::clone(&args[i]);
         match (name, args.len()) {
-            // TLC's `x :> y` / `f @@ g` pair with `:=`'s family: exact
-            // function constructors, cheaper than the general ones.
-            (":=", 2) | (":>", 2) => Ok(Some(
+            // TLC's `x :> y`: an exact function constructor, cheaper than
+            // the general one.
+            (":>", 2) => Ok(Some(
                 Kera::FunDef {
                     var: self.fresh_name("apa_dom"),
                     set: Kera::SetEnum(vec![k(0)]).rc(),
@@ -2218,6 +2218,20 @@ impl<'a> Lowerer<'a> {
                 }
                 .rc(),
             )),
+            // Apalache's assignment `x := e` is **equality**. `Apalache.tla`
+            // defines it for TLC as `__x := __e == __x = __e`; Apalache reads
+            // it as `ApalacheOper.assign`, typed `(a, a) => Bool`
+            // (`ToEtcExpr.scala:854`) and rewritten to `lhs = rhs` by
+            // `VCGenerator.removeAssignments`. It *names* an assignment –
+            // `x' := e` in `Next`, `x := e` in `Init` – which the frame
+            // analysis reads as the `=` it is.
+            //
+            // It was lowered as `:>`, a one-entry function: an assignment in
+            // a formula was replaced by an inert term of function type, so
+            // `Init == \E S \in SUBSET {1, 2}: /\ values := S` left `values`
+            // unconstrained (and the type check refused the single-conjunct
+            // form, `FoldSetInInit.tla`'s, with `Bool` against a function).
+            (":=", 2) => Ok(Some(Kera::Eq(k(0), k(1)).rc())),
             ("@@", 2) => {
                 // `f @@ g`: g's entries win over f's where domains overlap –
                 // Apalache's `__rewire_functions_in_apalache` defines it as a
@@ -5445,17 +5459,19 @@ fn build_infix(op: &str, a: KeraRef, b: KeraRef, span: Span, fresh: &mut usize) 
                 span,
             ));
         }
-        // Apalache's function constructors, exact at the kernel: `:>`/`:=`
-        // build a one-entry function, `@@` merges with the right side
-        // winning. Both are value-level, so the already-lowered operands are
-        // exactly what the constructors want. A local definition of the same
-        // name cannot exist (these are operators, not names a module can
-        // rebind in scope).
-        ":>" | ":=" => Kera::FunDef {
+        // Apalache's function constructors, exact at the kernel: `:>` builds
+        // a one-entry function and `@@` merges with the right side winning.
+        // Both are value-level, so the already-lowered operands are exactly
+        // what the constructors want. A local definition of the same name
+        // cannot exist (these are operators, not names a module can rebind
+        // in scope). `:=`, Apalache's assignment, is equality – see
+        // `apalache_op`.
+        ":>" => Kera::FunDef {
             var: mk_fresh(fresh, "apa_dom"),
             set: Kera::SetEnum(vec![a]).rc(),
             body: b,
         },
+        ":=" => Kera::Eq(a, b),
         "@@" => {
             let var = mk_fresh(fresh, "apa_e");
             let e = Kera::Var(var.clone()).rc();

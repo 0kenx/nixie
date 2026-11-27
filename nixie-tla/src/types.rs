@@ -1765,9 +1765,15 @@ impl Inference {
                 self.set_of(e)?
             }
             // ======== Apalache's standard library (issue #16) ========
-            // `:>`/`:=`/`@@`: function constructors and merge, per
-            // `ToEtcExpr.scala`'s signatures.
-            (":>", 2) | (":=", 2) => self.mk(Ty::Fun(args[0], args[1]))?,
+            // `:>`/`@@`: the function constructor and the merge, per
+            // `ToEtcExpr.scala`'s signatures. `:=` is `ApalacheOper.assign`,
+            // `(a, a) => Bool` there – an assignment, which is equality on
+            // values, not a function constructor.
+            (":>", 2) => self.mk(Ty::Fun(args[0], args[1]))?,
+            (":=", 2) => {
+                self.unify(args[0], args[1])?;
+                self.bool_ty()?
+            }
             ("@@", 2) => {
                 let d = self.fresh()?;
                 let r = self.fresh()?;
@@ -1882,6 +1888,45 @@ impl Inference {
             ("STRING", 0) => {
                 let s = self.str_ty()?;
                 self.set_of(s)?
+            }
+            // ======== the operators that stay opaque by design ========
+            // `Guess` and `Gen` are never lowered (the soundness notes in
+            // `Lowerer::apalache_op`), so every use of them reaches the
+            // monomorphic fallback below – and one signature for all uses of
+            // a name refused `TestSets.tla`: `Guess({ i \in … })` had fixed
+            // `Set(Int) => Int`, and `Guess({ T \in … })` then mismatched
+            // `Set(Int)` against `Set(Set(Int))`. They are polymorphic in
+            // `Apalache.tla`'s annotations and `ToEtcExpr.scala:848-852`, so
+            // each use is freshly instantiated, as every signature here is.
+            ("Guess", 1) => {
+                let e = a(self)?;
+                let s = self.set_of(e)?;
+                self.unify(args[0], s)?;
+                e
+            }
+            ("Gen", 1) => {
+                let int = self.int_ty()?;
+                self.unify(args[0], int)?;
+                a(self)?
+            }
+            // The folds when a rewire did not reach them (a shadowing
+            // definition, an operator argument the lowerer could not
+            // inline): `((a, b) => a, a, Set(b)) => a` over a set, the same
+            // over a sequence (`ToEtcExpr.scala:882-894`).
+            ("ApaFoldSet", 3) | ("__ApalacheFoldSet", 3) | ("ApaFoldSeqLeft", 3) => {
+                let x = a(self)?;
+                let y = a(self)?;
+                let step = self.mk(Ty::Fun(y, x))?;
+                let op = self.mk(Ty::Fun(x, step))?;
+                self.unify(args[0], op)?;
+                self.unify(args[1], x)?;
+                let elems = if name == "ApaFoldSeqLeft" {
+                    self.mk(Ty::Seq(y))?
+                } else {
+                    self.set_of(y)?
+                };
+                self.unify(args[2], elems)?;
+                x
             }
             _ => return Ok(None),
         };

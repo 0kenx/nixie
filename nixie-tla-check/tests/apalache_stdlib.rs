@@ -52,8 +52,6 @@ fn fails(defs: &str, body: &str) {
 #[test]
 fn the_singleton_function_constructors() {
     holds("", r#"("a" :> 1)["a"] = 1"#);
-    // `:=` is Apalache's alias for the same shape.
-    holds("", r#"("a" := 1)["a"] = 1"#);
     // Two keys, two entries.
     holds(
         "",
@@ -64,6 +62,89 @@ fn the_singleton_function_constructors() {
     // TLC's module agrees.
     holds("", r#"LET f == ("a" :> 1) @@ ("a" :> 7) IN f["a"] = 1"#);
     fails("", r#"LET f == ("a" :> 1) @@ ("a" :> 7) IN f["a"] = 7"#);
+}
+
+// ======== the assignment operator ========
+
+/// `:=` is Apalache's **assignment**, an equality on values – not an alias
+/// of `:>`. `Apalache.tla` defines it for TLC as `__x := __e == __x = __e`,
+/// and `ToEtcExpr.scala` types `ApalacheOper.assign` `(a, a) => Bool`.
+/// Lowered as the one-entry function it was, an assignment inside a formula
+/// was replaced by an inert function term: the reproducer below left `seen`
+/// unconstrained, and `seen # {3}` – false in every state `Init` produces –
+/// was reported violated.
+#[test]
+fn the_assignment_operator_is_equality() {
+    holds("", r#"1 := 1"#);
+    fails("", r#"1 := 2"#);
+    // The two sides are one type: a function is not what `:=` builds.
+    holds("", r#"("a" := "a") /\ ~(1 := 2)"#);
+
+    // An assignment in `Init` constrains the state variable.
+    let src = r#"
+---- MODULE Assign ----
+EXTENDS Integers, FiniteSets, Apalache
+VARIABLE
+    \* @type: Set(Int);
+    seen
+Init == \E S \in SUBSET {1, 2}: /\ seen := S
+Next == UNCHANGED seen
+Inv == seen # {3}
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    assert_eq!(
+        bmc.check(0, &mut tm).expect("checks"),
+        Outcome::NoViolationWithin(0),
+        "`seen := S` under `\\E S \\in SUBSET {{1, 2}}` keeps `seen` inside {{1, 2}}"
+    );
+
+    // The primed form in `Next`, as `FoldSetInInit.tla` writes it: the next
+    // state's value is the bound one, and no other. With the assignment
+    // inert, `seen'` was free and `seen \subseteq {1}` was "violated".
+    let src = src
+        .replace(
+            "Init == \\E S \\in SUBSET {1, 2}: /\\ seen := S",
+            "Init == seen = {}",
+        )
+        .replace(
+            "Next == UNCHANGED seen",
+            "Next == \\E S \\in {{}, {1}}: /\\ seen' := S",
+        )
+        .replace("Inv == seen # {3}", "Inv == seen \\subseteq {1}");
+    let parsed = nixie_tla_syntax::parse_file(&src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    assert_eq!(
+        bmc.check(2, &mut tm).expect("checks"),
+        Outcome::NoViolationWithin(2),
+        "the primed assignment keeps `seen` a subset of the singleton of 1"
+    );
+    // And the assignment is a constraint, not a tautology: `{}` is not kept.
+    let src = src.replace("Inv == seen \\subseteq {1}", "Inv == seen = {}");
+    let parsed = nixie_tla_syntax::parse_file(&src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    assert_eq!(
+        bmc.check(2, &mut tm).expect("checks"),
+        Outcome::Violation { step: 1 },
+        "the primed assignment can give `seen` the singleton of 1"
+    );
+
+    // A user's own definition of the operator still wins (`test44.tla`
+    // defines `a := b == <<a, b>>`).
+    holds("", r#"LET a := b == <<a, b>> IN (1 := 2) = <<1, 2>>"#);
 }
 
 // ======== the hint operators ========
