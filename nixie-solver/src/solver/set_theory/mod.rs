@@ -163,10 +163,28 @@ fn max_derived_elements() -> usize {
     crate::solver::caps::cap("set_derived_elements", 24)
 }
 
+/// The member lists the assertion stack **pins** opaque sets to, by set
+/// term: see [`pinned_supports`].
+type Pins = FxHashMap<TermId, Vec<TermId>>;
+
+/// [`support`] with no pins: an opaque set is never confined.
+fn support(set: TermId, manager: &mut TermManager, depth: usize) -> Option<Vec<TermId>> {
+    support_with(set, manager, depth, &Pins::default())
+}
+
 /// The returned list may contain duplicates and terms that are only
 /// *candidates* – membership still decides which are really in. That is what
 /// makes the de-duplication in [`cardinality_axiom`] necessary.
-fn support(set: TermId, manager: &mut TermManager, depth: usize) -> Option<Vec<TermId>> {
+///
+/// `pins` confines an **opaque** set that an asserted top-level equality
+/// equates with a confined term ([`pinned_supports`]); with an empty map this
+/// is the plain structural support, which is what the cardinality pass reads.
+fn support_with(
+    set: TermId,
+    manager: &mut TermManager,
+    depth: usize,
+    pins: &Pins,
+) -> Option<Vec<TermId>> {
     // Bounded: the walk follows a term the user wrote.
     const MAX_SUPPORT_DEPTH: usize = 64;
     if depth > MAX_SUPPORT_DEPTH {
@@ -176,19 +194,18 @@ fn support(set: TermId, manager: &mut TermManager, depth: usize) -> Option<Vec<T
         Shape::Empty => Some(Vec::new()),
         Shape::Singleton(e) => Some(vec![e]),
         Shape::Union(a, b) => {
-            let mut xs = support(a, manager, depth + 1)?;
-            xs.extend(support(b, manager, depth + 1)?);
+            let mut xs = support_with(a, manager, depth + 1, pins)?;
+            xs.extend(support_with(b, manager, depth + 1, pins)?);
             Some(xs)
         }
-        Shape::Inter(a, b) => {
-            support(a, manager, depth + 1).or_else(|| support(b, manager, depth + 1))
-        }
-        Shape::Minus(a, _) => support(a, manager, depth + 1),
+        Shape::Inter(a, b) => support_with(a, manager, depth + 1, pins)
+            .or_else(|| support_with(b, manager, depth + 1, pins)),
+        Shape::Minus(a, _) => support_with(a, manager, depth + 1, pins),
         // The result *is* one of the branches, so the two supports together
         // confine it – the same argument as a union, and it needs both.
         Shape::Ite(_, a, b) => {
-            let mut xs = support(a, manager, depth + 1)?;
-            xs.extend(support(b, manager, depth + 1)?);
+            let mut xs = support_with(a, manager, depth + 1, pins)?;
+            xs.extend(support_with(b, manager, depth + 1, pins)?);
             Some(xs)
         }
         // A complement's members are everything *but* the operand's – not
@@ -201,18 +218,18 @@ fn support(set: TermId, manager: &mut TermManager, depth: usize) -> Option<Vec<T
         // The converse's members are the operand's reversed, so a confined
         // operand confines it – each reversed once, bounded by the same
         // list.
-        Shape::Transpose(r) => support(r, manager, depth + 1)
+        Shape::Transpose(r) => support_with(r, manager, depth + 1, pins)
             .map(|xs| xs.iter().map(|&e| reverse_tuple(e, manager)).collect()),
         // The diagonal of a confined set is confined: one pair per member.
-        Shape::Iden(x) => support(x, manager, depth + 1)
+        Shape::Iden(x) => support_with(x, manager, depth + 1, pins)
             .map(|xs| xs.iter().map(|&e| duplicate_tuple(e, manager)).collect()),
         // A product's members are the pairs of the operands': confined
         // when both are, with the pair count the product of the two –
         // bounded, because a support list is already bounded by the caps
         // upstream.
         Shape::Product(a, b) => {
-            let xs = support(a, manager, depth + 1)?;
-            let ys = support(b, manager, depth + 1)?;
+            let xs = support_with(a, manager, depth + 1, pins)?;
+            let ys = support_with(b, manager, depth + 1, pins)?;
             const MAX_PRODUCT_SUPPORT: usize = 256;
             if xs.len().saturating_mul(ys.len()) > MAX_PRODUCT_SUPPORT {
                 return None;
@@ -229,8 +246,100 @@ fn support(set: TermId, manager: &mut TermManager, depth: usize) -> Option<Vec<T
         // not statically confined (which middles connect is what the search
         // decides).
         Shape::Join(_, _) => None,
-        Shape::Opaque => None,
+        // Pinned by an asserted equality to a confined term, else free.
+        Shape::Opaque => pins.get(&set).cloned(),
     }
+}
+
+/// The member lists the assertion stack pins opaque sets to (issue #49).
+///
+/// An equality that is a **top-level conjunct of an asserted formula** –
+/// `(assert (= d (set.union (set.singleton 1) (set.singleton 2))))`, or
+/// such a conjunct of an earlier assertion's conjoined axioms – holds in
+/// every model of the stack, so `d`'s members are exactly its other
+/// side's; when that side is confined to a known list ([`support_with`]),
+/// so is `d`. The same holds transitively for an equality to a set that is
+/// itself pinned, hence the fixpoint. Only top-level conjuncts count: an
+/// equality under a `not`, an `or` or an implication is not a fact about
+/// the stack, and a pin read off one would be a fabrication.
+///
+/// What a pin buys is the shape of a disequality witness. A pair whose two
+/// sides are both confined differs – if it differs – at an element of the
+/// two lists, so `(= a b) \u{2228} ⦁_e (e ∈ a ⊕ e ∈ b)` states extensionality
+/// for it without minting an element. A fresh witness is an **open integer
+/// question**: the singleton pairs the TLA+ encoder emits for every
+/// function domain (`name$dom` against `{k}`, one per key) each minted one,
+/// and six opaque sets equal to a two-element union took 32 s and 548 681
+/// decisions – 235 of them ending in a complete assignment the arithmetic
+/// final check refuted, two literals at a time. With the pins read, the same
+/// query is a handful of propagations (measured in
+/// `docs/studies/2026-11-27-set-pinned-pairs.md`).
+fn pinned_supports(roots: &[TermId], manager: &mut TermManager) -> Pins {
+    let mut eqs: Vec<(TermId, TermId)> = Vec::new();
+    let mut seen: FxHashSet<TermId> = FxHashSet::default();
+    let mut stack: Vec<TermId> = roots.to_vec();
+    while let Some(t) = stack.pop() {
+        if !seen.insert(t) {
+            continue;
+        }
+        let Some(data) = manager.get(t) else {
+            continue;
+        };
+        match &data.kind {
+            TermKind::And(args) => stack.extend(args.iter().copied()),
+            TermKind::Eq(a, b)
+                if is_set_sorted(*a, manager) && is_set_sorted(*b, manager) && a != b =>
+            {
+                eqs.push((*a, *b));
+            }
+            _ => {}
+        }
+    }
+    let mut pins: Pins = Pins::default();
+    loop {
+        let mut changed = false;
+        for &(a, b) in &eqs {
+            for (x, y) in [(a, b), (b, a)] {
+                if pins.contains_key(&x) {
+                    continue;
+                }
+                if let Some(list) = support_with(y, manager, 0, &pins) {
+                    pins.insert(x, list);
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    pins
+}
+
+/// How a related pair of sets states that it differs, when it differs.
+#[derive(Debug, Clone)]
+enum DiseqWitness {
+    /// A fresh element `k` with `(k ∈ a) xor (k ∈ b)`: for a pair with
+    /// an unconfined side, whose difference may lie anywhere.
+    Fresh(TermId, TermId),
+    /// The pair's own candidates, when both sides are confined to known
+    /// lists: `(= a b) \u{2228} ⦁_e (e ∈ a) xor (e ∈ b)` over their union.
+    /// Mints nothing (see [`pinned_supports`]).
+    Among(Vec<TermId>),
+}
+
+/// `(e ∈ a /\ e ∉ b) \/ (e ∉ a /\ e ∈ b)`: the two sets differ at `e`.
+/// A membership over a singleton or the empty set folds in the builder
+/// (`e ∈ {x}` *is* `e = x`), so a confined pair's clause carries no atom a
+/// definition would have to settle later.
+fn symmetric_difference_at(e: TermId, a: TermId, b: TermId, manager: &mut TermManager) -> TermId {
+    let ia = manager.mk_set_member(e, a);
+    let ib = manager.mk_set_member(e, b);
+    let not_ia = manager.mk_not(ia);
+    let not_ib = manager.mk_not(ib);
+    let only_a = manager.mk_and([ia, not_ib]);
+    let only_b = manager.mk_and([ib, not_ia]);
+    manager.mk_or([only_a, only_b])
 }
 
 // ======== tuple helpers (the relation operators' term algebra) ========
@@ -633,8 +742,12 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
 
     // Disequality witnesses first, because a witness is itself an element and
     // must take part in every membership definition below.
-    let mut witnesses: Vec<(TermId, TermId, TermId, TermId)> = Vec::new();
+    let mut witnesses: Vec<(TermId, TermId, DiseqWitness)> = Vec::new();
     let mut elements = s.elements.clone();
+    // What the stack pins opaque sets to, read once per reduction; the
+    // witness loop below decides, per pair, between a fresh element and
+    // the pair's own candidates with it.
+    let pins = pinned_supports(roots, manager);
     // The witness is named after **the pair it witnesses**, not by a counter.
     //
     // `reduce` runs once per `assert`, over the whole assertion stack, and a
@@ -746,23 +859,50 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         };
         if witnesses
             .iter()
-            .any(|(wa, wb, _, _)| (*wa == a && *wb == b) || (*wa == b && *wb == a))
+            .any(|(wa, wb, _)| (*wa == a && *wb == b) || (*wa == b && *wb == a))
         {
             continue;
         }
-        let k = pair_witness(manager, es, a, b);
-        let ka = manager.mk_set_member(k, a);
-        let kb = manager.mk_set_member(k, b);
-        witnesses.push((a, b, ka, kb));
-        // The witness may already be an element: prior passes' conjoined
-        // axioms contain its membership atoms, so the fresh survey lists it
-        // again. Pushing duplicates made the element list grow by every
-        // witness on every pass, tripping the counting cap on the most
-        // ordinary multi-set inputs.
-        let list = elements.entry(es).or_default();
-        if !list.contains(&k) {
-            list.push(k);
-        }
+        // A pair both of whose sides are confined to known lists differs
+        // at an element of those lists, if it differs at all (see
+        // [`pinned_supports`]): stated over the elements, minting nothing.
+        let confined = match (
+            support_with(a, manager, 0, &pins),
+            support_with(b, manager, 0, &pins),
+        ) {
+            (Some(xs), Some(ys)) => {
+                // De-duplicated by term: a support list may repeat an
+                // element, and one disjunct per element is the clause.
+                let mut unique: Vec<TermId> = Vec::with_capacity(xs.len() + ys.len());
+                for e in xs.into_iter().chain(ys) {
+                    if !unique.contains(&e) {
+                        unique.push(e);
+                    }
+                }
+                Some(unique)
+            }
+            _ => None,
+        };
+        let witness = match confined {
+            Some(elems) => DiseqWitness::Among(elems),
+            None => {
+                let k = pair_witness(manager, es, a, b);
+                let ka = manager.mk_set_member(k, a);
+                let kb = manager.mk_set_member(k, b);
+                // The witness may already be an element: prior passes'
+                // conjoined axioms contain its membership atoms, so the
+                // fresh survey lists it again. Pushing duplicates made the
+                // element list grow by every witness on every pass,
+                // tripping the counting cap on the most ordinary multi-set
+                // inputs.
+                let list = elements.entry(es).or_default();
+                if !list.contains(&k) {
+                    list.push(k);
+                }
+                DiseqWitness::Fresh(ka, kb)
+            }
+        };
+        witnesses.push((a, b, witness));
     }
 
     // Cardinality comes *before* the membership definitions below, because
@@ -1463,24 +1603,37 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // reads is exactly the case that was answering `sat`. The atom is built
     // here where the formula does not have one; it is hash-consed, so a
     // surveyed `(= a b)` is the same term and nothing is duplicated.
-    for &(a, b, ka, kb) in &witnesses {
-        let Some(es) = element_sort(a, manager) else {
+    for (a, b, witness) in &witnesses {
+        let Some(es) = element_sort(*a, manager) else {
             continue;
         };
         let Some(elems) = elements.get(&es).cloned() else {
             continue;
         };
-        let atom = manager.mk_eq(a, b);
+        let atom = manager.mk_eq(*a, *b);
         for e in elems {
-            let ia = manager.mk_set_member(e, a);
-            let ib = manager.mk_set_member(e, b);
+            let ia = manager.mk_set_member(e, *a);
+            let ib = manager.mk_set_member(e, *b);
             let agree = manager.mk_eq(ia, ib);
             axioms.push(manager.mk_implies(atom, agree));
         }
-        // ...and if they differ, they differ *somewhere*.
-        let differs = manager.mk_xor(ka, kb);
-        let neg = manager.mk_not(atom);
-        axioms.push(manager.mk_implies(neg, differs));
+        // ...and if they differ, they differ *somewhere*: at the fresh
+        // witness, or – for a pair both of whose sides are confined – at
+        // one of their own elements, which is every place they can.
+        match witness {
+            DiseqWitness::Fresh(ka, kb) => {
+                let differs = manager.mk_xor(*ka, *kb);
+                let neg = manager.mk_not(atom);
+                axioms.push(manager.mk_implies(neg, differs));
+            }
+            DiseqWitness::Among(list) => {
+                let mut escapes = Vec::with_capacity(list.len());
+                for &e in list {
+                    escapes.push(symmetric_difference_at(e, *a, *b, manager));
+                }
+                axioms.push(manager.mk_or(std::iter::once(atom).chain(escapes)));
+            }
+        }
     }
 
     // `(set.subset a b)`.
@@ -1497,10 +1650,26 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             let implies = manager.mk_implies(ia, ib);
             axioms.push(manager.mk_implies(atom, implies));
         }
-        if let Some(&(_, _, ka, kb)) = witnesses.iter().find(|(wa, wb, _, _)| *wa == a && *wb == b)
-        {
-            let not_kb = manager.mk_not(kb);
-            let escapes = manager.mk_and([ka, not_kb]);
+        let escape = match witnesses.iter().find(|(wa, wb, _)| *wa == a && *wb == b) {
+            Some((_, _, DiseqWitness::Fresh(ka, kb))) => {
+                let not_kb = manager.mk_not(*kb);
+                Some(manager.mk_and([*ka, not_kb]))
+            }
+            Some((_, _, DiseqWitness::Among(list))) => {
+                let mut escapes = Vec::with_capacity(list.len());
+                for &e in list {
+                    let ia = manager.mk_set_member(e, a);
+                    let ib = manager.mk_set_member(e, b);
+                    let not_ib = manager.mk_not(ib);
+                    escapes.push(manager.mk_and([ia, not_ib]));
+                }
+                Some(manager.mk_or(escapes))
+            }
+            None => None,
+        };
+        // Not a subset: some element is in `a` and not in `b` – the
+        // witness, or (confined pair) one of the pair's own.
+        if let Some(escapes) = escape {
             let neg = manager.mk_not(atom);
             axioms.push(manager.mk_implies(neg, escapes));
         }
