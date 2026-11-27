@@ -24,6 +24,7 @@ mod certified_numeric;
 mod class_values;
 mod completed_candidate;
 mod datatype_completion;
+mod defined_bools;
 mod finite_uninterpreted;
 mod get_value;
 mod mint;
@@ -32,6 +33,8 @@ mod printed_eval;
 mod projected_functions;
 mod published;
 mod witness_names;
+
+use defined_bools::DefinedBools;
 pub(super) use published::PublishedModel;
 
 /// Render a nonlinear-real exact value as SMT-LIB2 text.
@@ -589,6 +592,7 @@ impl Context {
         // published.
         let class_values = self.build_class_values(solver_model);
 
+        let mut defined = DefinedBools::default();
         for decl in &self.declared_consts {
             // The exact-value side-channel is consulted first. It is only ever
             // populated when the ordinary `Model` is absent, so this cannot
@@ -645,7 +649,8 @@ impl Context {
                 // contradicted their own assertions that way.
                 value
             } else {
-                self.defined_bool_value(decl.term, solver_model)
+                defined
+                    .value(self, decl.term, solver_model)
                     .unwrap_or_else(|| self.default_value(decl.sort))
             };
             let sort_name = self.format_sort_name(decl.sort);
@@ -1668,114 +1673,6 @@ impl Context {
             values.push(format!("({} {})", term_str, value_str));
         }
         format!("({})", values.join("\n "))
-    }
-
-    /// Format the model as SMT-LIB2
-    /// Value of a Boolean constant the assertions DEFINE at conjunct level
-    /// (`(= b φ)`), evaluated under the model being printed – `Some` only
-    /// when `b` has such a definition and it evaluates to a definite truth
-    /// value under `solver_model` (numeric entries and already-printed
-    /// Booleans).  Used by the default-completion arm in `get_model` so a
-    /// defined Boolean is never defaulted to `false` in a model whose own
-    /// values make its definition `true` (the QF_NIA/VeryMax invalid-model
-    /// class: definition Booleans completed `false`, exact re-evaluation of
-    /// the printed model refuted the assertions).
-    fn defined_bool_value(
-        &self,
-        b: nixie_core::TermId,
-        solver_model: &crate::solver::Model,
-    ) -> Option<String> {
-        use nixie_core::TermKind;
-        let bool_sort = self.terms.sorts.bool_sort;
-
-        // Conjunct-level `(= b φ)` definitions, collected exactly like the
-        // nonlinear search's grounding (descend `and` only).
-        let mut defs: crate::prelude::HashMap<nixie_core::TermId, nixie_core::TermId> =
-            crate::prelude::HashMap::new();
-        let mut stack: Vec<nixie_core::TermId> = self.assertions.clone();
-        let mut seen = crate::prelude::HashSet::new();
-        while let Some(id) = stack.pop() {
-            if !seen.insert(id) {
-                continue;
-            }
-            let Some(n) = self.terms.get(id) else {
-                continue;
-            };
-            match &n.kind {
-                TermKind::And(xs) => stack.extend(xs.iter().copied()),
-                TermKind::Eq(a, c) => {
-                    let bool_var = |t: nixie_core::TermId| {
-                        self.terms.get(t).is_some_and(|m| {
-                            m.sort == bool_sort && matches!(m.kind, TermKind::Var(_))
-                        })
-                    };
-                    let bool_sorted = |t: nixie_core::TermId| {
-                        self.terms.get(t).is_some_and(|m| m.sort == bool_sort)
-                    };
-                    if bool_var(*a) && bool_sorted(*c) {
-                        defs.entry(*a).or_insert(*c);
-                    } else if bool_var(*c) && bool_sorted(*a) {
-                        defs.entry(*c).or_insert(*a);
-                    }
-                }
-                _ => {}
-            }
-        }
-        let phi = *defs.get(&b)?;
-
-        // Interpretation = the model being printed: numeric entries and
-        // Boolean entries (true/false terms) alike.
-        let mut interp = nixie_theories::nl_eval::Interpretation::empty();
-        for (&t, &v) in solver_model.assignments() {
-            let Some(node) = self.terms.get(v) else {
-                continue;
-            };
-            match &node.kind {
-                TermKind::IntConst(n) => {
-                    interp.pin_num(t, num_rational::BigRational::from(n.clone()));
-                }
-                TermKind::RealConst(r) => {
-                    interp.pin_num(
-                        t,
-                        num_rational::BigRational::new(
-                            num_bigint::BigInt::from(*r.numer()),
-                            num_bigint::BigInt::from(*r.denom()),
-                        ),
-                    );
-                }
-                TermKind::True => {
-                    interp.pin_truth(t, true);
-                }
-                TermKind::False => {
-                    interp.pin_truth(t, false);
-                }
-                _ => {}
-            }
-        }
-        // Definition chains: resolve in dependency order (a `φ` that names
-        // another definition Boolean evaluates once that one is pinned).
-        for _ in 0..defs.len().saturating_add(1) {
-            let mut changed = false;
-            for (&db, &dphi) in &defs {
-                if interp.truth_of(db).is_some() {
-                    continue;
-                }
-                if let Some(nixie_theories::nl_eval::Value::Truth(v)) =
-                    nixie_theories::nl_eval::evaluate(dphi, &self.terms, &interp)
-                {
-                    interp.pin_truth(db, v);
-                    changed = true;
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
-        match nixie_theories::nl_eval::evaluate(phi, &self.terms, &interp) {
-            Some(nixie_theories::nl_eval::Value::Truth(true)) => Some("true".to_string()),
-            Some(nixie_theories::nl_eval::Value::Truth(false)) => Some("false".to_string()),
-            _ => None,
-        }
     }
 
     /// Render the model of the last successful `check-sat` in SMT-LIB

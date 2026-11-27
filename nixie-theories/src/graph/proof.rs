@@ -15,7 +15,7 @@ use nixie_core::ast::TermId;
 /// reified reachability atom, and the acyclicity atom if declared. Obtain
 /// it through `GraphModel::statements` before consuming the model; term IDs
 /// belong to that model's term manager.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct GraphStatement {
     /// Shared identity: two statements over one `Arc` are the same
     /// declaration (the edge list is append-only before registration).
@@ -30,8 +30,65 @@ pub struct GraphStatement {
     /// edge scans – the full 16-byte tuples interleave the atom/negation
     /// payload the scans never touch, doubling their cache footprint.
     /// Behind an `Arc` so statement clones stay O(1). A pure function of
-    /// `edges`, keeping derived `PartialEq` consistent.
+    /// `edges` (see the manual `PartialEq`).
     endpoints: Arc<[(u32, u32)]>,
+    /// Literal → reach row, so a certificate check asks "which pair does
+    /// this conclusion name" in expected O(1) instead of scanning every
+    /// reach declaration. Behind an `Arc` so statement clones stay O(1).
+    /// A pure function of `reach` (see the manual `PartialEq`).
+    reach_index: Arc<ReachIndex>,
+}
+
+/// The reified reach atoms of a [`GraphStatement`], by literal.
+///
+/// `GraphCertificate::check` runs once per consequence the propagator
+/// emits inside the CDCL loop, and each check begins by resolving its
+/// conclusion to the `(from, to)` pair it names. That resolution was a
+/// scan of the reach declarations, so a statement with `R` of them paid
+/// Θ(R) per certificate – Θ(R²) for the `R` one-edge certificates a dense
+/// propagation round produces: 8,000 of them took 8.9 ms, against 0.16 ms
+/// now (`docs/studies/2026-11-27-five-walks-paid-once.md`) – and the
+/// conflict form, which classified every premise as a graph literal or
+/// not, scanned them per premise too.  Both maps are built once, with the
+/// statement, and answer in expected O(1). A literal declared by two rows
+/// resolves to the **first** row, as the scans' `find` did.
+#[derive(Debug, Default)]
+struct ReachIndex {
+    /// Reach atom → its row.
+    by_atom: FxHashMap<TermId, u32>,
+    /// Reach negation → its row.
+    by_negation: FxHashMap<TermId, u32>,
+}
+
+impl ReachIndex {
+    /// Index `reach` by atom and by negation, first declaration winning.
+    fn new(reach: &[(u32, u32, TermId, TermId)]) -> Self {
+        let mut index = Self::default();
+        for (row, &(_, _, atom, negation)) in reach.iter().enumerate() {
+            index.by_atom.entry(atom).or_insert(row as u32);
+            index.by_negation.entry(negation).or_insert(row as u32);
+        }
+        index
+    }
+
+    /// Is `term` one of the indexed reach literals?
+    fn contains(&self, term: TermId) -> bool {
+        self.by_atom.contains_key(&term) || self.by_negation.contains_key(&term)
+    }
+}
+
+impl Eq for GraphStatement {}
+
+impl PartialEq for GraphStatement {
+    /// Declaration equality. The packed `endpoints` and the `reach_index`
+    /// are pure functions of `edges` and `reach`, so they are not compared.
+    fn eq(&self, other: &Self) -> bool {
+        self.edges == other.edges
+            && self.reach == other.reach
+            && self.acyclic == other.acyclic
+            && self.vertices == other.vertices
+            && self.false_term == other.false_term
+    }
 }
 
 /// Invalid graph lemma; malformed structure is an error, never a panic.
@@ -367,7 +424,7 @@ fn bit_get(bits: &[u64], v: u32) -> bool {
 }
 
 /// How a premise participates in a graph lemma.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PremiseKind {
     /// Edge presence atom: the edge is claimed true.
     EdgePresent(usize),
@@ -398,6 +455,7 @@ impl GraphStatement {
                     .collect::<Vec<_>>()
                     .as_slice(),
             ),
+            reach_index: Arc::new(ReachIndex::new(&reach)),
             edges,
             reach,
             acyclic,
@@ -437,24 +495,32 @@ impl GraphStatement {
         &self.reach
     }
 
-    /// The `(from, to)` pair of the reach atom `conclusion`, if it is one.
+    /// The `(from, to)` pair of the reach atom `conclusion`, if it is one
+    /// (expected O(1): the conclusion is looked up in the literal index).
     fn reach_pair_of(&self, conclusion: TermId) -> Result<(u32, u32, TermId), GraphProofError> {
-        self.reach
-            .iter()
-            .find(|&&(_, _, atom, _)| atom == conclusion)
-            .map(|&(f, t, atom, _)| (f, t, atom))
+        self.reach_index
+            .by_atom
+            .get(&conclusion)
+            .map(|&row| {
+                let (f, t, atom, _) = self.reach[row as usize];
+                (f, t, atom)
+            })
             .ok_or(GraphProofError("conclusion is not a reach atom"))
     }
 
-    /// The `(from, to)` pair whose **negation** is `conclusion`.
+    /// The `(from, to)` pair whose **negation** is `conclusion`
+    /// (expected O(1): the conclusion is looked up in the literal index).
     fn reach_pair_of_negation(
         &self,
         conclusion: TermId,
     ) -> Result<(u32, u32, TermId), GraphProofError> {
-        self.reach
-            .iter()
-            .find(|&&(_, _, _, negation)| negation == conclusion)
-            .map(|&(f, t, _, negation)| (f, t, negation))
+        self.reach_index
+            .by_negation
+            .get(&conclusion)
+            .map(|&row| {
+                let (f, t, _, negation) = self.reach[row as usize];
+                (f, t, negation)
+            })
             .ok_or(GraphProofError("conclusion is not a reach negation"))
     }
 
@@ -486,10 +552,8 @@ impl GraphStatement {
                 return PremiseKind::EdgeRefuted(i);
             }
         }
-        for &(_, _, atom, negation) in self.reach.iter() {
-            if atom == term || negation == term {
-                return PremiseKind::GraphLiteral;
-            }
+        if self.reach_index.contains(term) {
+            return PremiseKind::GraphLiteral;
         }
         if let Some((atom, negation)) = self.acyclic
             && (atom == term || negation == term)
@@ -500,30 +564,12 @@ impl GraphStatement {
     }
 
     /// Vertices reachable from `source` through **at least one** edge
-    /// selected by `keep` (explicit BFS; no incremental state). The
-    /// length-≥1 closure matches the reach atoms' semantics exactly: for
-    /// `target == source` membership means a directed cycle through the
-    /// source (a self-loop included).
-    fn closure_ge1(&self, source: u32, keep: &dyn Fn(usize) -> bool) -> Vec<bool> {
-        let mut seen = vec![false; self.vertices];
-        let mut queue = Vec::new();
-        for (i, &(from, to, _, _)) in self.edges.iter().enumerate() {
-            if from == source && keep(i) && (to as usize) < self.vertices {
-                seen[to as usize] = true;
-                queue.push(to);
-            }
-        }
-        let mut head = 0;
-        while let Some(&v) = queue.get(head) {
-            head += 1;
-            for (i, &(from, to, _, _)) in self.edges.iter().enumerate() {
-                if from == v && keep(i) && !seen[to as usize] {
-                    seen[to as usize] = true;
-                    queue.push(to);
-                }
-            }
-        }
-        seen
+    /// selected by `keep` (explicit BFS; no incremental state), as a
+    /// membership bitmap. The length-≥1 closure matches the reach atoms'
+    /// semantics exactly: for `target == source` membership means a
+    /// directed cycle through the source (a self-loop included).
+    fn closure_ge1(&self, source: u32, keep: &dyn Fn(usize) -> bool) -> Vec<u64> {
+        OutCsr::build(&self.edges, self.vertices, keep).closure_ge1(source)
     }
 
     /// Is the subgraph of `kept` edges acyclic? (Kahn's algorithm –
@@ -657,14 +703,14 @@ impl GraphStatement {
                     let atom = self.edges[i].2;
                     premises.contains(&atom)
                 });
-                closure[to as usize]
+                bit_get(&closure, to)
             } else {
                 // Non-refuted edges: negation not among the premises.
                 let closure = self.closure_ge1(from, &|i| {
                     let negation = self.edges[i].3;
                     !premises.contains(&negation)
                 });
-                !closure[to as usize]
+                !bit_get(&closure, to)
             };
             return if valid {
                 Ok(())
@@ -700,26 +746,24 @@ impl GraphStatement {
     }
 
     /// Is `term` a reach or acyclicity literal of this statement?
+    /// (Expected O(1): the reach literals are read from the literal index.)
     #[must_use]
     fn is_graph_literal(&self, term: TermId) -> bool {
-        self.reach
-            .iter()
-            .any(|&(_, _, atom, negation)| atom == term || negation == term)
+        self.reach_index.contains(term)
             || self
                 .acyclic
                 .is_some_and(|(atom, negation)| atom == term || negation == term)
     }
 
-    /// The statement's negation term for a graph literal, if it is one.
+    /// The statement's negation term for a graph literal, if it is one
+    /// (expected O(1): the reach literals are read from the literal index).
     #[must_use]
     fn negation_of(&self, term: TermId) -> Option<TermId> {
-        for &(_, _, atom, negation) in self.reach.iter() {
-            if atom == term {
-                return Some(negation);
-            }
-            if negation == term {
-                return Some(atom);
-            }
+        if let Some(&row) = self.reach_index.by_atom.get(&term) {
+            return Some(self.reach[row as usize].3);
+        }
+        if let Some(&row) = self.reach_index.by_negation.get(&term) {
+            return Some(self.reach[row as usize].2);
         }
         if let Some((atom, negation)) = self.acyclic {
             if atom == term {
@@ -738,6 +782,17 @@ impl GraphStatement {
     /// `value` answers each edge atom's model value; `None` (unknown)
     /// fails closed. This is the model-level analogue of `check_lemma`,
     /// used by both the ordinary replay gate and certified checks.
+    ///
+    /// The present-edge subgraph is built as adjacency once, and each
+    /// distinct source's closure is computed once and shared by every reach
+    /// atom that names it. The closures were recomputed per atom, each by
+    /// scanning the whole edge list for every vertex it reached: an n-edge
+    /// chain with n atoms from one source cost Θ(n³) here (512 edges and 512
+    /// atoms: 23.1 ms per check, against 4 µs with one traversal per
+    /// source; `docs/studies/2026-11-27-five-walks-paid-once.md`), where
+    /// this form is linear in the graph plus the atoms. The verdicts are
+    /// unchanged, and reach atoms are still examined in declaration order,
+    /// so the first atom to fail is the same one.
     pub fn check_model(
         &self,
         value: &dyn Fn(TermId) -> Option<bool>,
@@ -748,12 +803,23 @@ impl GraphStatement {
             .map(|&(_, _, atom, _)| value(atom))
             .collect::<Option<_>>()
             .ok_or(GraphProofError("edge atom has no model value"))?;
+        let present = OutCsr::build(&self.edges, self.vertices, &|i| edge_values[i]);
+        let mut closures: Vec<Option<Vec<u64>>> = vec![None; self.vertices];
+        let mut reached = |source: u32, target: u32| -> bool {
+            let Some(closure) = closures.get_mut(source as usize) else {
+                // A source outside the vertex universe leaves nowhere.
+                return false;
+            };
+            bit_get(
+                closure.get_or_insert_with(|| present.closure_ge1(source)),
+                target,
+            )
+        };
         for &(from, to, atom, _) in self.reach.iter() {
             let Some(expected) = value(atom) else {
                 return Err(GraphProofError("reach atom has no model value"));
             };
-            let closure = self.closure_ge1(from, &|i| edge_values[i]);
-            if closure[to as usize] != expected {
+            if reached(from, to) != expected {
                 return Err(GraphProofError(
                     "reach atom disagrees with the closure oracle",
                 ));
@@ -770,6 +836,84 @@ impl GraphStatement {
             }
         }
         Ok(())
+    }
+}
+
+/// The out-adjacency of a kept subgraph in CSR form: `offsets[v]..offsets[v + 1]`
+/// indexes `heads` for the heads of `v`'s kept out-edges, in edge declaration
+/// order. Built in one pass over the edges plus a prefix sum, so a closure
+/// visits each kept edge at most once instead of scanning the whole edge list
+/// for every vertex it reaches. Edges with an endpoint outside the universe
+/// are left out: the closure's first step already ignored an out-of-range
+/// head, and a tail outside the universe is reached by nothing.
+struct OutCsr {
+    offsets: Vec<usize>,
+    heads: Vec<u32>,
+}
+
+impl OutCsr {
+    fn build(
+        edges: &[(u32, u32, TermId, TermId)],
+        vertices: usize,
+        keep: &dyn Fn(usize) -> bool,
+    ) -> Self {
+        let mut offsets = vec![0usize; vertices.saturating_add(1)];
+        let mut kept: Vec<(u32, u32)> = Vec::new();
+        for (i, &(from, to, _, _)) in edges.iter().enumerate() {
+            if keep(i) && (from as usize) < vertices && (to as usize) < vertices {
+                offsets[from as usize + 1] += 1;
+                kept.push((from, to));
+            }
+        }
+        for v in 0..vertices {
+            offsets[v + 1] += offsets[v];
+        }
+        let mut heads = vec![0u32; kept.len()];
+        let mut cursor = offsets.clone();
+        for &(from, to) in &kept {
+            let slot = &mut cursor[from as usize];
+            heads[*slot] = to;
+            *slot += 1;
+        }
+        Self { offsets, heads }
+    }
+
+    /// Vertices reachable from `source` through at least one kept edge, as a
+    /// `vertices`-bit membership bitmap (`vertices` rounded up to a word).
+    /// The source itself is a member only through a cycle back to it.
+    fn closure_ge1(&self, source: u32) -> Vec<u64> {
+        let words = self.offsets.len().saturating_sub(1).div_ceil(64);
+        let mut seen = vec![0u64; words];
+        let mut queue = Vec::new();
+        let Some(row) = self.row(source) else {
+            return seen;
+        };
+        for &to in row {
+            let (word, bit) = (to as usize / 64, to as usize % 64);
+            if seen[word] >> bit & 1 == 0 {
+                seen[word] |= 1 << bit;
+                queue.push(to);
+            }
+        }
+        let mut head = 0;
+        while let Some(&v) = queue.get(head) {
+            head += 1;
+            for &to in self.row(v).unwrap_or_default() {
+                let (word, bit) = (to as usize / 64, to as usize % 64);
+                if seen[word] >> bit & 1 == 0 {
+                    seen[word] |= 1 << bit;
+                    queue.push(to);
+                }
+            }
+        }
+        seen
+    }
+
+    /// The heads of `v`'s kept out-edges, or `None` when `v` is outside the
+    /// universe.
+    fn row(&self, v: u32) -> Option<&[u32]> {
+        let v = v as usize;
+        (v < self.offsets.len() - 1).then(|| &self.heads[self.offsets[v]..self.offsets[v + 1]])
     }
 }
 
@@ -1214,5 +1358,329 @@ mod tests {
         // Chord only: acyclic, 0 reaches 2 but not itself.
         let chord = [false, false, false, true];
         assert!(statement.check_model(&|t| value(t, &chord)).is_ok());
+    }
+
+    /// The retired `check_model`, kept as the oracle for the adjacency
+    /// form: one `Vec<bool>` closure per reach atom, each scanning the whole
+    /// edge list for every vertex it reaches.
+    fn scan_check_model(
+        vertices: usize,
+        edges: &[(u32, u32, TermId, TermId)],
+        reach: &[(u32, u32, TermId, TermId)],
+        acyclic: Option<(TermId, TermId)>,
+        value: &dyn Fn(TermId) -> Option<bool>,
+    ) -> Result<(), GraphProofError> {
+        let scan_closure = |source: u32, keep: &dyn Fn(usize) -> bool| -> Vec<bool> {
+            let mut seen = vec![false; vertices];
+            let mut queue = Vec::new();
+            for (i, &(from, to, _, _)) in edges.iter().enumerate() {
+                if from == source && keep(i) && (to as usize) < vertices {
+                    seen[to as usize] = true;
+                    queue.push(to);
+                }
+            }
+            let mut head = 0;
+            while let Some(&v) = queue.get(head) {
+                head += 1;
+                for (i, &(from, to, _, _)) in edges.iter().enumerate() {
+                    if from == v && keep(i) && (to as usize) < vertices && !seen[to as usize] {
+                        seen[to as usize] = true;
+                        queue.push(to);
+                    }
+                }
+            }
+            seen
+        };
+        let edge_values: Vec<bool> = edges
+            .iter()
+            .map(|&(_, _, atom, _)| value(atom))
+            .collect::<Option<_>>()
+            .ok_or(GraphProofError("edge atom has no model value"))?;
+        for &(from, to, atom, _) in reach.iter() {
+            let Some(expected) = value(atom) else {
+                return Err(GraphProofError("reach atom has no model value"));
+            };
+            let closure = scan_closure(from, &|i| edge_values[i]);
+            if closure[to as usize] != expected {
+                return Err(GraphProofError(
+                    "reach atom disagrees with the closure oracle",
+                ));
+            }
+        }
+        if let Some((atom, _)) = acyclic {
+            let Some(expected) = value(atom) else {
+                return Err(GraphProofError("acyclic atom has no model value"));
+            };
+            let mut indegree = vec![0usize; vertices];
+            let mut outgoing: Vec<Vec<u32>> = vec![Vec::new(); vertices];
+            for (i, &(from, to, _, _)) in edges.iter().enumerate() {
+                if edge_values[i] {
+                    outgoing[from as usize].push(to);
+                    indegree[to as usize] += 1;
+                }
+            }
+            let mut queue: Vec<usize> = (0..vertices).filter(|&v| indegree[v] == 0).collect();
+            let mut removed = 0usize;
+            let mut head = 0;
+            while let Some(&v) = queue.get(head) {
+                head += 1;
+                removed += 1;
+                for &w in &outgoing[v] {
+                    indegree[w as usize] -= 1;
+                    if indegree[w as usize] == 0 {
+                        queue.push(w as usize);
+                    }
+                }
+            }
+            if (removed == vertices) != expected {
+                return Err(GraphProofError(
+                    "acyclic atom disagrees with the cycle oracle",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// A graph with parallel edges (`e01`, `e01b`), a two-vertex cycle
+    /// (`e01`, `e10`), a self-loop (`e11`) and a second self-loop on the
+    /// third vertex: 7 edges, 5 reach atoms and the acyclicity atom, whose
+    /// 8,192 assignments are each a model for both checkers to judge.
+    fn parallel_cycle_loop(
+        tm: &mut TermManager,
+    ) -> (
+        GraphStatement,
+        Vec<TermId>,
+        Vec<TermId>,
+        TermId,
+        Vec<TermId>,
+    ) {
+        let edges = ["e01", "e01b", "e10", "e11", "e20", "e02", "e22"]
+            .iter()
+            .map(|n| tm.mk_var(n, tm.sorts.bool_sort))
+            .collect::<Vec<_>>();
+        let negations: Vec<TermId> = edges.iter().map(|&a| tm.mk_not(a)).collect();
+        let reach = ["r00", "r01", "r12", "r21", "r22"]
+            .iter()
+            .map(|n| tm.mk_var(n, tm.sorts.bool_sort))
+            .collect::<Vec<_>>();
+        let acyclic = tm.mk_var("acy", tm.sorts.bool_sort);
+        let edge_list: Arc<[(u32, u32, TermId, TermId)]> = [
+            (0, 1, edges[0], negations[0]),
+            (0, 1, edges[1], negations[1]),
+            (1, 0, edges[2], negations[2]),
+            (1, 1, edges[3], negations[3]),
+            (2, 0, edges[4], negations[4]),
+            (0, 2, edges[5], negations[5]),
+            (2, 2, edges[6], negations[6]),
+        ]
+        .into();
+        let reach_list: Arc<[(u32, u32, TermId, TermId)]> = [
+            (0, 0, reach[0], tm.mk_not(reach[0])),
+            (0, 1, reach[1], tm.mk_not(reach[1])),
+            (1, 2, reach[2], tm.mk_not(reach[2])),
+            (2, 1, reach[3], tm.mk_not(reach[3])),
+            (2, 2, reach[4], tm.mk_not(reach[4])),
+        ]
+        .into();
+        let statement = GraphStatement::new(
+            3,
+            edge_list,
+            reach_list,
+            Some((acyclic, tm.mk_not(acyclic))),
+            tm.mk_bool(false),
+        );
+        (statement, edges, reach, acyclic, negations)
+    }
+
+    /// The adjacency form of `check_model` judges every assignment of a
+    /// graph with parallel edges, a cycle and self-loops exactly as the
+    /// per-atom scan did: same verdict, and the same first failing atom.
+    #[test]
+    fn adjacency_model_check_agrees_with_the_scan_on_every_assignment() {
+        let mut tm = TermManager::new();
+        let (statement, edges, reach, acyclic, _) = parallel_cycle_loop(&mut tm);
+        let atoms: Vec<TermId> = edges.iter().copied().chain(reach.iter().copied()).collect();
+        let total = atoms.len() + 1;
+        assert_eq!(1 << total, 8_192);
+        let mut accepted = 0usize;
+        for assignment in 0..1u32 << total {
+            let value = |t: TermId| -> Option<bool> {
+                if let Some(i) = atoms.iter().position(|&a| a == t) {
+                    Some(assignment >> i & 1 == 1)
+                } else if t == acyclic {
+                    Some(assignment >> atoms.len() & 1 == 1)
+                } else {
+                    None
+                }
+            };
+            let scanned = scan_check_model(
+                3,
+                statement.edges(),
+                statement.reach_atoms(),
+                Some((acyclic, tm.mk_not(acyclic))),
+                &value,
+            );
+            let indexed = statement.check_model(&value);
+            assert_eq!(scanned, indexed, "assignment {assignment}");
+            accepted += usize::from(indexed.is_ok());
+        }
+        assert_eq!(1 << total, 8_192);
+        // Both verdicts are reached by the enumeration: a satisfying
+        // assignment (every edge false, every atom false, acyclic) is in
+        // it, and so is the all-true one (a loop makes `acyclic` false).
+        assert!(accepted > 0);
+    }
+
+    /// An unknown value still fails closed, and in declaration order.
+    #[test]
+    fn adjacency_model_check_fails_closed_on_an_unknown_atom() {
+        let mut tm = TermManager::new();
+        let (statement, edges, reach, acyclic, _) = parallel_cycle_loop(&mut tm);
+        let consistent = |t: TermId| -> Option<bool> {
+            match () {
+                _ if t == edges[0] => Some(true),
+                _ if edges.contains(&t) => Some(false),
+                _ if t == reach[1] => Some(true),
+                _ if reach.contains(&t) => Some(false),
+                _ if t == acyclic => Some(true),
+                _ => None,
+            }
+        };
+        assert_eq!(statement.check_model(&consistent), Ok(()));
+        let unknown_edge =
+            |t: TermId| -> Option<bool> { if t == edges[3] { None } else { consistent(t) } };
+        assert_eq!(
+            statement.check_model(&unknown_edge),
+            Err(GraphProofError("edge atom has no model value"))
+        );
+        let unknown_reach =
+            |t: TermId| -> Option<bool> { if t == reach[3] { None } else { consistent(t) } };
+        assert_eq!(
+            statement.check_model(&unknown_reach),
+            Err(GraphProofError("reach atom has no model value"))
+        );
+        // A wrong value on the first atom is reported before a missing
+        // one on the second, as the scan did (atoms in declaration order).
+        let wrong_then_unknown = |t: TermId| -> Option<bool> {
+            match () {
+                _ if t == reach[0] => Some(true),
+                _ if t == reach[1] => None,
+                _ => consistent(t),
+            }
+        };
+        assert_eq!(
+            statement.check_model(&wrong_then_unknown),
+            Err(GraphProofError(
+                "reach atom disagrees with the closure oracle"
+            ))
+        );
+    }
+
+    /// The certificate check resolves its conclusion through the literal
+    /// index: a one-edge path witness verifies for the pair it names, is
+    /// rejected for another pair's atom (a certificate paired with the
+    /// wrong conclusion), and a literal declared twice resolves to its
+    /// first declaration. Statement equality still reads the declaration.
+    #[test]
+    fn certificate_check_resolves_conclusions_through_the_literal_index() {
+        let mut tm = TermManager::new();
+        let mut edges = Vec::new();
+        let mut negations = Vec::new();
+        let mut edge_list = Vec::new();
+        let mut reach = Vec::new();
+        let mut reach_list = Vec::new();
+        // A chain 0 → 1 → … → n over n edges, one reach atom per edge.
+        let n = 64u32;
+        for i in 0..n {
+            let atom = tm.mk_var(&format!("e{i}"), tm.sorts.bool_sort);
+            edges.push(atom);
+            negations.push(tm.mk_not(atom));
+            edge_list.push((i, i + 1, atom, tm.mk_not(atom)));
+            let r = tm.mk_var(&format!("r{i}"), tm.sorts.bool_sort);
+            reach.push(r);
+            reach_list.push((i, i + 1, r, tm.mk_not(r)));
+        }
+        // The same pair declared a second time, under another atom: the
+        // first row wins, as `find` did.
+        let r0_again = tm.mk_var("r0_again", tm.sorts.bool_sort);
+        reach_list.push((0, 1, r0_again, tm.mk_not(r0_again)));
+        let statement = GraphStatement::new(
+            n as usize + 1,
+            edge_list.into(),
+            reach_list.into(),
+            None,
+            tm.mk_bool(false),
+        );
+        assert_eq!(statement.reach_pair_of(reach[0]), Ok((0, 1, reach[0])));
+        assert_eq!(statement.reach_pair_of(r0_again), Ok((0, 1, r0_again)));
+        assert_eq!(
+            statement.reach_pair_of_negation(tm.mk_not(reach[7])),
+            Ok((7, 8, tm.mk_not(reach[7])))
+        );
+        assert_eq!(
+            statement.reach_pair_of(tm.mk_bool(true)),
+            Err(GraphProofError("conclusion is not a reach atom"))
+        );
+        assert!(statement.is_graph_literal(tm.mk_not(reach[9])));
+        assert!(!statement.is_graph_literal(tm.mk_bool(true)));
+        assert_eq!(statement.negation_of(reach[3]), Some(tm.mk_not(reach[3])));
+        assert_eq!(statement.negation_of(tm.mk_not(reach[3])), Some(reach[3]));
+        assert_eq!(
+            statement.classify(tm.mk_not(reach[3])),
+            PremiseKind::GraphLiteral
+        );
+        assert_eq!(statement.classify(tm.mk_bool(true)), PremiseKind::Foreign);
+
+        // One one-edge certificate per edge: each verifies against its own
+        // conclusion, and the last one is rejected against another pair's.
+        for (i, &r) in reach.iter().enumerate() {
+            let cert = GraphCertificate::new(
+                statement.clone(),
+                GraphRule::Path {
+                    from: i as u32,
+                    to: i as u32 + 1,
+                    edges: vec![i as u32],
+                },
+            );
+            assert_eq!(cert.check(&statement, r, &[edges[i]]), Ok(()));
+            assert!(cert.check(&statement, tm.mk_not(r), &[edges[i]]).is_err());
+        }
+        let last = GraphCertificate::new(
+            statement.clone(),
+            GraphRule::Path {
+                from: n - 1,
+                to: n,
+                edges: vec![n - 1],
+            },
+        );
+        assert_eq!(
+            last.check(&statement, reach[0], &[edges[n as usize - 1]]),
+            Err(GraphProofError("path witness endpoints mismatch"))
+        );
+        // A conflict certificate recurses through the literal index too.
+        let first = GraphCertificate::new(
+            statement.clone(),
+            GraphRule::Path {
+                from: 0,
+                to: 1,
+                edges: vec![0],
+            },
+        );
+        let false_term = tm.mk_bool(false);
+        assert_eq!(
+            first.check(&statement, false_term, &[edges[0], tm.mk_not(reach[0])]),
+            Ok(())
+        );
+        assert_eq!(
+            first.check(&statement, false_term, &[edges[0]]),
+            Err(GraphProofError("conflict premise cites no graph literal"))
+        );
+
+        // Equality reads the declaration, not the derived structures.
+        let mut tm2 = TermManager::new();
+        let (other, _, _, _, _) = parallel_cycle_loop(&mut tm2);
+        let cloned = statement.clone();
+        assert_eq!(statement, cloned);
+        assert_ne!(statement, other);
     }
 }

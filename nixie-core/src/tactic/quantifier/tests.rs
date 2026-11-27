@@ -106,6 +106,61 @@ fn test_pattern_matching_simple() {
     assert_eq!(bindings.get(&x_name), Some(&one));
 }
 
+/// The instantiation tactic's budget is a prefix of the unlimited
+/// instantiation list.  `∀ x y. (f x) ∨ (h y)` under the two-trigger
+/// pattern `((f x) (h y))` has no shared variable between its triggers, so
+/// its join is a cross product – 256 matches a side made 65,536 bindings
+/// before the tactic could stop at its default 100.  The matcher is given
+/// the budget now and stops the join there; the instances are the first
+/// `budget` of the unlimited run's, in its order.
+#[test]
+fn quantifier_instantiation_budget_is_a_prefix_of_the_unlimited_instances() {
+    let mut m = setup_manager();
+    let bool_sort = m.sorts.bool_sort;
+    let int_sort = m.sorts.int_sort;
+    let per_side = 16i64;
+
+    let x = m.mk_var("x", int_sort);
+    let y = m.mk_var("y", int_sort);
+    let f_x = m.mk_apply("f", [x], bool_sort);
+    let h_y = m.mk_apply("h", [y], bool_sort);
+    let body = m.mk_or([f_x, h_y]);
+    let forall = m.mk_forall_with_patterns([("x", int_sort), ("y", int_sort)], body, [[f_x, h_y]]);
+
+    let mut ground = vec![forall];
+    for i in 0..per_side {
+        let k = m.mk_int(i);
+        ground.push(m.mk_apply("f", [k], bool_sort));
+        ground.push(m.mk_apply("h", [k], bool_sort));
+    }
+    let base = ground.len();
+    let goal = Goal::new(ground);
+    let instances = |m: &mut TermManager, budget: usize| -> Vec<TermId> {
+        let mut tactic = QuantifierInstantiationTactic::new(m).with_max_instances(budget);
+        match tactic.apply_mut(&goal).expect("the tactic must not fail") {
+            TacticResult::SubGoals(goals) => {
+                let assertions = &goals.first().expect("one sub-goal").assertions;
+                assert_eq!(
+                    assertions.len(),
+                    base + budget.min((per_side * per_side) as usize)
+                );
+                assertions[base..].to_vec()
+            }
+            TacticResult::NotApplicable => Vec::new(),
+            other => panic!("unexpected result: {other:?}"),
+        }
+    };
+    let unlimited = instances(&mut m, usize::MAX);
+    assert_eq!(unlimited.len(), (per_side * per_side) as usize);
+    let default = instances(&mut m, 100);
+    assert_eq!(default.len(), 100);
+    for budget in [0usize, 1, 100, 255, 256, 400] {
+        let limited = instances(&mut m, budget);
+        let take = budget.min(unlimited.len());
+        assert_eq!(limited, unlimited[..take], "budget {budget}");
+    }
+}
+
 // ========  ========
 // `substitute_single_var` regression tests
 //

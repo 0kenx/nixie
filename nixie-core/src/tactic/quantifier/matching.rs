@@ -21,8 +21,10 @@ use smallvec::SmallVec;
 
 use super::ground_terms::GroundTermCollector;
 use backtrack::BacktrackMatcher;
+use join::for_each_merge;
 
 mod backtrack;
+mod join;
 
 #[cfg(test)]
 mod tests;
@@ -127,61 +129,80 @@ impl PatternMatcher {
         }
     }
 
-    /// Match patterns against ground terms and generate bindings
+    /// Match patterns against ground terms and generate bindings.
     pub fn match_against(
         &mut self,
         ground_terms: &GroundTermCollector,
         manager: &TermManager,
     ) -> Vec<Binding> {
-        let mut new_bindings = Vec::new();
+        self.match_against_within(ground_terms, manager, usize::MAX)
+    }
 
-        for (pattern_idx, pattern) in self.patterns.iter().enumerate() {
+    /// [`Self::match_against`], stopping once `limit` bindings have been
+    /// generated.
+    ///
+    /// The bindings are the first `limit` of the unlimited list, in its
+    /// order, so a caller that would have taken the first `limit` and
+    /// dropped the rest sees exactly what it saw – without the rest being
+    /// built first.  A multi-trigger's consistent merges are streamed by
+    /// the join (`matching::join`), so the stop reaches the cross product:
+    /// two triggers over disjoint variables produce a product, and the
+    /// tactic's budget is a prefix of it.
+    pub fn match_against_within(
+        &mut self,
+        ground_terms: &GroundTermCollector,
+        manager: &TermManager,
+        limit: usize,
+    ) -> Vec<Binding> {
+        let mut new_bindings: Vec<Binding> = Vec::new();
+
+        for pattern_idx in 0..self.patterns.len() {
+            if new_bindings.len() >= limit {
+                break;
+            }
+            let Pattern {
+                triggers,
+                bound_vars,
+                ..
+            } = &self.patterns[pattern_idx];
             // Skip patterns without triggers (need heuristic inference)
-            if pattern.triggers.is_empty() {
+            if triggers.is_empty() {
                 continue;
             }
 
             // For single-trigger patterns
-            if pattern.triggers.len() == 1 {
-                let trigger = pattern.triggers[0];
+            if triggers.len() == 1 {
+                let trigger = triggers[0];
 
                 // Try matching against each ground term
                 for &ground_term in ground_terms.all_terms() {
                     if let Some(subst) =
-                        self.try_match_term(trigger, ground_term, &pattern.bound_vars, manager)
+                        self.try_match_term(trigger, ground_term, bound_vars, manager)
+                        && push_binding(
+                            &mut self.generated_bindings,
+                            &mut new_bindings,
+                            pattern_idx,
+                            bound_vars,
+                            subst,
+                        )
+                        && new_bindings.len() >= limit
                     {
-                        // Check all bound variables are assigned
-                        let all_bound = pattern
-                            .bound_vars
-                            .iter()
-                            .all(|(n, _)| subst.contains_key(n));
-                        if all_bound {
-                            // Create binding key for deduplication
-                            let mut key_vec: Vec<_> = subst.iter().map(|(&k, &v)| (k, v)).collect();
-                            key_vec.sort_by_key(|(k, _)| k.into_inner());
-                            let key = (pattern_idx, key_vec.clone());
-
-                            if !self.generated_bindings.contains(&key) {
-                                self.generated_bindings.insert(key);
-                                new_bindings.push(Binding {
-                                    pattern_idx,
-                                    substitution: subst,
-                                });
-                            }
-                        }
+                        break;
                     }
                 }
-            } else if pattern.triggers.len() > 1 {
-                // Multi-trigger: all trigger patterns must match simultaneously.
-                // Compute the cross-product of per-trigger substitutions, keeping
-                // only consistent ones (same variable maps to the same term in all).
+            } else {
+                // Multi-trigger: all trigger patterns must match
+                // simultaneously.  Each trigger's partial substitutions
+                // are collected on their own, then joined on their shared
+                // variables (`matching::join`): the consistent merges,
+                // streamed in cross-product order.
                 let mut per_trigger: Vec<Vec<FxHashMap<Spur, TermId>>> = Vec::new();
 
-                for &trigger in &pattern.triggers {
+                for &trigger in triggers {
                     let mut partial_substs: Vec<FxHashMap<Spur, TermId>> = Vec::new();
                     for &ground_term in ground_terms.all_terms() {
                         if let Some(subst) =
-                            self.try_match_term(trigger, ground_term, &pattern.bound_vars, manager)
+                            self.try_match_term(trigger, ground_term, bound_vars, manager)
                         {
                             partial_substs.push(subst);
                         }
@@ -198,62 +219,47 @@ impl PatternMatcher {
                     continue;
                 }
 
-                // Cross-product merge: start with first trigger's substitutions.
-                let mut combined: Vec<FxHashMap<Spur, TermId>> = per_trigger.remove(0);
-
-                for next_substs in per_trigger {
-                    let mut merged: Vec<FxHashMap<Spur, TermId>> = Vec::new();
-                    for s1 in &combined {
-                        for s2 in &next_substs {
-                            // Merge s1 and s2 if consistent (no conflicting bindings).
-                            let mut ok = true;
-                            for (k, v2) in s2 {
-                                if let Some(v1) = s1.get(k)
-                                    && v1 != v2
-                                {
-                                    ok = false;
-                                    break;
-                                }
-                            }
-                            if ok {
-                                let mut merged_subst = s1.clone();
-                                merged_subst.extend(s2.iter().map(|(&k, &v)| (k, v)));
-                                merged.push(merged_subst);
-                            }
-                        }
-                    }
-                    combined = merged;
-                    if combined.is_empty() {
-                        break;
-                    }
-                }
-
-                for subst in combined {
-                    // Check all bound variables are assigned.
-                    let all_bound = pattern
-                        .bound_vars
-                        .iter()
-                        .all(|(n, _)| subst.contains_key(n));
-                    if all_bound {
-                        let mut key_vec: Vec<_> = subst.iter().map(|(&k, &v)| (k, v)).collect();
-                        key_vec.sort_by_key(|(k, _)| k.into_inner());
-                        let key = (pattern_idx, key_vec.clone());
-
-                        if !self.generated_bindings.contains(&key) {
-                            self.generated_bindings.insert(key);
-                            new_bindings.push(Binding {
-                                pattern_idx,
-                                substitution: subst,
-                            });
-                        }
-                    }
-                }
+                let generated = &mut self.generated_bindings;
+                for_each_merge(&per_trigger, |subst| {
+                    push_binding(generated, &mut new_bindings, pattern_idx, bound_vars, subst);
+                    new_bindings.len() < limit
+                });
             }
         }
 
         new_bindings
     }
+}
 
+/// Record `subst` for pattern `pattern_idx` as a binding if every bound
+/// variable is assigned and the pattern has not produced it before; whether
+/// one was recorded.  The deduplication key is the sorted substitution, so
+/// two matches of the same trigger (or two merges) yielding the same
+/// substitution produce one binding.
+fn push_binding(
+    generated: &mut FxHashSet<(usize, Vec<(Spur, TermId)>)>,
+    new_bindings: &mut Vec<Binding>,
+    pattern_idx: usize,
+    bound_vars: &[(Spur, SortId)],
+    subst: FxHashMap<Spur, TermId>,
+) -> bool {
+    // Check all bound variables are assigned.
+    if !bound_vars.iter().all(|(n, _)| subst.contains_key(n)) {
+        return false;
+    }
+    let mut key_vec: Vec<_> = subst.iter().map(|(&k, &v)| (k, v)).collect();
+    key_vec.sort_by_key(|(k, _)| k.into_inner());
+    if !generated.insert((pattern_idx, key_vec)) {
+        return false;
+    }
+    new_bindings.push(Binding {
+        pattern_idx,
+        substitution: subst,
+    });
+    true
+}
+
+impl PatternMatcher {
     /// Instantiate a quantifier body with a binding
     pub fn instantiate(&self, binding: &Binding, manager: &mut TermManager) -> Option<TermId> {
         let pattern = self.patterns.get(binding.pattern_idx)?;

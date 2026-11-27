@@ -61,8 +61,15 @@ impl<'a> QuantifierInstantiationTactic<'a> {
             matcher.add_pattern(quant, self.manager);
         }
 
-        // Phase 4: Match and generate bindings
-        let bindings = matcher.match_against(&ground_collector, self.manager);
+        // Phase 4: Match and generate bindings.  The budget of Phase 5 is
+        // passed in: the matcher stops at `max_instances` bindings, so a
+        // multi-trigger over disjoint variables (whose joins are a cross
+        // product) is not materialized in full for a prefix of it to be
+        // instantiated – 256 matches per trigger produced 65,536 bindings
+        // for 100 instantiations.  The bindings are the first of the
+        // unlimited list, in its order.
+        let bindings =
+            matcher.match_against_within(&ground_collector, self.manager, self.max_instances);
 
         if bindings.is_empty() {
             return Ok(TacticResult::NotApplicable);

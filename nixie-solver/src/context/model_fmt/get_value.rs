@@ -178,6 +178,15 @@ impl Context {
         // sensitive to what the term arena holds, so it is not paid for a
         // query the ordinary readings already answer.
         let mut reading: Option<Option<super::printed_check::PrintedReading>> = None;
+        // Decision (67)'s gate – does the asserted goal contain a quantifier
+        // – is a walk of every asserted term, so it is computed at most once
+        // per request, and only for a request with a compound term to show
+        // it to. Evaluated per term, and before the leaf test, it cost Θ(QG)
+        // for Q queries on a goal of size G: 2,048 asserted Booleans queried
+        // together took the whole script 985.5 M instructions, against
+        // 110.2 M now, parsing and `check-sat` included
+        // (`docs/studies/2026-11-27-five-walks-paid-once.md`).
+        let mut goal_quantified: Option<bool> = None;
         let mut rows = ModelRows::default();
         let mut values = Vec::with_capacity(terms.len());
         for &term in terms {
@@ -225,7 +234,8 @@ impl Context {
                 // structural reading because that reading answers an array
                 // `ite` with a term and would shadow this one.
                 value
-            } else if let Some(value) = if self.goal_is_quantified() && !is_leaf(term, &self.terms)
+            } else if let Some(value) = if !is_leaf(term, &self.terms)
+                && *goal_quantified.get_or_insert_with(|| self.goal_is_quantified())
             {
                 // A quantified goal's model is certified AS PRINTED (decision
                 // (67)): where the congruence closure left two values at one

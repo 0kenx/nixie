@@ -290,3 +290,153 @@ fn deep_pattern_and_term_match_on_a_small_stack() {
 
     worker.join().expect("the deep match must not overflow");
 }
+
+// ======== Multi-trigger join ========
+
+/// The retired multi-trigger merge, kept as the oracle over the matcher's
+/// own partial substitutions: the pairwise cross product of one trigger's
+/// matches with the next's, a consistency test per pair, a binding per
+/// complete merge in the order the product visited them.
+fn cross_product_bindings(
+    matcher: &PatternMatcher,
+    triggers: &[TermId],
+    bound: &[(Spur, SortId)],
+    ground: &GroundTermCollector,
+    manager: &TermManager,
+) -> Vec<Binding> {
+    let mut levels: Vec<Vec<FxHashMap<Spur, TermId>>> = Vec::new();
+    for &trigger in triggers {
+        let mut partial = Vec::new();
+        for &term in ground.all_terms() {
+            partial.extend(matcher.try_match_term(trigger, term, bound, manager));
+        }
+        levels.push(partial);
+    }
+    let mut combined = levels.remove(0);
+    for next in levels {
+        let mut merged = Vec::new();
+        for one in &combined {
+            for two in &next {
+                let consistent = two
+                    .iter()
+                    .all(|(&var, &term)| one.get(&var).is_none_or(|bound| *bound == term));
+                if consistent {
+                    let mut subst = one.clone();
+                    subst.extend(two.iter().map(|(&var, &term)| (var, term)));
+                    merged.push(subst);
+                }
+            }
+        }
+        combined = merged;
+    }
+    combined
+        .into_iter()
+        .filter(|subst| bound.iter().all(|(name, _)| subst.contains_key(name)))
+        .map(|substitution| Binding {
+            pattern_idx: 0,
+            substitution,
+        })
+        .collect()
+}
+
+/// `forall x. (or (f x) (g x))` under the two-trigger pattern `((f x) (g x))`
+/// over `n` values on each side, with `p` and `q` thrown in as non-matching
+/// ground terms; the matcher and the collector are built once per call.
+fn two_trigger_problem(
+    manager: &mut TermManager,
+    n: u32,
+    second_trigger: &str,
+) -> (PatternMatcher, GroundTermCollector, Vec<TermId>) {
+    let int_sort = manager.sorts.int_sort;
+    let bool_sort = manager.sorts.bool_sort;
+    let x = manager.mk_var("x", int_sort);
+    let y = manager.mk_var("y", int_sort);
+    let f_x = manager.mk_apply("f", [x], bool_sort);
+    let second = manager.mk_apply(
+        second_trigger,
+        [if second_trigger == "h" { y } else { x }],
+        bool_sort,
+    );
+    let body = manager.mk_or([f_x, second]);
+    let vars: Vec<(&str, crate::sort::SortId)> = if second_trigger == "h" {
+        vec![("x", int_sort), ("y", int_sort)]
+    } else {
+        vec![("x", int_sort)]
+    };
+    let forall = manager.mk_forall_with_patterns(vars, body, [[f_x, second]]);
+
+    let mut ground = Vec::new();
+    for i in 0..n {
+        let k = manager.mk_int(i as i64);
+        ground.push(manager.mk_apply("f", [k], bool_sort));
+        ground.push(manager.mk_apply(second_trigger, [k], bool_sort));
+    }
+    let p = manager.mk_var("p", bool_sort);
+    let q = manager.mk_var("q", bool_sort);
+    ground.push(p);
+    ground.push(q);
+    let goal = crate::tactic::Goal::new(ground);
+
+    let mut matcher = PatternMatcher::new();
+    matcher.add_pattern(forall, manager);
+    let mut collector = GroundTermCollector::new();
+    collector.collect_from_goal(&goal, manager);
+    (matcher, collector, vec![f_x, second])
+}
+
+/// The indexed join produces the bindings the pairwise cross product did,
+/// binding for binding in order, for triggers sharing their variable (n
+/// bindings from n matches a side) and for triggers over disjoint
+/// variables (n² bindings).
+#[test]
+fn multi_trigger_join_is_the_cross_product_in_order() {
+    let mut manager = TermManager::new();
+    for (second, per_side, expected) in [("g", 40u32, 40usize), ("h", 12u32, 144usize)] {
+        let (mut matcher, collector, triggers) =
+            two_trigger_problem(&mut manager, per_side, second);
+        let names: Vec<&str> = if second == "h" {
+            vec!["x", "y"]
+        } else {
+            vec!["x"]
+        };
+        let bound = bound_int_vars(&mut manager, &names);
+        let oracle = cross_product_bindings(&matcher, &triggers, &bound, &collector, &manager);
+        assert_eq!(oracle.len(), expected, "oracle for {second}");
+        let joined = matcher.match_against(&collector, &manager);
+        assert_eq!(joined.len(), expected, "join for {second}");
+        for (joined, oracle) in joined.iter().zip(&oracle) {
+            assert_eq!(joined.pattern_idx, oracle.pattern_idx);
+            assert_eq!(
+                resolved(&manager, &joined.substitution),
+                resolved(&manager, &oracle.substitution)
+            );
+        }
+    }
+}
+
+/// `match_against_within` yields the first `limit` bindings of the
+/// unlimited list, in its order – for a single trigger and for a
+/// multi-trigger whose product is far larger than the limit.
+#[test]
+fn limited_matching_yields_a_prefix_of_the_unlimited_bindings() {
+    let mut manager = TermManager::new();
+    for (second, per_side) in [("g", 64u32), ("h", 64u32)] {
+        let (mut matcher, collector, _) = two_trigger_problem(&mut manager, per_side, second);
+        let all = matcher.match_against(&collector, &manager);
+        assert!(all.len() > 7);
+        for limit in [0usize, 1, 7, all.len() - 1, all.len(), all.len() + 5] {
+            // A fresh matcher per limit: its deduplication remembers the
+            // bindings an earlier call produced.
+            let (mut fresh, _, _) = two_trigger_problem(&mut manager, per_side, second);
+            let limited = fresh.match_against_within(&collector, &manager, limit);
+            let take = limit.min(all.len());
+            assert_eq!(limited.len(), take, "{second} at limit {limit}");
+            for (limited, unlimited) in limited.iter().zip(&all[..take]) {
+                assert_eq!(
+                    resolved(&manager, &limited.substitution),
+                    resolved(&manager, &unlimited.substitution)
+                );
+            }
+        }
+    }
+}
