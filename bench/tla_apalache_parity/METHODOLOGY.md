@@ -136,6 +136,29 @@ before the harness fixes below and is superseded.
   the mdx expectation says OK. Oracle drift, not compared.
 * 28 cells exit 1 in the pinned binary; the mdx documents the outcome as
   if the binary produced it. See `OracleFailed` above.
+* **The lasso tableau's `Init` contradicts its step-0 equation for a loop
+  that starts in the first state** (`TableauEncoder.auxVarInitEx`: `unroll
+  = TRUE` for `[]`, `FALSE` for `<>`, beside `unroll@0 = prev@0 /\
+  (~InLoop@1 \/ arg@0)`). A lasso whose cycle starts in state 0 is
+  unrepresentable whenever a `[]` argument is false there (or a `<>`
+  argument true); the oracle finds the violation one step later, rotated,
+  or not within a bound that reaches the shorter form only. Reproducer:
+  `Next == x' = 1 - x /\ y' = y` from `x = 0`, `<>[](x = 1)` – violated by
+  the two-step lasso `(0,0) -> (1,0) -> (0,0)`, which the oracle (and
+  Nixie before 2026-11-27) does not find at length 2. Nixie now leaves
+  `unroll@0` to its equation (`temporal.rs`); on this corpus no
+  `Agree-Violation` length changed, the shape being absent from the 26
+  `--temporal` cells. A cell whose Nixie counterexample is one step
+  shorter than the oracle's on a temporal property is this defect, not a
+  mismatch. Detail: `docs/studies/2026-11-27-tla-47-fairness.md`.
+* **No stuttering in the lasso, on either side.** `LoopEncoder` conjoins
+  the loop logic with `Next` as is, so a behaviour that stutters forever –
+  which every `Init /\ [][Next]_v` specification has – is not a behaviour
+  of the encoded system. That is why `ManyBoxes`/`LongLoops`/
+  `NoLoopsNoProblems` "Liveness" pass on a cycle whose first state
+  violates the property once stuttering is allowed. Parity is kept (the
+  lasso is built the same way); whether to model stuttering is an open
+  semantic question for the drop-in contract.
 * Candidates to confirm and add: `Deadlock712` ("Apalache may miss a
   deadlock", their issue 712); `InfDomFun` (expected violation but
   `f[0] = 42` appears to hold).

@@ -36,7 +36,7 @@ use std::rc::Rc;
 use nixie_core::{TermId, TermManager};
 use nixie_solver::{Solver, SolverResult};
 use nixie_tla::types::Inference;
-use nixie_tla::{Kera, KeraRef, Lowerer};
+use nixie_tla::{Kera, KeraRef, Lowerer, Name};
 use nixie_tla_syntax::{ConfigValue, LoadedSpec, Module, TlcConfig, UnitKind};
 
 use crate::encode::{EncodeError, Encoder, SetEncoding};
@@ -422,6 +422,24 @@ pub struct Bmc {
     /// last state, not by the solver: which disjunct the search happened to
     /// satisfy first is not an answer, it is an accident of encoding order.
     violated_invariants: Vec<String>,
+    /// The fairness assumptions the lasso search makes (issue #47), when it
+    /// is a temporal pass under a `SPECIFICATION` that states them: one
+    /// instance per `WF`/`SF` node, per instantiated candidate.
+    fairness: Vec<crate::fairness::Instance>,
+    /// Clauses ruling out lassoes found **unfair** on their concrete cycle
+    /// (issue #47), each with the depth it was built for: a clause speaks
+    /// about positions of that depth's unrolling, and a deeper lasso whose
+    /// cycle runs on past them is not covered by it – so a clause is
+    /// asserted at its own depth only.
+    lasso_blocks: Vec<(u32, TermId)>,
+    /// The symbolic set names a positive existential may be skolemized
+    /// over, as the prepare pass derived them: the concrete `ENABLED`
+    /// queries (issue #47) skolemize to the same witnesses.
+    skolem_syms: Vec<String>,
+    /// The assumptions as encoded for the check in progress: a concrete
+    /// `ENABLED` query asserts them too, since the constants they pin are
+    /// the ones the candidate lasso's states were built on.
+    assumed: Vec<TermId>,
 }
 
 /// What became of the attempt to confirm a counterexample independently.
@@ -495,14 +513,14 @@ impl Bmc {
     /// G` desugared). The specification's `Init`/`Next` are rewritten with
     /// the lasso variables (`__InLoop`, `__saved_<v>`) and the property's
     /// tableau, and the checked invariant becomes `__LoopOK => __<prop>_init`
-    /// — an ordinary state predicate of the rewritten specification, which
+    /// – an ordinary state predicate of the rewritten specification, which
     /// the rest of the pipeline (inference, frames, encoding, replay) handles
     /// unchanged. A counterexample is a **lasso**: a finite trace whose last
     /// state equals its loop-entry state, and the trace's `loop` field names
     /// the entry.
     ///
     /// "No counterexample within k" means no lasso of k steps or fewer
-    /// violates the property — not that the property holds.
+    /// violates the property – not that the property holds.
     ///
     /// # Errors
     ///
@@ -564,6 +582,7 @@ impl Bmc {
             ),
             config,
             InvKind::Temporal,
+            &[],
             tm,
         )
     }
@@ -643,16 +662,24 @@ impl Bmc {
     }
 
     /// [`Self::prepare_temporal_in`] with the roles as a `SPECIFICATION`
-    /// formula names them (issue #46), and the temporal property `temporal`.
+    /// formula names them (issue #46), the temporal property `temporal`,
+    /// and the fairness conjuncts the formula also states – **assumed**
+    /// (issue #47): a lasso is a counterexample only when it satisfies
+    /// every one of them: each candidate lasso is examined on its concrete
+    /// cycle at check time, and an unfair one is ruled out.
     ///
     /// # Errors
     ///
-    /// As [`Self::prepare_temporal`].
+    /// As [`Self::prepare_temporal`], plus [`SetupError::Lower`] when a
+    /// fairness clause cannot be assumed faithfully: quantified over a set
+    /// with no statically known members, a primed subscript, a construct the
+    /// lowering refuses. Declined by name, never dropped.
     pub fn prepare_temporal_spec<'a>(
         spec: &'a LoadedSpec,
         root: &'a Module,
         roles: SpecRoles<'a>,
         temporal: &str,
+        fairness: &[nixie_tla_syntax::FairnessClause<'_>],
         config: &TlcConfig,
         tm: &mut TermManager,
     ) -> core::result::Result<Self, SetupError> {
@@ -667,6 +694,7 @@ impl Bmc {
             },
             config,
             InvKind::Temporal,
+            fairness,
             tm,
         )
     }
@@ -685,18 +713,21 @@ impl Bmc {
         config: &TlcConfig,
         tm: &mut TermManager,
     ) -> core::result::Result<Self, SetupError> {
-        Self::prepare_with_config_kind(spec, root, roles, config, InvKind::State, tm)
+        Self::prepare_with_config_kind(spec, root, roles, config, InvKind::State, &[], tm)
     }
 
     /// [`Self::prepare_with_config`] with the `--inv` names' kind given by
     /// the caller: a state/action invariant (the default) or a temporal
-    /// property (the lasso encoding, issue #29).
+    /// property (the lasso encoding, issue #29) – and, for the latter, the
+    /// fairness the `SPECIFICATION` states (issue #47), which no other kind
+    /// of check assumes.
     fn prepare_with_config_kind<'a>(
         spec: &'a LoadedSpec,
         module: &'a Module,
         roles: SpecRoles<'a>,
         config: &TlcConfig,
         inv_kind: InvKind,
+        fairness: &[nixie_tla_syntax::FairnessClause<'_>],
         tm: &mut TermManager,
     ) -> core::result::Result<Self, SetupError> {
         let SpecRoles {
@@ -849,14 +880,14 @@ impl Bmc {
         // The invariant levels split three ways, and only the temporal one
         // is refused: an action-level invariant is a legitimate thing to ask
         // (Apalache's `ActionInv.tla`), checked over step pairs; a temporal
-        // one is a lasso question — answered only when asked for as such
+        // one is a lasso question – answered only when asked for as such
         // (`--temporal`, issue #29), never silently by treating it as a
         // state invariant.
         for inv in roles.inv {
             let kind = invariant_kind(level_of(inv));
             match (inv_kind, kind) {
                 // `--temporal=P`: the property is encoded as a lasso
-                // (issue #29), whatever its level — a state predicate
+                // (issue #29), whatever its level – a state predicate
                 // `P` is a property of the initial state, as Apalache
                 // notes and accepts.
                 (InvKind::Temporal, _) => {}
@@ -876,6 +907,22 @@ impl Bmc {
         }
 
         let mut lasso_box: Option<crate::temporal::Lasso> = None;
+        // The fairness the `SPECIFICATION` states, lowered to the instances
+        // the lasso assumes (issue #47) – here, on the specification's own
+        // lowerer, so a `.cfg`'s substitutions reach the clauses' names, and
+        // before the lasso is built on them. Only a liveness check assumes
+        // fairness; for invariants it changes nothing (see
+        // `nixie_tla_syntax::behavior`).
+        let fairness_instances: Vec<crate::fairness::Instance> = if inv_kind == InvKind::Temporal
+            && !fairness.is_empty()
+        {
+            crate::fairness::lower(fairness, &mut low, module).map_err(|why| SetupError::Lower {
+                name: "the specification's fairness".to_string(),
+                why,
+            })?
+        } else {
+            Vec::new()
+        };
         // Each role is read in the module its conjunct was written in; see
         // [`Self::prepare_with_config_in`]. An initial predicate written
         // inline must still be a state predicate.
@@ -902,8 +949,8 @@ impl Bmc {
             if inv_kind == InvKind::Temporal {
                 // The lasso encoding (issue #29): the property's temporal
                 // structure comes back from the lowerer as a `Temporal`
-                // tree — every state-level leaf lowered by the ordinary
-                // machinery — and `temporal::encode` rewrites `Init`/`Next`
+                // tree – every state-level leaf lowered by the ordinary
+                // machinery – and `temporal::encode` rewrites `Init`/`Next`
                 // with `__InLoop`, the frozen copies and the tableau, and
                 // yields the state invariant a violating lasso falsifies.
                 // The rest of this function sees an ordinary specification.
@@ -931,6 +978,7 @@ impl Bmc {
                     Rc::clone(&next_k),
                     &tree,
                     &all_state_variables(spec),
+                    &fairness_instances,
                 );
                 invs.push(((*inv).to_string(), Rc::clone(&lasso.invariant)));
                 lasso_box = Some(lasso);
@@ -977,14 +1025,14 @@ impl Bmc {
             max_candidates: crate::encode::DEFAULT_MAX_CANDIDATES,
         });
         let framed_now = coarse.universe.keys().cloned().collect::<Vec<_>>();
-        let syms = nixie_tla::lower::Syms::from_names(
-            quantifier_domain_names(&[&init_k, &next_k])
-                .into_iter()
-                .filter(|n| {
-                    !framed_now.iter().any(|f| f == n)
-                        && !matches!(n.as_str(), "Nat" | "Int" | "STRING" | "BOOLEAN")
-                }),
-        );
+        let skolem_syms: Vec<String> = quantifier_domain_names(&[&init_k, &next_k])
+            .into_iter()
+            .filter(|n| {
+                !framed_now.iter().any(|f| f == n)
+                    && !matches!(n.as_str(), "Nat" | "Int" | "STRING" | "BOOLEAN")
+            })
+            .collect();
+        let syms = nixie_tla::lower::Syms::from_names(skolem_syms.iter().cloned());
         let init_k = nixie_tla::lower::skolemize_with_syms_at(&init_k, true, &syms);
         let next_k = nixie_tla::lower::skolemize_with_syms_at(&next_k, true, &syms);
         let invs: Vec<(String, KeraRef)> = invs
@@ -1490,6 +1538,10 @@ impl Bmc {
             action_invariant_names,
             blocked: Vec::new(),
             violated_invariants: Vec::new(),
+            fairness: fairness_instances,
+            lasso_blocks: Vec::new(),
+            skolem_syms,
+            assumed: Vec::new(),
         })
     }
 
@@ -1541,6 +1593,9 @@ impl Bmc {
         // repeatedly (the `--max-error` loop) does not count one dropped
         // assumption per query.
         self.dropped_assumptions = dropped_now;
+        // For the concrete `ENABLED` queries a fairness check makes (issue
+        // #47): the same constants, asserted afresh.
+        self.assumed = assumed.clone();
 
         // The assumptions on their own decide whether the specification has
         // any behaviours. A contradictory assumption set makes every deeper
@@ -1713,133 +1768,187 @@ impl Bmc {
             }
 
             if !negated.is_empty() {
+                // One depth's search, as a loop when the pass assumes
+                // fairness (issue #47): a candidate lasso whose concrete
+                // cycle breaks an assumption is ruled out and the same query
+                // is asked again, until a fair one is found or none remains.
+                let mut examined = 0usize;
                 let violated = if negated.len() == 1 {
                     negated[0]
                 } else {
                     tm.mk_or(negated)
                 };
-                solver.push();
-                solver.assert(violated, tm);
-                for c in &self.blocked {
-                    solver.assert(*c, tm);
-                }
-                let answer = solver.check(tm);
-                times.lap(&format!("step {j}: invariant query -> {answer:?}"));
-                // `NIXIE_TLA_DUMP_QUERY=<dir>`: every depth's query as a
-                // standalone SMT-LIB file — the assertions, with their free
-                // variables declared — so a surprising answer can be replayed
-                // in the `nixie` CLI and attached to a solver report.
-                if let Ok(dir) = std::env::var("NIXIE_TLA_DUMP_QUERY") {
-                    use std::io::Write;
-                    let path = format!("{dir}/d{depth}_j{j}.smt2");
-                    let mut roots = assumed.clone();
-                    roots.push(init);
-                    for i in 0..j {
-                        roots.push(transitions[i as usize]);
+                'candidate: loop {
+                    solver.push();
+                    solver.assert(violated, tm);
+                    for c in &self.blocked {
+                        solver.assert(*c, tm);
                     }
-                    for c in self.encoder.side_constraints().to_vec() {
-                        roots.push(c);
+                    // The unfair lassoes ruled out at **this** depth (a clause
+                    // speaks about this depth's positions only).
+                    for (d, b) in &self.lasso_blocks {
+                        if *d == j {
+                            solver.assert(*b, tm);
+                        }
                     }
-                    roots.push(violated);
-                    let printer = nixie_core::smtlib::Printer::new(tm);
-                    let mut names: std::collections::BTreeMap<String, nixie_core::SortId> =
-                        std::collections::BTreeMap::new();
-                    for r in &roots {
-                        for v in tm.free_vars(*r) {
-                            if let Some(d) = tm.get(v) {
-                                names.insert(printer.print_term(v), d.sort);
+                    let answer = solver.check(tm);
+                    times.lap(&format!("step {j}: invariant query -> {answer:?}"));
+                    // `NIXIE_TLA_DUMP_QUERY=<dir>`: every depth's query as a
+                    // standalone SMT-LIB file – the assertions, with their free
+                    // variables declared – so a surprising answer can be replayed
+                    // in the `nixie` CLI and attached to a solver report.
+                    if let Ok(dir) = std::env::var("NIXIE_TLA_DUMP_QUERY") {
+                        use std::io::Write;
+                        let path = format!("{dir}/d{depth}_j{j}.smt2");
+                        let mut roots = assumed.clone();
+                        roots.push(init);
+                        for i in 0..j {
+                            roots.push(transitions[i as usize]);
+                        }
+                        for c in self.encoder.side_constraints().to_vec() {
+                            roots.push(c);
+                        }
+                        roots.push(violated);
+                        let printer = nixie_core::smtlib::Printer::new(tm);
+                        let mut names: std::collections::BTreeMap<String, nixie_core::SortId> =
+                            std::collections::BTreeMap::new();
+                        for r in &roots {
+                            for v in tm.free_vars(*r) {
+                                if let Some(d) = tm.get(v) {
+                                    names.insert(printer.print_term(v), d.sort);
+                                }
                             }
                         }
-                    }
-                    if let Ok(mut f) = std::fs::File::create(&path) {
-                        let _ = writeln!(f, "(set-logic ALL)");
-                        for (n, sort) in &names {
-                            let _ =
-                                writeln!(f, "(declare-fun {n} () {})", printer.print_sort(*sort));
+                        if let Ok(mut f) = std::fs::File::create(&path) {
+                            let _ = writeln!(f, "(set-logic ALL)");
+                            for (n, sort) in &names {
+                                let _ = writeln!(
+                                    f,
+                                    "(declare-fun {n} () {})",
+                                    printer.print_sort(*sort)
+                                );
+                            }
+                            for r in &roots {
+                                let _ = writeln!(f, "(assert {})", printer.print_term(*r));
+                            }
+                            let _ = writeln!(f, "(check-sat)");
                         }
-                        for r in &roots {
-                            let _ = writeln!(f, "(assert {})", printer.print_term(*r));
-                        }
-                        let _ = writeln!(f, "(check-sat)");
                     }
-                }
-                if answer != SolverResult::Sat {
-                    // Pop before any early return: an abandoned scope would leak
-                    // its assertions into the *next* `check` call on this `Bmc`
-                    // (the `--max-error` loop reuses it), answering a different
-                    // question than the one asked.
-                    solver.pop();
-                }
-                match answer {
-                    SolverResult::Sat => {
-                        // A `Sat` answer is a counterexample **candidate**. It is
-                        // only a counterexample once it has been read back as
-                        // TLA+ values and replayed by `nixie-tla`'s evaluator –
-                        // the independent implementation of TLA+ that
-                        // `bench/tla_eval` checks against TLC. Until both succeed
-                        // the honest verdict is [`Outcome::Unknown`], never
-                        // [`Outcome::Violation`]: exit 12 is what users and tools
-                        // act on, and an undecodable or non-replaying trace is
-                        // not evidence of a violation. It is evidence that the
-                        // pipeline disagrees with itself somewhere – lowering,
-                        // encoding or the solver – and every such disagreement
-                        // stays visible in [`Bmc::verification`] so it gets
-                        // chased rather than explained away.
-                        //
-                        // The model is read before the pop; the trace extraction
-                        // walks it, and a popped scope's model is not one to
-                        // read.
-                        let (trace, verdict) = match solver.model() {
-                            None => (
-                                None,
-                                Verification::NotDecoded(
-                                    "the solver produced no model".to_string(),
-                                ),
-                            ),
-                            Some(model) => match self.extract(model, j, tm) {
-                                Err(why) => (None, Verification::NotDecoded(why)),
-                                Ok(t) => match self.replay(&t) {
-                                    Err(why) => (Some(t), Verification::NotReplayed(why)),
-                                    Ok(()) => (Some(t), Verification::Replayed),
-                                },
-                            },
-                        };
+                    if answer != SolverResult::Sat {
+                        // Pop before any early return: an abandoned scope would leak
+                        // its assertions into the *next* `check` call on this `Bmc`
+                        // (the `--max-error` loop reuses it), answering a different
+                        // question than the one asked.
                         solver.pop();
-                        self.counterexample = trace;
-                        self.verification = Some(verdict.clone());
-                        // A search that ran with dropped assumptions is a search
-                        // over a **superset** of the intended states. A `Sat`
-                        // there may be an artefact of exactly the widening, so it
-                        // is `Unknown` and says why – the count is what a caller
-                        // needs in order to decide whether to trust it.
-                        if self.dropped_assumptions > 0 {
-                            return Ok(Outcome::Unknown(format!(
-                                "a counterexample was found, but {} assumption(s) \
+                    }
+                    match answer {
+                        SolverResult::Sat => {
+                            // A `Sat` answer is a counterexample **candidate**. It is
+                            // only a counterexample once it has been read back as
+                            // TLA+ values and replayed by `nixie-tla`'s evaluator –
+                            // the independent implementation of TLA+ that
+                            // `bench/tla_eval` checks against TLC. Until both succeed
+                            // the honest verdict is [`Outcome::Unknown`], never
+                            // [`Outcome::Violation`]: exit 12 is what users and tools
+                            // act on, and an undecodable or non-replaying trace is
+                            // not evidence of a violation. It is evidence that the
+                            // pipeline disagrees with itself somewhere – lowering,
+                            // encoding or the solver – and every such disagreement
+                            // stays visible in [`Bmc::verification`] so it gets
+                            // chased rather than explained away.
+                            //
+                            // The model is read before the pop; the trace extraction
+                            // walks it, and a popped scope's model is not one to
+                            // read.
+                            let (trace, verdict) = match solver.model() {
+                                None => (
+                                    None,
+                                    Verification::NotDecoded(
+                                        "the solver produced no model".to_string(),
+                                    ),
+                                ),
+                                Some(model) => match self.extract(model, j, tm) {
+                                    Err(why) => (None, Verification::NotDecoded(why)),
+                                    Ok(t) => match self.replay(&t) {
+                                        Err(why) => (Some(t), Verification::NotReplayed(why)),
+                                        Ok(()) => (Some(t), Verification::Replayed),
+                                    },
+                                },
+                            };
+                            solver.pop();
+                            // Fairness (issue #47): a lasso is a behaviour of the
+                            // specification only if it satisfies every assumption
+                            // stated. Each is examined on the concrete cycle:
+                            // `taken` by the evaluator on every cycle step, and
+                            // `ENABLED` by the solver on every cycle state. An
+                            // unfair lasso is ruled out and the search resumes at
+                            // this depth; one that cannot be examined is `Unknown`,
+                            // never reported and never dismissed.
+                            if let Some(t) = &trace
+                                && !self.fairness.is_empty()
+                            {
+                                examined += 1;
+                                match self.fairness_of(t, j, tm) {
+                                    Ok(crate::fairness::Verdict::Satisfied) => {}
+                                    Ok(crate::fairness::Verdict::Violated { by, why }) => {
+                                        if std::env::var_os("NIXIE_TLA_DEBUG_FAIRNESS").is_some() {
+                                            eprintln!(
+                                                "[fairness] candidate {examined} at depth {j} is unfair: {why}"
+                                            );
+                                        }
+                                        match self.block_unfair_lasso(t, j, &by, tm) {
+                                            Ok(()) => continue 'candidate,
+                                            Err(could_not) => {
+                                                return Ok(Outcome::Unknown(format!(
+                                                    "a lasso violating the property is unfair ({why}) \
+                                                 and could not be ruled out, so the search cannot go \
+                                                 on: {could_not}"
+                                                )));
+                                            }
+                                        }
+                                    }
+                                    Err(why) => return Ok(Outcome::Unknown(why)),
+                                }
+                            }
+                            self.counterexample = trace;
+                            self.verification = Some(verdict.clone());
+                            // A search that ran with dropped assumptions is a search
+                            // over a **superset** of the intended states. A `Sat`
+                            // there may be an artefact of exactly the widening, so it
+                            // is `Unknown` and says why – the count is what a caller
+                            // needs in order to decide whether to trust it.
+                            if self.dropped_assumptions > 0 {
+                                return Ok(Outcome::Unknown(format!(
+                                    "a counterexample was found, but {} assumption(s) \
                              could not be encoded, so the search ran over more \
                              states than the specification allows and the trace \
                              may be an artefact",
-                                self.dropped_assumptions
+                                    self.dropped_assumptions
+                                )));
+                            }
+                            return match &verdict {
+                                Verification::Replayed => Ok(Outcome::Violation { step: j }),
+                                Verification::NotDecoded(why) => Ok(Outcome::Unknown(format!(
+                                    "a counterexample was found but could not be read \
+                             back as TLA+ values: {why}"
+                                ))),
+                                Verification::NotReplayed(why) => Ok(Outcome::Unknown(format!(
+                                    "a counterexample was read back but does not replay \
+                             – the encoding and the evaluator disagree: {why}"
+                                ))),
+                            };
+                        }
+                        SolverResult::Unsat => {}
+                        SolverResult::Unknown => {
+                            return Ok(Outcome::Unknown(format!(
+                                "the solver could not decide the {j}-step query"
                             )));
                         }
-                        return match &verdict {
-                            Verification::Replayed => Ok(Outcome::Violation { step: j }),
-                            Verification::NotDecoded(why) => Ok(Outcome::Unknown(format!(
-                                "a counterexample was found but could not be read \
-                             back as TLA+ values: {why}"
-                            ))),
-                            Verification::NotReplayed(why) => Ok(Outcome::Unknown(format!(
-                                "a counterexample was read back but does not replay \
-                             – the encoding and the evaluator disagree: {why}"
-                            ))),
-                        };
                     }
-                    SolverResult::Unsat => {}
-                    SolverResult::Unknown => {
-                        return Ok(Outcome::Unknown(format!(
-                            "the solver could not decide the {j}-step query"
-                        )));
-                    }
-                }
+                    // `Sat` returned above; `Unsat` is this depth's answer, and
+                    // the next depth is asked.
+                    break 'candidate;
+                } // 'candidate
             } // state-invariant query
 
             // ======== the action-invariant query, at this step ========
@@ -2518,6 +2627,222 @@ impl Bmc {
         true
     }
 
+    /// The fairness assumptions this check makes, when it is a lasso search
+    /// under a `SPECIFICATION` that states them (issue #47): one instance
+    /// per `WF`/`SF` node, per instantiated candidate of a quantified clause.
+    #[must_use]
+    pub fn fairness(&self) -> &[crate::fairness::Instance] {
+        &self.fairness
+    }
+
+    /// The cycle of a candidate lasso, as its states in order: from the
+    /// first state in which `__InLoop` holds to the last state of the trace,
+    /// whose successor is the first again (issue #29's loop field). The
+    /// closing step is `last -> first`, evaluated on the two states.
+    ///
+    /// `None` when the trace does not identify a loop.
+    fn cycle_of<'t>(&self, trace: &'t Trace) -> Option<&'t [State]> {
+        let l = loop_start(trace)?;
+        trace.states.get(l..).filter(|c| !c.is_empty())
+    }
+
+    /// Examine a candidate lasso's fairness on its concrete cycle (issue
+    /// #47): `taken` by the evaluator on every cycle step, including the
+    /// closing one, and `ENABLED` by the solver on each cycle state, the
+    /// state pinned into the action as literals.
+    ///
+    /// # Errors
+    ///
+    /// The first instance, step or state that cannot be decided – the
+    /// caller's `Unknown`, never a verdict.
+    fn fairness_of(
+        &mut self,
+        trace: &Trace,
+        depth: u32,
+        tm: &mut TermManager,
+    ) -> core::result::Result<crate::fairness::Verdict, String> {
+        let Some(cycle) = self.cycle_of(trace) else {
+            return Err(
+                "the candidate lasso does not identify its loop (`__InLoop`), so its fairness \
+                 cannot be examined"
+                    .into(),
+            );
+        };
+        let query = crate::fairness::EnabledQuery {
+            syms: nixie_tla::lower::Syms::from_names(self.skolem_syms.iter().cloned()),
+            assumed: &self.assumed,
+            limit: self.conflict_limit,
+            depth,
+        };
+        let fairness = self.fairness.clone();
+        let encoder = &mut self.encoder;
+        crate::fairness::examine(&fairness, cycle, |i, state| {
+            crate::fairness::enabled(encoder, &fairness[i].action, state, &query, tm)
+        })
+    }
+
+    /// Rule out the lassoes an unfair candidate gives evidence about (issue
+    /// #47): per violated instance, every lasso of **this depth** whose
+    /// cycle stays within the states just found to enable the action (`WF`,
+    /// where all of them did) or contains one of them (`SF`), and that
+    /// takes none of its steps. Sound because enabling was established
+    /// concretely on each of those states; general because the prefix, the
+    /// order of the cycle, and stuttering steps inside it change neither.
+    ///
+    /// The precondition is stated in full – every state variable at every
+    /// position the loop may occupy – so a lasso the clause excludes is one
+    /// it has evidence about; a variable or a value it cannot express fails
+    /// the block rather than weakening it.
+    ///
+    /// # Errors
+    ///
+    /// Why the clause could not be built. The caller answers `Unknown`:
+    /// asking again would return the same lasso.
+    fn block_unfair_lasso(
+        &mut self,
+        trace: &Trace,
+        depth: u32,
+        by: &[(usize, Vec<usize>)],
+        tm: &mut TermManager,
+    ) -> core::result::Result<(), String> {
+        let err =
+            |what: &str| -> String { format!("the unfair lasso could not be ruled out: {what}") };
+        let Some(k) = trace.states.len().checked_sub(1) else {
+            return Err(err("it has no states"));
+        };
+        let Ok(k) = u32::try_from(k) else {
+            return Err(err("it is longer than the step limit"));
+        };
+        // The specification's own variables: the lasso's bookkeeping and
+        // this module's are not the state a cycle is made of.
+        let spec_vars: Vec<String> = self
+            .encoder
+            .state_names()
+            .filter(|n| {
+                !(n.starts_with(crate::temporal::SAVED)
+                    || n.starts_with(crate::temporal::TEMPORAL)
+                    || n.starts_with(crate::temporal::IN_LOOP)
+                    || n.starts_with(crate::fairness::AUX_PREFIX))
+            })
+            .map(str::to_string)
+            .collect();
+        let cycle = self
+            .cycle_of(trace)
+            .ok_or_else(|| err("it does not identify its loop"))?;
+        // Each cycle state, as literals, with the sort its variables have.
+        let mut as_lits: Vec<std::collections::HashMap<Name, KeraRef>> =
+            Vec::with_capacity(cycle.len());
+        for st in cycle {
+            as_lits.push(crate::fairness::literals_of(st, &mut self.encoder, tm)?);
+        }
+        let in_loop = |encoder: &mut Encoder, p: u32, tm: &mut TermManager| -> Option<TermId> {
+            encoder
+                .encode_at(
+                    &Kera::Var(nixie_tla::Name(crate::temporal::IN_LOOP.into())).rc(),
+                    p,
+                    tm,
+                )
+                .ok()
+        };
+        // `v@p = sigma`, for every specification variable.
+        let state_is = |encoder: &mut Encoder,
+                        p: u32,
+                        sigma: &std::collections::HashMap<Name, KeraRef>,
+                        tm: &mut TermManager|
+         -> Option<TermId> {
+            let mut same: Vec<TermId> = Vec::with_capacity(spec_vars.len());
+            for name in &spec_vars {
+                let lit = sigma.get(&Name(name.clone()))?;
+                // The variable at `p`, created if the unrolling never
+                // mentioned it there: an unmentioned variable is free at
+                // that position, and the clause must still speak about it
+                // to be evidence about the cycle.
+                let var = encoder
+                    .encode_at(&Kera::Var(Name(name.clone())).rc(), p, tm)
+                    .ok()?;
+                let value = encoder.encode_at(lit, p, tm).ok()?;
+                same.push(tm.mk_eq(var, value));
+            }
+            Some(tm.mk_and(same))
+        };
+        for (i, enabling) in by {
+            let kind = self
+                .fairness
+                .get(*i)
+                .map_or(crate::fairness::Kind::Weak, |inst| inst.kind);
+            let mut conj: Vec<TermId> = Vec::new();
+            // The evidence, by kind: `WF` was violated because **every**
+            // cycle state enabled the action, so a cycle within the enabling
+            // states is unfair; `SF` because **some** did, so a cycle that
+            // contains one of them is.
+            match kind {
+                crate::fairness::Kind::Weak => {
+                    for p in 1..=k {
+                        let Some(here) = in_loop(&mut self.encoder, p, tm) else {
+                            return Err(err("`__InLoop` does not encode at a loop position"));
+                        };
+                        let mut within: Vec<TermId> = Vec::with_capacity(enabling.len());
+                        for &e in enabling {
+                            let Some(sigma) = as_lits.get(e) else {
+                                return Err(err("a loop state of the evidence is missing"));
+                            };
+                            let Some(same) = state_is(&mut self.encoder, p, sigma, tm) else {
+                                return Err(err(&format!(
+                                    "the state variable(s) of a loop state do not encode at \
+                                     position {p}"
+                                )));
+                            };
+                            within.push(same);
+                        }
+                        let any_of = tm.mk_or(within);
+                        conj.push(tm.mk_implies(here, any_of));
+                    }
+                }
+                crate::fairness::Kind::Strong => {
+                    let mut hits: Vec<TermId> = Vec::with_capacity(enabling.len() * k as usize);
+                    for &e in enabling {
+                        let Some(sigma) = as_lits.get(e) else {
+                            return Err(err("a loop state of the evidence is missing"));
+                        };
+                        for p in 1..=k {
+                            let Some(here) = in_loop(&mut self.encoder, p, tm) else {
+                                return Err(err("`__InLoop` does not encode at a loop position"));
+                            };
+                            let Some(same) = state_is(&mut self.encoder, p, sigma, tm) else {
+                                return Err(err(&format!(
+                                    "the state variable(s) of a loop state do not encode at \
+                                     position {p}"
+                                )));
+                            };
+                            let both = tm.mk_and([here, same]);
+                            hits.push(both);
+                        }
+                    }
+                    let any_of = tm.mk_or(hits);
+                    conj.push(any_of);
+                }
+            }
+            let Some(close) = in_loop(&mut self.encoder, k, tm) else {
+                return Err(err("`__InLoop` does not encode at the closing state"));
+            };
+            conj.push(close);
+            // No step of the loop took this instance's action.
+            let taken = Kera::Var(nixie_tla::Name(format!(
+                "{}taken_{i}",
+                crate::fairness::AUX_PREFIX
+            )))
+            .rc();
+            let Ok(taken) = self.encoder.encode_at(&taken, k, tm) else {
+                return Err(err("the fairness accumulator does not encode"));
+            };
+            conj.push(tm.mk_not(taken));
+            let all = tm.mk_and(conj);
+            let clause = tm.mk_not(all);
+            self.lasso_blocks.push((depth, clause));
+        }
+        Ok(())
+    }
+
     /// The last counterexample as an **ITF** trace object (Apalache's
     /// ADR-015 JSON counterexample format).
     ///
@@ -2548,12 +2873,16 @@ impl Bmc {
         // The lasso's bookkeeping (issue #29) is not the specification's:
         // the frozen copies and the tableau node variables are how the
         // encoding works, and a reader of the trace wants the spec's own
-        // variables — plus `__InLoop`, which is how the `loop` field is
+        // variables – plus `__InLoop`, which is how the `loop` field is
         // read. Hidden from the ITF, as Apalache hides its own.
         let mut vars: Vec<String> = self
             .encoder
             .state_names()
-            .filter(|n| !(n.starts_with("__saved_") || n.starts_with("__temporal_")))
+            .filter(|n| {
+                !(n.starts_with("__saved_")
+                    || n.starts_with("__temporal_")
+                    || n.starts_with(crate::fairness::AUX_PREFIX))
+            })
             .map(std::string::ToString::to_string)
             .collect();
         // A skolem witness is the encoding's own name for "some member at
@@ -2939,7 +3268,7 @@ fn visible_zero_arg<'m>(
 /// The index of the state a lasso trace loops back to (issue #29):
 /// the first state in which `__InLoop` holds. `__InLoop` becomes true on
 /// the step **into** the loop's first repeated state, so the loop's start
-/// is that state's index. `None` when no state has it — not a lasso.
+/// is that state's index. `None` when no state has it – not a lasso.
 fn loop_start(trace: &Trace) -> Option<usize> {
     trace
         .states

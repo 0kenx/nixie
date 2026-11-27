@@ -87,7 +87,7 @@ struct Args {
     /// look; a `.cfg`'s `CHECK_DEADLOCK FALSE` says the same thing.
     no_deadlock: bool,
     /// `--deadlock`: look for deadlocks under `--temporal` too (off by
-    /// default there — see `run`).
+    /// default there – see `run`).
     deadlock: bool,
     /// `--seed=N`: the simulation PRNG's seed. Deterministic by design –
     /// the same seed gives byte-identical sampled behaviour, where
@@ -101,7 +101,7 @@ struct Args {
     /// when `--out-dir` does not say otherwise.
     run_dir: Option<PathBuf>,
     /// `--max-conflicts=N`: a deterministic per-query budget, in conflicts.
-    /// A query that exhausts it reports `Unknown` — the same honest answer
+    /// A query that exhausts it reports `Unknown` – the same honest answer
     /// the corpus harness gets from `NIXIE_BMC_CONFLICTS`. Unset: no budget.
     max_conflicts: Option<u64>,
     /// `--temporal=NAME`: check the temporal property `NAME` with the lasso
@@ -156,10 +156,13 @@ command-line option overrides the file's value with a warning. A check is
 one pass for the invariants and deadlocks, then one per temporal property.
 SPECIFICATION must name a formula of the form Init /\\ [][Next]_vars: the
 action may be written inside the brackets and several state-level conjuncts
-are conjoined, as TLC reads them. A fairness conjunct in it is announced and
-not assumed: invariants and deadlocks are checked on the safety fragment, as
-TLC and Apalache check them, and a temporal property is declined (75). Any
-other temporal clause is declined by name (75), never ignored.
+are conjoined, as TLC reads them. A fairness conjunct in it (WF, SF, also
+per process: \\A self \\in Node : WF_vars(step(self))) is announced; for a
+temporal property it is ASSUMED, so a lasso is reported only when it is a
+behaviour of the full specification; invariants and deadlocks are checked on
+the safety fragment, as TLC and Apalache check them. A fairness clause that
+cannot be assumed faithfully is declined by name (75). Any other temporal
+clause is declined by name (75), never ignored.
 
 EXIT CODES
     0 no counterexample within the bound   12 counterexample found
@@ -661,9 +664,10 @@ fn run(args: &Args) -> u8 {
     // a formula written inline, read in the module its conjunct was written
     // in (issue #46).
     let mut spec_form: Option<nixie_tla_syntax::SafetyForm<'_>> = None;
-    // The fairness the formula also states, which this checker does not
-    // assume: said out loud below, before anything is checked.
-    let mut cfg_fairness: Vec<nixie_tla_syntax::FairnessClause> = Vec::new();
+    // The fairness the formula also states: assumed by a temporal property's
+    // pass (issue #47), announced for the invariants pass, which it does not
+    // change. Said out loud below, before anything is checked.
+    let mut cfg_fairness: Vec<nixie_tla_syntax::FairnessClause<'_>> = Vec::new();
     let mut cfg_invariants: Vec<String> = Vec::new();
     let mut cfg_deadlock: Option<bool> = None;
     match &args.config {
@@ -894,36 +898,14 @@ fn run(args: &Args) -> u8 {
         }
     }
     // A liveness property under a specification that states fairness: an
-    // unfair lasso is not a behaviour of the specification, and a lasso
-    // search that ignored the clause would report it as one. Refused by
-    // name (issue #47 is honoring it); the invariants are still checked.
+    // unfair lasso is not a behaviour of the specification, so the property
+    // is checked with every fairness clause **assumed** (issue #47) – said
+    // out loud, since it is what makes a reported lasso a counterexample.
     if !cfg_fairness.is_empty() && !properties.is_empty() {
         let clauses = fair_text(&cfg_fairness);
-        eprintln!(
-            "error: the specification states fairness ({clauses}) and this checker cannot \
-             assume it: a lasso found without it may be unfair, and so may not be a \
-             behaviour of the specification at all. The temporal propert{} {} not checked; \
-             invariants (`--inv`) are, on the safety fragment",
-            if properties.len() == 1 { "y" } else { "ies" },
-            properties
-                .iter()
-                .map(|p| format!("`{p}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        return EXIT_EVAL;
-    }
-    // Invariants and deadlocks under a specification that states fairness:
-    // checked on the safety fragment, which gives the same answers – a
-    // fairness clause removes no state from any finite prefix (see
-    // `nixie_tla_syntax::behavior`). Said out loud, as Apalache says it.
-    if !cfg_fairness.is_empty() {
-        let clauses = fair_text(&cfg_fairness);
-        eprintln!(
-            "warning: the specification states fairness ({clauses}); it is not assumed here. \
-             Invariants and deadlocks are checked on every state reachable under `Init /\\ \
-             [][Next]_vars`, which is also where TLC and Apalache check them; no liveness is \
-             checked (issue #47)"
+        println!(
+            "Assuming fairness of the temporal propert{}: {clauses}",
+            if properties.len() == 1 { "y" } else { "ies" }
         );
     }
     let inv: Vec<String> = match (&args.inv, cfg_invariants.is_empty()) {
@@ -951,6 +933,18 @@ fn run(args: &Args) -> u8 {
             return EXIT_SYSTEM;
         }
     };
+    // Invariants and deadlocks under a specification that states fairness:
+    // checked on the safety fragment, which gives the same answers – a
+    // fairness clause removes no state from any finite prefix (see
+    // `nixie_tla_syntax::behavior`). Said out loud, as Apalache says it.
+    if !cfg_fairness.is_empty() && (!inv.is_empty() || check_deadlocks) {
+        let clauses = fair_text(&cfg_fairness);
+        eprintln!(
+            "warning: the specification states fairness ({clauses}); invariants and deadlocks \
+             are checked on every state reachable under `Init /\\ [][Next]_vars`, which is also \
+             where TLC and Apalache check them"
+        );
+    }
     // Every name in the list must resolve, or none of them is checked: a
     // subset would answer a narrower question than the caller asked, which is
     // the same silent narrowing a dropped assumption is. A name resolves
@@ -1002,6 +996,7 @@ fn run(args: &Args) -> u8 {
         module,
         config: &config,
         roles,
+        fairness: &cfg_fairness,
         check_deadlocks,
         multi: passes.len() > 1,
     };
@@ -1071,8 +1066,16 @@ fn run(args: &Args) -> u8 {
         }
         if matches!(passes[..], [Pass::Property(_)]) {
             // Apalache's exit code for a passing temporal check is OK too;
-            // the outcome line says what was actually established.
-            println!("The outcome is: NoError (no violating lasso within the bound)");
+            // the outcome line says what was actually established – and,
+            // under fairness, what was assumed to establish it.
+            if ctx.fairness.is_empty() {
+                println!("The outcome is: NoError (no violating lasso within the bound)");
+            } else {
+                println!(
+                    "The outcome is: NoError (no violating lasso within the bound satisfies \
+                     the specification's fairness assumptions)"
+                );
+            }
         } else {
             println!("The outcome is: NoError");
         }
@@ -1139,6 +1142,9 @@ struct PassCtx<'a> {
     /// The roles of the invariants pass: the two the configuration names,
     /// the invariants and the constraints.
     roles: SpecRoles<'a>,
+    /// The fairness the `SPECIFICATION` states, for a temporal property's
+    /// pass to assume (issue #47); empty for an `INIT`/`NEXT` configuration.
+    fairness: &'a [nixie_tla_syntax::FairnessClause<'a>],
     /// Whether the run looks for deadlocks (before the temporal exception).
     check_deadlocks: bool,
     /// Whether the run has more than one pass: per-pass lines are then
@@ -1318,7 +1324,7 @@ fn prepare(ctx: &PassCtx<'_>, pass: Pass<'_>, tm: &mut TermManager) -> Result<Bm
                 inv: &invs,
                 constraints: &[],
             };
-            Bmc::prepare_temporal_spec(ctx.spec, ctx.module, roles, t, ctx.config, tm)
+            Bmc::prepare_temporal_spec(ctx.spec, ctx.module, roles, t, ctx.fairness, ctx.config, tm)
         }
         Pass::Invariants => {
             Bmc::prepare_spec(ctx.spec, ctx.module, ctx.roles.clone(), ctx.config, tm)
@@ -1387,7 +1393,7 @@ fn describe_roles(roles: &[nixie_tla_syntax::RoleSource<'_>]) -> String {
 }
 
 /// The fairness clauses of a `SPECIFICATION`, as one list for a diagnostic.
-fn fair_text(clauses: &[nixie_tla_syntax::FairnessClause]) -> String {
+fn fair_text(clauses: &[nixie_tla_syntax::FairnessClause<'_>]) -> String {
     clauses
         .iter()
         .map(|c| format!("`{}`", c.rendered))

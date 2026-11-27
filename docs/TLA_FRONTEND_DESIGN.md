@@ -381,7 +381,15 @@ constructs it handles. Do not design against memory of it.
 
 **Step 1 – parity.** Match that bounded encoding: liveness-to-safety over a bounded unrolling
 with an explicit loop-back selector (Biere/Artho/Schuppan L2S, the standard hardware
-model-checking construction). `WF_v` / `SF_v` become fairness constraints on the lasso.
+model-checking construction). `WF_v` / `SF_v` become fairness constraints on the lasso
+(landed: issues #29 and #47; `docs/studies/2026-11-25-tla-29-temporal-lasso.md`,
+`docs/studies/2026-11-27-tla-47-fairness.md`). On a lasso a fairness condition is a statement
+about the cycle – *taken on a cycle step*, *enabled at every (WF) or some (SF) cycle state* –
+and only the first of those is a statement a bounded query makes exactly; the checker
+establishes the rest on each candidate lasso's concrete cycle states and rules the unfair
+ones out. The lasso is over `Next` with no stuttering step, as Apalache's is; whether to
+model stuttering – which `WF` exists to rule out – is an open semantic question about the
+drop-in contract.
 
 **Step 2 – superset, and the reason it is worth doing.** Bounded L2S proves nothing when no
 lasso is found. The interesting target is **unbounded liveness**: well-founded ranking

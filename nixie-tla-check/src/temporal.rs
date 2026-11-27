@@ -9,13 +9,13 @@
 //! `TableauEncoder`) and checks an ordinary invariant on the rewritten
 //! specification; this module does the same, on kernel terms:
 //!
-//! * `__InLoop` — a Boolean state variable, false initially, monotone
+//! * `__InLoop` – a Boolean state variable, false initially, monotone
 //!   (`__InLoop => __InLoop'`), true from the first state *after* the
 //!   loop's start;
-//! * `__saved_<v>` — one frozen copy per state variable (and per tableau
+//! * `__saved_<v>` – one frozen copy per state variable (and per tableau
 //!   node variable), holding the value at loop entry
 //!   (`__saved_v' = IF __InLoop' = __InLoop THEN __saved_v ELSE v`);
-//! * the **tableau** — per temporal node `N`, `__temporal_N` (its truth at
+//! * the **tableau** – per temporal node `N`, `__temporal_N` (its truth at
 //!   the current unrolled state) and `__temporal_N_unroll[_prev]` (its
 //!   value assuming the path goes around the loop), with the recurrence
 //!   `N <=> outer(arg, N')` and `unroll <=> outer(prev, inner(InLoop',
@@ -26,7 +26,7 @@
 //!   is the property's root node captured in `Init`.
 //!
 //! "No counterexample within k" therefore means *no lasso of k steps or
-//! fewer carries a violation* — never "the property holds".
+//! fewer carries a violation* – never "the property holds".
 //!
 //! Soundness rests on the invariant being an ordinary state predicate of an
 //! ordinary (rewritten) specification: the solver finds a lasso exactly when
@@ -71,10 +71,11 @@ pub const IN_LOOP: &str = "__InLoop";
 /// The loop-close predicate's conventional name (Apalache's); here it is a
 /// term, not a definition, but traces and messages name it the same.
 pub const LOOP_OK: &str = "__LoopOK";
-const SAVED: &str = "__saved_";
-const TEMPORAL: &str = "__temporal_";
+/// The frozen copies' prefix (`__saved_<v>`); what a trace hides as bookkeeping.
+pub const SAVED: &str = "__saved_";
+/// The tableau's prefix (`__temporal_N`); what a trace hides as bookkeeping.
+pub const TEMPORAL: &str = "__temporal_";
 const INIT_SUFFIX: &str = "_init";
-
 fn v(name: &str) -> KeraRef {
     Kera::Var(Name(name.to_string())).rc()
 }
@@ -112,14 +113,27 @@ fn iff(a: KeraRef, b: KeraRef) -> KeraRef {
 }
 
 /// Build the lasso encoding of `init`/`next` for the property `prop` over
-/// the state variables `vars`.
+/// the state variables `vars`, **assuming** the fairness `fairness` states
+/// (issue #47; see [`crate::fairness`]).
+///
+/// Per instance the rewritten `Next` carries `__fair_taken_i' =
+/// __fair_taken_i \/ (InLoop' /\ <A>_v)`, the one statement about a cycle a
+/// bounded query makes exactly; the checker examines every candidate lasso
+/// on its concrete cycle for the rest ([`crate::fairness`]) and rules out
+/// the unfair ones with clauses that read `__fair_taken_i`.
 ///
 /// `vars` must list **every** state variable of the specification: a
 /// variable the loop does not close over would let the lasso "return" to
-/// a state that differs in it — a behaviour the specification does not
+/// a state that differs in it – a behaviour the specification does not
 /// have, and a counterexample it cannot produce.
 #[must_use]
-pub fn encode(init: KeraRef, next: KeraRef, prop: &Temporal, vars: &[String]) -> Lasso {
+pub fn encode(
+    init: KeraRef,
+    next: KeraRef,
+    prop: &Temporal,
+    vars: &[String],
+    fairness: &[crate::fairness::Instance],
+) -> Lasso {
     let in_loop = v(IN_LOOP);
     let in_loop_p = prime(Rc::clone(&in_loop));
 
@@ -139,13 +153,13 @@ pub fn encode(init: KeraRef, next: KeraRef, prop: &Temporal, vars: &[String]) ->
         })
         .collect();
     // Only the **node** variables get frozen copies (Apalache:
-    // `createGenericNodeVarExs(nodeVarEx, nodeLoopVarEx)` — the `unroll`
+    // `createGenericNodeVarExs(nodeVarEx, nodeLoopVarEx)` – the `unroll`
     // and `_prev` auxiliaries get none). Their values at the close are
     // pinned by the tableau's own `prev = unroll` and `unroll => node`
     // instead. Freezing them too over-constrains: `prev@close` would be
     // `prev` at loop entry while the recurrence's `prev' = unroll` makes it
     // `unroll` one step back, and the two disagree on every lasso whose
-    // loop is longer than one state — the lasso then never closes and
+    // loop is longer than one state – the lasso then never closes and
     // every box property "holds".
     for n in &t.decls {
         aux.push(n.clone());
@@ -183,6 +197,29 @@ pub fn encode(init: KeraRef, next: KeraRef, prop: &Temporal, vars: &[String]) ->
     }
     next_parts.extend(t.next.iter().cloned());
 
+    // ---- fairness (issue #47) ----
+    //
+    // `__fair_taken_i` accumulates "a loop step took the action", in
+    // positive polarity throughout: it starts FALSE and only ever grows. It
+    // is what an unfair lasso's block reads (`~taken` at the close); the
+    // enabledness a fairness assumption also depends on is a universal over
+    // next states, which no bounded query states exactly, so the checker
+    // establishes it on each candidate lasso's concrete cycle instead (see
+    // `crate::fairness`).
+    for (i, inst) in fairness.iter().enumerate() {
+        let taken_name = format!("{}taken_{i}", crate::fairness::AUX_PREFIX);
+        aux.push(taken_name.clone());
+        let taken = v(&taken_name);
+        init_parts.push(eq(Rc::clone(&taken), Kera::Bool(false).rc()));
+        next_parts.push(eq(
+            prime(Rc::clone(&taken)),
+            or(vec![
+                Rc::clone(&taken),
+                and(vec![Rc::clone(&in_loop_p), Rc::clone(&inst.step)]),
+            ]),
+        ));
+    }
+
     // ---- LoopOK ----
     let mut ok_parts: Vec<KeraRef> = vec![Rc::clone(&in_loop)];
     ok_parts.extend(saved.iter().map(|(x, s)| eq(Rc::clone(x), Rc::clone(s))));
@@ -209,7 +246,7 @@ pub fn encode(init: KeraRef, next: KeraRef, prop: &Temporal, vars: &[String]) ->
 struct Tableau {
     /// Every auxiliary variable declared, in post-order (deterministic names).
     decls: Vec<String>,
-    /// The subset of `decls` that are **node** variables — the ones that
+    /// The subset of `decls` that are **node** variables – the ones that
     /// get a frozen copy for the loop close (the `unroll`/`_prev`
     /// auxiliaries do not; see `encode`).
     node_vars: Vec<String>,
@@ -234,7 +271,7 @@ impl Tableau {
 
     /// Declare a **node variable**: a Boolean state variable whose value is
     /// defined at `Init` and at every step by `define`, read back as the
-    /// variable (never as the defining term — the variable *is* the node's
+    /// variable (never as the defining term – the variable *is* the node's
     /// truth, and the loop close pins it across the seam).
     fn node_var(&mut self, define: impl Fn() -> KeraRef) -> KeraRef {
         let name = self.fresh("");
@@ -244,7 +281,7 @@ impl Tableau {
         // adds an `ite` equation per step and says nothing new.
         let x = v(&name);
         let d = define();
-        // `Init`: node = op(args). `Next`: node' = op(args) — Apalache's
+        // `Init`: node = op(args). `Next`: node' = op(args) – Apalache's
         // `createPropositionalOperNodeExs`, whose arguments are the
         // children's **current** values, which the box/diamond equations
         // then read at the next state through their own `node'`.
@@ -292,7 +329,7 @@ impl Tableau {
                 // the product starts from – and adds lassoes, never removes
                 // one. (Found while testing fairness, issue #47.)
                 self.init.push(eq(Rc::clone(&prev), initial));
-                // node <=> outer(arg, node') — a `Next` equation only: it
+                // node <=> outer(arg, node') – a `Next` equation only: it
                 // reads the node's next value. (`Init` sets just the
                 // unroll lookback above; Apalache's `nextExs` carry this
                 // one and its `initExs` do not.)
@@ -304,7 +341,7 @@ impl Tableau {
                         or(vec![Rc::clone(&arg), prime(Rc::clone(&node))])
                     },
                 ));
-                // unroll <=> outer(prev, inner(InLoop', arg)) — on the
+                // unroll <=> outer(prev, inner(InLoop', arg)) – on the
                 // **current** state's variables, reading only `InLoop'`:
                 // `unroll@k` is `[]P`'s value at `k` assuming the path
                 // goes around, accumulated from the lookback `prev@k` (which
@@ -312,7 +349,7 @@ impl Tableau {
                 // the step out of `k` enters the loop (the prime). Priming
                 // `unroll` here instead would shift the accumulation one
                 // state and leave the close's `unroll => node` vacuous on
-                // every box — the first version of this module did, and
+                // every box – the first version of this module did, and
                 // `[](x = 9)` on a two-cycle "held".
                 let unroll_def = if is_box {
                     and(vec![

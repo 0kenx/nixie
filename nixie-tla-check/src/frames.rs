@@ -458,6 +458,14 @@ fn offer(
     }
 }
 
+/// The candidate elements of a **closed** set-valued kernel term – one with
+/// no state-variable read in it – or `None` when it has no enumerable
+/// reading. The fairness domain of a quantified clause (issue #47) is read
+/// through this: its members must be known before any state exists.
+pub(crate) fn closed_elements(t: &KeraRef, max_candidates: usize) -> Option<Vec<KeraRef>> {
+    elements(t, &HashMap::new(), max_candidates)
+}
+
 /// The candidate elements of a set-valued kernel term, or `None` when the
 /// term has no enumerable reading.
 ///

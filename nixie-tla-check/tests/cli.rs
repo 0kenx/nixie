@@ -859,10 +859,11 @@ fn a_cfg_with_specification_naming_nothing_is_refused_by_name() {
 /// invariants on the states `Init`/`Next` reach whatever the fairness, and
 /// Apalache warns and ignores it – so the invariants are checked and the
 /// clause is **said out loud**. For a liveness property it is the difference
-/// between a counterexample and an unfair behaviour, so that check is
-/// declined (75), the clause named and located.
+/// between a counterexample and an unfair behaviour, so a liveness check
+/// **assumes** it (issue #47), and says so: a lasso is a counterexample only
+/// when it is a behaviour of the full specification.
 #[test]
-fn fairness_in_a_specification_is_announced_for_invariants_and_refused_for_liveness() {
+fn fairness_in_a_specification_is_announced_for_invariants_and_assumed_for_liveness() {
     let dir = scratch("cfg-spec-fair");
     let spec = write_spec(
         &dir,
@@ -917,28 +918,51 @@ Inv == x < 3
             r.err
         );
         assert!(
-            r.err.contains("it is not assumed here") && r.err.contains("no liveness is checked"),
+            r.err.contains("where TLC and Apalache check them"),
             "{spec_name}: {}",
             r.err
         );
-        // A liveness property under it is declined by name: an unfair lasso
-        // is not a counterexample to the specification.
+        // A liveness property under it is checked with the clause assumed:
+        // every lasso the search would otherwise find may be unfair, and an
+        // unfair lasso is not a counterexample to the specification.
         std::fs::write(dir.join("live.cfg"), format!("SPECIFICATION {spec_name}\n")).expect("cfg");
         let r = run(&[
             "check",
             &format!("--config={}", dir.join("live.cfg").display()),
             "--temporal=Inv",
             "--length=3",
+            // The property alone: with the deadlock question on too, the run
+            // is two passes and the outcome line is the run's, not the
+            // pass's.
+            "--no-deadlock",
             spec.to_str().expect("a path"),
         ]);
-        assert_eq!(r.code, 75, "{spec_name}: stderr: {}", r.err);
-        assert!(
-            r.err
-                .contains(&format!("the specification states fairness (`{clause}`)")),
-            "{spec_name}: {}",
-            r.err
+        assert_eq!(
+            r.code, 0,
+            "{spec_name}: stdout: {}\nstderr: {}",
+            r.out, r.err
         );
-        assert!(r.err.contains("may be unfair"), "{spec_name}: {}", r.err);
+        assert!(
+            r.out.contains(&format!(
+                "Assuming fairness of the temporal property: `{clause}`"
+            )),
+            "{spec_name}: {}",
+            r.out
+        );
+        assert!(
+            r.out
+                .contains("no lasso of 3 step(s) or fewer violates `Inv`"),
+            "{spec_name}: {}",
+            r.out
+        );
+        assert!(
+            r.out.contains(
+                "NoError (no violating lasso within the bound satisfies the specification's \
+                 fairness assumptions)"
+            ),
+            "{spec_name}: {}",
+            r.out
+        );
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

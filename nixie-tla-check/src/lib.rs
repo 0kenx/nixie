@@ -8,6 +8,7 @@
 pub mod arena;
 pub mod bmc;
 pub mod encode;
+pub mod fairness;
 pub mod frames;
 pub mod itf;
 pub mod sorts;
