@@ -61,6 +61,20 @@ impl Solver {
                         fields.push(id);
                     }
                 }
+                // A field-sorted variable contributes its sort's field, as
+                // `literal_mentions_field` reads it. Without this arm a goal
+                // of equalities between field variables alone – no constant,
+                // no application – named no field, and the dispatch declined
+                // it: `(= x1 x0) (= x2 x0)` over 𝔽₇ read `unknown`, and
+                // `sat` as soon as one constant was mentioned anywhere.
+                TermKind::Var(_) => {
+                    if let Some(SortKind::FiniteField(id)) =
+                        manager.sorts.get(term.sort).map(|s| s.kind.clone())
+                        && !fields.contains(&id)
+                    {
+                        fields.push(id);
+                    }
+                }
                 _ => {
                     stack.extend(nixie_core::ast::get_children(&term.kind));
                 }
@@ -966,29 +980,40 @@ impl<'a> FfTseitin<'a> {
                             let b = operands[1];
                             let a = operands[0];
                             let v = self.sat.new_var();
-                            // v ↔ a ⊕ b, both directions.
+                            // v ↔ (a ⊕ b), the four-clause form: v → (a ∨ b),
+                            // v → (¬a ∨ ¬b), ¬v → (¬a ∨ b), ¬v → (a ∨ ¬b).
+                            // (The eight clauses that stood here all put the
+                            // same four literals of `a` and `b` beside `v` or
+                            // `¬v` – two of them the exclusive or's, two the
+                            // equivalence's – and were together unsatisfiable:
+                            // a `TermKind::Xor` node made the skeleton
+                            // `unsat` whatever its operands. The parser
+                            // spells `xor` as `or (and a ¬b) (and ¬a b)`, so
+                            // only an API-built `mk_xor` reached it.)
                             self.sat.add_clause([Lit::neg(v), a, b]);
                             self.sat.add_clause([Lit::neg(v), a.negate(), b.negate()]);
-                            self.sat.add_clause([Lit::neg(v), a.negate(), b]);
-                            self.sat.add_clause([Lit::neg(v), a, b.negate()]);
                             self.sat.add_clause([Lit::pos(v), a.negate(), b]);
                             self.sat.add_clause([Lit::pos(v), a, b.negate()]);
-                            self.sat.add_clause([Lit::pos(v), a, b]);
-                            self.sat.add_clause([Lit::pos(v), a.negate(), b.negate()]);
                             results.push(Lit::pos(v));
                         }
+
                         CombineKind::Implies => {
                             // operands = [a, b] (a → b).
                             let b = operands[1];
                             let a = operands[0];
                             let v = self.sat.new_var();
-                            // v = (a → b): ¬v → a, ¬v → ¬b, and the defining
-                            // direction a ∧ ¬b → ¬v.
-                            self.sat.add_clause([Lit::neg(v), a]);
-                            self.sat.add_clause([Lit::neg(v), b.negate()]);
-                            self.sat.add_clause([a.negate(), b, Lit::pos(v)]);
+                            // v ↔ (a → b): v → (¬a ∨ b), and the defining
+                            // direction (a ∧ ¬b) → v. (The three clauses
+                            // read the other way round – `v → a`, `v → ¬b`,
+                            // `(a ∧ ¬b) → v` – define `a ∧ ¬b`, the negation
+                            // of the implication: `(=> p false)` under
+                            // `(not p)` read `unsat`.)
+                            self.sat.add_clause([Lit::neg(v), a.negate(), b]);
+                            self.sat.add_clause([a, Lit::pos(v)]);
+                            self.sat.add_clause([b.negate(), Lit::pos(v)]);
                             results.push(Lit::pos(v));
                         }
+
                         CombineKind::Ite => {
                             // operands = [c, a, b] (children expanded in
                             // reverse push order: c, then a, then b).
@@ -996,14 +1021,20 @@ impl<'a> FfTseitin<'a> {
                             let a = operands[1];
                             let b = operands[2];
                             let v = self.sat.new_var();
-                            // c ∧ a -> v ; c ∧ ¬a -> ¬v ; ¬c∧¬v->a etc. Use the
-                            // standard three-clause form plus completion.
+                            // v ↔ ite(c, a, b), one clause per row of the
+                            // table that fixes the branch: c ∧ a → v,
+                            // ¬c ∧ b → v, c ∧ ¬a → ¬v, ¬c ∧ ¬b → ¬v. (The
+                            // else-branch's two clauses carried `v` with the
+                            // other polarity: the gate denoted
+                            // `ite(c, a, ¬b)`, and a true else-branch under a
+                            // false condition read false.)
                             self.sat.add_clause([c.negate(), a.negate(), Lit::pos(v)]);
-                            self.sat.add_clause([c, b.negate(), Lit::neg(v)]);
+                            self.sat.add_clause([c, b.negate(), Lit::pos(v)]);
                             self.sat.add_clause([c.negate(), a, Lit::neg(v)]);
-                            self.sat.add_clause([c, b, Lit::pos(v)]);
+                            self.sat.add_clause([c, b, Lit::neg(v)]);
                             results.push(Lit::pos(v));
                         }
+
                     }
                 }
             }
@@ -2236,6 +2267,254 @@ mod fragment_tests {
         let field = ff_sort_field(&manager, args[0]).expect("field");
         model.per_field.push((field, values));
         assert!(ufff_complete(&manager, &[root], model).is_none());
+    }
+
+    /// The Boolean term `t` under `value_of` (an FF term of the formula is a
+    /// variable or a constant of one field; the connectives are the
+    /// skeleton's own).
+    fn eval_bool(manager: &TermManager, t: TermId, value_of: &dyn Fn(TermId) -> BigUint) -> bool {
+        match &manager.get(t).expect("term").kind {
+            TermKind::True => true,
+            TermKind::False => false,
+            TermKind::Eq(a, b) => value_of(*a) == value_of(*b),
+            TermKind::Not(inner) => !eval_bool(manager, *inner, value_of),
+            TermKind::And(args) => args.iter().all(|&x| eval_bool(manager, x, value_of)),
+            TermKind::Or(args) => args.iter().any(|&x| eval_bool(manager, x, value_of)),
+            TermKind::Xor(a, b) => {
+                eval_bool(manager, *a, value_of) ^ eval_bool(manager, *b, value_of)
+            }
+            TermKind::Implies(a, b) => {
+                !eval_bool(manager, *a, value_of) || eval_bool(manager, *b, value_of)
+            }
+            TermKind::Ite(c, a, b) => {
+                if eval_bool(manager, *c, value_of) {
+                    eval_bool(manager, *a, value_of)
+                } else {
+                    eval_bool(manager, *b, value_of)
+                }
+            }
+            TermKind::Distinct(args) => {
+                let values: Vec<BigUint> = args.iter().map(|&x| value_of(x)).collect();
+                (0..values.len()).all(|i| (i + 1..values.len()).all(|j| values[i] != values[j]))
+            }
+            other => panic!("not a Boolean term of the skeleton: {other:?}"),
+        }
+    }
+
+    /// The encoded skeleton denotes the term over its atoms on every
+    /// assignment of the field: for each pair of values of the two variables
+    /// the skeleton, under those atom truths as assumptions, is satisfiable
+    /// exactly when the term is true. The formulas are random DAGs – a
+    /// later connective takes earlier terms of the pool as operands, so
+    /// subterms are shared, which is where an encoding that answered a
+    /// shared subterm with anything but its own literal would go wrong.
+    #[test]
+    fn the_encoded_skeleton_denotes_the_term_over_the_atoms() {
+        struct Lcg(u64);
+        impl Lcg {
+            fn next(&mut self) -> u64 {
+                self.0 = self
+                    .0
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                self.0 >> 33
+            }
+        }
+        let mut rng = Lcg(0x7f5e_1711_0000);
+        for _round in 0..400 {
+            let mut manager = TermManager::new();
+            let sort = manager
+                .sorts
+                .finite_field(num_bigint::BigUint::from(5u32))
+                .expect("prime modulus");
+            let field = match manager.sorts.get(sort).map(|s| s.kind.clone()) {
+                Some(SortKind::FiniteField(id)) => id,
+                _ => panic!("field sort"),
+            };
+            let x = manager.mk_var("x", sort);
+            let y = manager.mk_var("y", sort);
+            let consts: Vec<TermId> = (0..3i32)
+                .map(|v| manager.mk_ff_const(field, v.into()).expect("constant"))
+                .collect();
+            let mut ff_terms: Vec<TermId> = vec![x, y];
+            ff_terms.extend(consts.iter().copied());
+            let pick_ff = |rng: &mut Lcg| ff_terms[(rng.next() % ff_terms.len() as u64) as usize];
+
+            let mut pool: Vec<TermId> = Vec::new();
+            for _ in 0..3 {
+                let (a, b) = (pick_ff(&mut rng), pick_ff(&mut rng));
+                pool.push(manager.mk_eq(a, b));
+            }
+            pool.push(manager.mk_true());
+            pool.push(manager.mk_false());
+            let steps = 2 + (rng.next() % 12) as usize;
+            for _ in 0..steps {
+                let pick = |rng: &mut Lcg| pool[(rng.next() % pool.len() as u64) as usize];
+                let count = 1 + (rng.next() % 3) as usize;
+                let operands: Vec<TermId> = (0..count).map(|_| pick(&mut rng)).collect();
+                let second = operands[count.min(2) - 1];
+                let term = match rng.next() % 7 {
+                    0 => manager.mk_not(operands[0]),
+                    1 => manager.mk_and(operands.iter().copied()),
+                    2 => manager.mk_or(operands.iter().copied()),
+                    3 => manager.mk_xor(operands[0], second),
+                    4 => manager.mk_implies(operands[0], second),
+                    5 => manager.mk_ite(operands[0], second, pick(&mut rng)),
+                    _ => {
+                        let args: Vec<TermId> = (0..=count).map(|_| pick_ff(&mut rng)).collect();
+                        manager.mk_distinct(args)
+                    }
+                };
+                pool.push(term);
+            }
+            let root = *pool.last().expect("a term");
+
+            let mut sat = SatSolver::new();
+            let mut atoms: FxHashMap<TermId, Var> = FxHashMap::default();
+            let root_lit = {
+                let mut encoder = FfTseitin {
+                    sat: &mut sat,
+                    atom_var: &mut atoms,
+                    };
+                encoder.encode(root, &mut manager).expect("encodable")
+            };
+            for vx in 0..5u32 {
+                for vy in 0..5u32 {
+                    // Every atom names FF terms: a variable takes its assigned
+                    // value, anything else is a constant.
+                    let value_of = |t: TermId| -> BigUint {
+                        if t == x {
+                            vx.into()
+                        } else if t == y {
+                            vy.into()
+                        } else {
+                            match &manager.get(t).expect("ff term").kind {
+                                TermKind::FfConst { value, .. } => value.magnitude().clone(),
+                                other => panic!("unexpected FF term {other:?}"),
+                            }
+                        }
+                    };
+                    let mut assumptions: Vec<Lit> = atoms
+                        .iter()
+                        .map(|(&atom, &var)| {
+                            if eval_bool(&manager, atom, &value_of) {
+                                Lit::pos(var)
+                            } else {
+                                Lit::neg(var)
+                            }
+                        })
+                        .collect();
+                    assumptions.push(root_lit);
+                    let (result, _) = sat.solve_with_assumptions(&assumptions);
+                    let expected = eval_bool(&manager, root, &value_of);
+                    assert_eq!(
+                        matches!(result, nixie_sat::SolverResult::Sat),
+                        expected,
+                        "round {_round}: the skeleton disagrees with the term at x = {vx}, y = {vy}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Every gate of the skeleton denotes its connective on all operand
+    /// values: for each connective and each assignment of the atoms (as
+    /// assumptions), the skeleton is satisfiable with the gate's literal
+    /// true exactly when the connective is, and with it false exactly when
+    /// it is not. The three gates that used to be wrong – `xor` (clauses
+    /// unsatisfiable together), `=>` (its own negation), `ite` (a negated
+    /// else-branch) – are pinned here by name, independently of the random
+    /// oracle above.
+    #[test]
+    fn every_gate_of_the_skeleton_denotes_its_connective() {
+        let mut manager = TermManager::new();
+        let sort = manager
+            .sorts
+            .finite_field(num_bigint::BigUint::from(5u32))
+            .expect("prime modulus");
+        let field = match manager.sorts.get(sort).map(|s| s.kind.clone()) {
+            Some(SortKind::FiniteField(id)) => id,
+            _ => panic!("field sort"),
+        };
+        let x = manager.mk_var("x", sort);
+        let y = manager.mk_var("y", sort);
+        let zero = manager.mk_ff_const(field, 0.into()).expect("constant");
+        let one = manager.mk_ff_const(field, 1.into()).expect("constant");
+        let p = manager.mk_eq(x, zero);
+        let q = manager.mk_eq(y, zero);
+        let r = manager.mk_eq(x, one);
+        let gates: [(&str, TermId); 7] = [
+            ("not", manager.mk_not(p)),
+            ("and", manager.mk_and([p, q])),
+            ("or", manager.mk_or([p, q, r])),
+            ("xor", manager.mk_xor(p, q)),
+            ("=>", manager.mk_implies(p, q)),
+            ("ite", manager.mk_ite(p, q, r)),
+            // distinct(x, 1, 0) is ¬(x = 1) ∧ ¬(x = 0); 1 ≠ 0 folds away.
+            ("distinct", manager.mk_distinct([x, one, zero])),
+        ];
+        let truth = |gate: &str, p: bool, q: bool, r: bool| match gate {
+            "not" => !p,
+            "and" => p && q,
+            "or" => p || q || r,
+            "xor" => p ^ q,
+            "=>" => !p || q,
+            "ite" => {
+                if p {
+                    q
+                } else {
+                    r
+                }
+            }
+            "distinct" => !p && !r,
+            _ => unreachable!(),
+        };
+        for (name, gate) in gates {
+            for bits in 0..8u32 {
+                let (pv, qv, rv) = (bits & 1 != 0, bits & 2 != 0, bits & 4 != 0);
+                let mut sat = SatSolver::new();
+                let mut atoms: FxHashMap<TermId, Var> = FxHashMap::default();
+                let gate_lit = {
+                    let mut encoder = FfTseitin {
+                        sat: &mut sat,
+                        atom_var: &mut atoms,
+                            };
+                    encoder.encode(gate, &mut manager).expect("encodable")
+                };
+                // Every atom of the gate, at its assigned truth.
+                let assumptions: Vec<Lit> = atoms
+                    .iter()
+                    .map(|(&atom, &var)| {
+                        let value = if atom == p {
+                            pv
+                        } else if atom == q {
+                            qv
+                        } else {
+                            assert_eq!(atom, r, "{name}: an atom the table does not cover");
+                            rv
+                        };
+                        if value { Lit::pos(var) } else { Lit::neg(var) }
+                    })
+                    .collect();
+                let mut with_true = assumptions.clone();
+                with_true.push(gate_lit);
+                let (sat_true, _) = sat.solve_with_assumptions(&with_true);
+                let mut with_false = assumptions;
+                with_false.push(gate_lit.negate());
+                let (sat_false, _) = sat.solve_with_assumptions(&with_false);
+                let expected = truth(name, pv, qv, rv);
+                assert_eq!(
+                    matches!(sat_true, nixie_sat::SolverResult::Sat),
+                    expected,
+                    "{name} with p = {pv}, q = {qv}, r = {rv}: the gate literal true"
+                );
+                assert_eq!(
+                    matches!(sat_false, nixie_sat::SolverResult::Sat),
+                    !expected,
+                    "{name} with p = {pv}, q = {qv}, r = {rv}: the gate literal false"
+                );
+            }
+        }
     }
 
     #[test]

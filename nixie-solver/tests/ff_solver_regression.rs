@@ -586,3 +586,85 @@ fn certified_linear_core_mixed_order_combo_accepts() {
     assert_eq!(out[0], "unsat");
     assert_eq!(ctx.certification_failure(), None);
 }
+
+/// The Boolean skeleton's `=>` gate denotes the implication. Its clauses
+/// used to define `a ∧ ¬b` – the negation – so an implication with a false
+/// antecedent, which is true, read false: with `(not p)` asserted beside
+/// `(=> p false)` the goal read `unsat`. `x = 1` satisfies it.
+#[test]
+fn an_implication_with_a_false_antecedent_is_satisfied() {
+    let out = run(r#"
+        (set-logic QF_FF)
+        (declare-const x (_ FiniteField 7))
+        (assert (not (= x #f0m7)))
+        (assert (=> (= x #f0m7) false))
+        (check-sat)
+    "#);
+    assert_eq!(out[0], "sat", "{out:?}");
+}
+
+/// The `ite` gate denotes the conditional. Its else-branch clauses used to
+/// carry the gate with the other polarity, so the gate denoted
+/// `ite(c, a, ¬b)`: a true else-branch under a false condition read false,
+/// and the goal read `unsat`. `x = 1, y = 1` satisfies both goals.
+#[test]
+fn an_ite_takes_its_else_branch_when_the_condition_is_false() {
+    for then_branch in ["(= y #f0m7)", "false"] {
+        let out = run(&format!(
+            r#"
+            (set-logic QF_FF)
+            (declare-const x (_ FiniteField 7))
+            (declare-const y (_ FiniteField 7))
+            (assert (not (= x #f0m7)))
+            (assert (= y #f1m7))
+            (assert (ite (= x #f0m7) {then_branch} (= y #f1m7)))
+            (check-sat)
+            (get-value (x y))
+            "#
+        ));
+        assert_eq!(out[0], "sat", "{out:?}");
+        assert!(out[1].contains("#f1m7"), "y = 1: {}", out[1]);
+    }
+}
+
+/// A goal of equalities between field variables alone names its field: the
+/// dispatch used to decline it (`unknown`) because it found a field only
+/// through a constant or an application, and answered `sat` as soon as one
+/// constant was mentioned anywhere in the script.
+#[test]
+fn equalities_between_field_variables_alone_are_decided() {
+    let out = run(r#"
+        (set-logic QF_FF)
+        (declare-const x0 (_ FiniteField 7))
+        (declare-const x1 (_ FiniteField 7))
+        (declare-const x2 (_ FiniteField 7))
+        (assert (= x1 x0))
+        (assert (= x2 x0))
+        (check-sat)
+        (get-value (x0 x1 x2))
+    "#);
+    assert_eq!(out[0], "sat", "{out:?}");
+    let values: Vec<&str> = out[1]
+        .split_whitespace()
+        .map(|t| t.trim_matches(|c: char| c == ')' || c == ','))
+        .filter(|t| t.starts_with('#'))
+        .collect();
+    assert_eq!(values.len(), 3, "{}", out[1]);
+    assert!(
+        values.iter().all(|v| *v == values[0]),
+        "one class, one value: {}",
+        out[1]
+    );
+
+    let out = run(r#"
+        (set-logic QF_FF)
+        (declare-const x0 (_ FiniteField 7))
+        (declare-const x1 (_ FiniteField 7))
+        (declare-const x2 (_ FiniteField 7))
+        (assert (= x1 x0))
+        (assert (= x2 x0))
+        (assert (not (= x1 x2)))
+        (check-sat)
+    "#);
+    assert_eq!(out[0], "unsat", "{out:?}");
+}
