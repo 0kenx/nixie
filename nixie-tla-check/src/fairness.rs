@@ -315,12 +315,19 @@ fn idents(pattern: &Pattern) -> impl Iterator<Item = &Ident> {
     names.into_iter()
 }
 
-/// `v' # v` for a subscript: componentwise for a tuple, as `UNCHANGED` is.
+/// `v' # v` for a subscript: for a tuple, **some** component changes. It
+/// is the exact negation of `UNCHANGED v` – `<<A>>_<<a, b>>` is
+/// `A /\ (a' # a \/ b' # b)` in TLA+ – and the first version here
+/// required every component to change. With the usual `vars == <<x, y>>`
+/// that read a step as taken only when both variables moved, so an action
+/// that moves one of them was never "taken" on its own cycle: enabled at
+/// every state of it and taken nowhere is the definition of a `WF`
+/// violation, and a fair lasso was ruled out as unfair.
 fn changed(subscript: &KeraRef) -> KeraRef {
     let differs =
         |x: &KeraRef| Kera::Not(Kera::Eq(Kera::Prime(Rc::clone(x)).rc(), Rc::clone(x)).rc()).rc();
     if let Kera::Tuple(items) = subscript.as_ref() {
-        return Kera::And(items.iter().map(differs).collect()).rc();
+        return Kera::Or(items.iter().map(differs).collect()).rc();
     }
     differs(subscript)
 }

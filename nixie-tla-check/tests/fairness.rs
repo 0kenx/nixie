@@ -64,6 +64,23 @@ AlwaysOne == <>[](x = 1)
 ====
 ";
 
+/// `Step` moves `y` alone and `Tick` moves `x` alone; both are always
+/// enabled. `<<Step>>_vars` is `Step /\ (x' # x \/ y' # y)` – one component
+/// of the subscript changing is a change – so Step's own two-cycle is a
+/// fair one.
+const ONE_COMPONENT: &str = r"
+---- MODULE OneComponent ----
+VARIABLE x, y
+Init == x = 0 /\ y = 0
+Tick == x' = 1 - x /\ y' = y
+Step == x' = x /\ y' = 1 - y
+Next == Tick \/ Step
+vars == <<x, y>>
+FairSpec == Init /\ [][Next]_vars /\ WF_vars(Step)
+AlwaysOne == [](x = 1)
+====
+";
+
 /// The per-process idiom, quantified over a pinned `CONSTANT`. The members
 /// are model values: with integers the lasso's set pairs mint integer
 /// witnesses whose disequalities the arithmetic search pays for, which is
@@ -240,5 +257,26 @@ fn a_loop_starting_in_the_first_state_is_found_at_its_own_length() {
     assert_eq!(
         outcome(&src, "SPECIFICATION Plain\n", "AlwaysOne", 2),
         Outcome::Violation { step: 2 }
+    );
+}
+
+/// A step that moves **one** component of a tuple subscript is a step of
+/// the action. `<<A>>_<<x, y>>` is `A /\ (x' # x \/ y' # y)`, and the
+/// first reading of `taken` here required every component to change: with
+/// the usual `vars == <<x, y>>`, `Step` – which moves `y` alone – was never
+/// taken on its own cycle. Enabled at every state of it and taken nowhere
+/// is the definition of a `WF` violation, so the fair lasso below was ruled
+/// out as unfair, and the checker answered "no counterexample" at every
+/// length on a specification whose second state already violates the
+/// property.
+#[test]
+fn a_step_that_moves_one_component_of_the_subscript_is_taken() {
+    let (outcome, bmc) =
+        lasso(ONE_COMPONENT, "SPECIFICATION FairSpec\n", "AlwaysOne", 4).expect("prepares");
+    assert_eq!(outcome, Outcome::Violation { step: 2 });
+    assert_eq!(bmc.loop_start(), Some(1));
+    assert_eq!(
+        bmc.verification(),
+        Some(&nixie_tla_check::bmc::Verification::Replayed)
     );
 }
