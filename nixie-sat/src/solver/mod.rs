@@ -13,6 +13,7 @@ pub mod heuristic;
 mod incremental;
 mod learn;
 mod root_clause;
+use incremental::RetractScratch;
 use learn::InprocBudgets;
 use subsume::SubsumeScratch;
 mod lucky;
@@ -33,6 +34,8 @@ mod gate_subsume;
 mod gate_subsume_tests;
 #[cfg(test)]
 mod otfs_tests;
+#[cfg(test)]
+mod retract_tests;
 mod search_ext;
 #[cfg(test)]
 mod ssr_binaries_tests;
@@ -426,6 +429,119 @@ impl BinaryImplicationGraph {
         }
     }
 
+    /// [`Self::remove_clause_edges`] for a list holding at most `max_len`
+    /// live edges – the removal costs what it always did (a scan and a
+    /// move of at most `max_len` entries).  Returns `false`, having removed
+    /// nothing, when the list is longer: such a list is retracted in one
+    /// pass by the caller that has several of the batch's clauses under it
+    /// ([`Solver::retract_clauses`], via [`Self::remove_marked_edges`]),
+    /// and `true` when the edge is gone or there was no list to hold it.
+    ///
+    /// The overflow list's length is read only on the fallback path, after
+    /// the primary span has missed, so a short list costs one compare over
+    /// the unbounded removal.
+    fn remove_clause_edges_short(
+        &mut self,
+        trigger: Lit,
+        clause_id: ClauseId,
+        max_len: usize,
+    ) -> bool {
+        let idx = trigger.code() as usize;
+        if idx >= self.live.len() {
+            return true;
+        }
+        let start = big_span_start(&self.span_end, idx);
+        let plen = self.live[idx] as usize;
+        if plen > max_len {
+            return false;
+        }
+        if let Some(pos) = self.edges[start..start + plen]
+            .iter()
+            .position(|&(_, cid)| cid == clause_id)
+        {
+            self.edges
+                .copy_within(start + pos + 1..start + plen, start + pos);
+            self.live[idx] -= 1;
+            return true;
+        }
+        if idx < self.extra.len() {
+            let extra = &mut self.extra[idx];
+            if extra.len() > max_len {
+                return false;
+            }
+            let before = extra.len();
+            extra.retain(|&(_, cid)| cid != clause_id);
+            self.extra_entries -= before - extra.len();
+            if extra.is_empty() {
+                self.extra_nonempty[idx / 64] &= !(1 << (idx % 64));
+            }
+        }
+        true
+    }
+
+    /// Order-preserving compaction of ONE primary span against `dead`: the
+    /// `plen` edges at `read` are sifted down to `write` (which may equal
+    /// `read` – the in-place, per-trigger form), dropping every edge whose
+    /// clause id is marked; returns the number kept.  `read >= write` always
+    /// (the cursor trails, never leads), so sifting in place is safe.
+    fn sift_span(&mut self, read: usize, write: usize, plen: usize, dead: &[bool]) -> usize {
+        let mut kept = 0usize;
+        for i in 0..plen {
+            let edge = self.edges[read + i];
+            if !dead.get(edge.1.index()).copied().unwrap_or(false) {
+                self.edges[write + kept] = edge;
+                kept += 1;
+            }
+        }
+        kept
+    }
+
+    /// Order-preserving compaction of `code`'s overflow list against `dead`
+    /// (`retain`: the overflow is an ordinary `Vec`).  A no-op for a code
+    /// without one.
+    fn sift_extra(&mut self, code: usize, dead: &[bool]) {
+        let Some(extra) = self.extra.get_mut(code) else {
+            return;
+        };
+        let before = extra.len();
+        extra.retain(|&(_, cid)| !dead.get(cid.index()).copied().unwrap_or(false));
+        self.extra_entries -= before - extra.len();
+        if extra.is_empty() {
+            self.extra_nonempty[code / 64] &= !(1 << (code % 64));
+        }
+    }
+
+    /// Remove, in one order-preserving pass, every edge marked in `dead`
+    /// from `trigger`'s list (the batched form of [`Self::remove_clause_edges`]).
+    ///
+    /// [`Self::remove_clause_edges`] costs a scan of the list per retracted
+    /// clause, so a batch whose clauses share a trigger is quadratic in
+    /// that list (16,000 binary clauses under one trigger: 28 ms to pop,
+    /// against 0.2 ms when their triggers are disjoint).  One pass drops
+    /// them all and leaves exactly the survivor sequence the per-edge
+    /// removals leave: both remove the marked edges and keep every other
+    /// edge in place.
+    ///
+    /// Worth its bookkeeping only for a list holding two or more batch
+    /// edges; for a single one the caller keeps the per-edge removal, whose
+    /// scan-and-move is the cheaper constant.
+    fn remove_marked_edges(&mut self, dead: &[bool], trigger: Lit) {
+        let idx = trigger.code() as usize;
+        if idx >= self.live.len() {
+            return;
+        }
+        let start = big_span_start(&self.span_end, idx);
+        let plen = self.live[idx] as usize;
+        let kept = self.sift_span(start, start, plen, dead);
+        self.live[idx] = kept as u32;
+        // The presence bitset first, like the propagation hot path: a
+        // trigger without an overflow list (the overwhelmingly common
+        // one) costs one load here and no `extra` bookkeeping.
+        if self.extra_has(idx) {
+            self.sift_extra(idx, dead);
+        }
+    }
+
     /// Bulk dead-edge compaction (the factor pass's analogue of kissat's
     /// eager O(1) watch removal, amortized): drop every primary edge and
     /// overflow entry whose clause id is `dead[cid]`, preserving per-code
@@ -448,28 +564,16 @@ impl BinaryImplicationGraph {
             // Preserve its old physical boundary before rewriting span_end.
             let orig_end = self.span_end[code] as usize;
             let plen = self.live[code] as usize;
-            let mut kept = 0usize;
-            for i in 0..plen {
-                let edge = self.edges[orig_start + i];
-                if !dead.get(edge.1.index()).copied().unwrap_or(false) {
-                    self.edges[write] = edge;
-                    write += 1;
-                    kept += 1;
-                }
-            }
+            let kept = self.sift_span(orig_start, write, plen, dead);
+            write += kept;
             orig_start = orig_end;
             self.live[code] = kept as u32;
             new_prefix += kept as u32;
             self.span_end[code] = new_prefix;
         }
         self.edges.truncate(write);
-        for (idx, extra) in self.extra.iter_mut().enumerate() {
-            let before = extra.len();
-            extra.retain(|&(_, cid)| !dead.get(cid.index()).copied().unwrap_or(false));
-            self.extra_entries -= before - extra.len();
-            if extra.is_empty() {
-                self.extra_nonempty[idx / 64] &= !(1 << (idx % 64));
-            }
+        for code in 0..self.extra.len() {
+            self.sift_extra(code, dead);
         }
     }
 
@@ -1892,6 +1996,11 @@ pub struct Solver {
     pub(super) equiv_scratch: EquivScratch,
     /// Monotonic round stamp for `equiv_scratch`'s epoch arrays.
     pub(super) equiv_epoch: u32,
+    /// Reused scratch of `pop` / `forget_learned_since`'s batched clause
+    /// retraction (`retract_clauses`): the retracted ids' mark array and
+    /// the dedup of their trigger literals.  Marks and flags are clear
+    /// between uses.
+    pub(super) retract_scratch: RetractScratch,
     /// Compare the compact round index with the original database lookups.
     #[cfg(test)]
     pub(super) subsume_database_oracle: bool,
@@ -2547,6 +2656,7 @@ impl Solver {
             inproc_diag_wall: [0; 5],
             subsume_scratch: SubsumeScratch::default(),
             equiv_scratch: EquivScratch::default(),
+            retract_scratch: RetractScratch::default(),
             equiv_epoch: 0,
             #[cfg(test)]
             subsume_database_oracle: false,
@@ -5673,27 +5783,17 @@ impl Solver {
             let trail_size = scope.trail_size;
 
             // Remove all original and learned clauses owned by this scope.
-            for clause_id in scope.clause_ids {
-                // Purge any binary-implication-graph edges for this clause
-                // before removing it. Unlike the watch lists (which lazily
-                // skip deleted clauses during propagation), the binary graph
-                // is consulted directly, so leaving stale edges behind would
-                // let a retracted binary clause keep propagating after pop().
-                self.purge_binary_edges(clause_id);
-
-                // Record the retraction in the DRAT proof (if enabled) before
-                // the clause's literals become inaccessible.
-                self.drat_delete(clause_id);
-
-                // Remove from clause database
-                self.clauses.remove(clause_id);
-
-                // Remove from learned clause tracking if it's a learned clause
-                self.learned_clause_ids.retain(|&id| id != clause_id);
-
-                // Note: Watch lists will be cleaned up naturally during propagation
-                // as they check if clauses are deleted before using them
-            }
+            // Unlike the watch lists (which lazily skip deleted clauses
+            // during propagation), the binary graph is consulted directly,
+            // so a retracted binary clause must have its edges physically
+            // removed – else it keeps propagating after pop().
+            // `retract_clauses` does that per implication list (once for a
+            // list shared by several of the scope's clauses) and removes
+            // each clause from the proof and the database; the learned-clause
+            // registry is filtered against the same marks once, not once
+            // per retracted clause.
+            let clause_ids = scope.clause_ids;
+            self.retract_clauses(&clause_ids, true);
 
             // Backtrack trail to the exact size it was at push()
             // This properly handles unit clauses that were added after push

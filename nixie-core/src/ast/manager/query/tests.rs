@@ -218,6 +218,120 @@ mod free_vars_binder_tests {
     }
 
     #[test]
+    fn a_shadowed_occurrence_visited_first_does_not_hide_the_later_free_one() {
+        // Regression test for the `seen` membership index of the output
+        // vector: `let ((a forall x. x)) x`.  A `Var` node has ONE `TermId`
+        // wherever it occurs, and the traversal visits the binding's value
+        // before the body, so the BOUND occurrence of `x` (inside the
+        // forall) is reached first.  An index that recorded `x` as seen on
+        // that occurrence would suppress the body's genuinely free `x`,
+        // and the walk would answer "no free variables" for a term that
+        // has one – the under-reporting `collect_free_vars`'s MBQI guard
+        // must never see.  An occurrence is indexed only once it is known
+        // to be free.
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let x = m.mk_var("x", int_sort);
+        let shadowed = m.mk_forall([("x", int_sort)], x); // forall x. x
+        let let_term = m.mk_let([("a", shadowed)], x); // let ((a forall x. x)) x
+
+        assert_eq!(
+            m.free_vars(let_term),
+            vec![x],
+            "the bound occurrence of x is visited first and must not hide the \
+             free one"
+        );
+        assert_eq!(
+            m.free_vars_including_patterns(let_term),
+            vec![x],
+            "same walk under the pattern-aware policy"
+        );
+
+        // The same shape with the indexed half of the membership test
+        // (`FREE_VARS_INDEX_MIN` and beyond): `x` is the first free
+        // occurrence, 200 more follow, and `x` is still reported exactly
+        // once, first.
+        let more: Vec<TermId> = (0..200)
+            .map(|i| m.mk_var(&format!("w{i}"), int_sort))
+            .collect();
+        let mut operands = vec![x];
+        operands.extend(more.iter().copied());
+        operands.push(x); // a free repeat of the shadowed-first variable
+        let big = m.mk_and(operands);
+        let let_big = m.mk_let([("a", shadowed)], big);
+        let mut expected = vec![x];
+        expected.extend(more.iter().copied());
+        assert_eq!(m.free_vars(let_big), expected);
+        assert_eq!(m.free_vars_including_patterns(let_big), expected);
+    }
+
+    #[test]
+    fn the_membership_index_takes_over_at_the_crossover_without_changing_the_answer() {
+        // Pin the hand-over from the output-vector scan to the hash index
+        // at `FREE_VARS_INDEX_MIN`: one below, exactly at, and one past it
+        // give the same first-occurrence order, with repeats interleaved so
+        // that every membership test is exercised on both sides.
+        let mut m = TermManager::new();
+        let bool_sort = m.sorts.bool_sort;
+        for count in [
+            FREE_VARS_INDEX_MIN - 1,
+            FREE_VARS_INDEX_MIN,
+            FREE_VARS_INDEX_MIN + 1,
+        ] {
+            let vars: Vec<TermId> = (0..count)
+                .map(|i| m.mk_var(&format!("v{i}"), bool_sort))
+                .collect();
+            let mut operands = Vec::new();
+            for (i, &v) in vars.iter().enumerate() {
+                if i % 2 == 1 {
+                    operands.push(vars[i - 1]);
+                }
+                operands.push(v);
+                if i % 7 == 6 {
+                    operands.push(vars[i / 2]);
+                }
+            }
+            let term = m.mk_and(operands);
+            assert_eq!(m.free_vars(term), vars, "count = {count}");
+        }
+    }
+
+    #[test]
+    fn many_variables_are_reported_once_each_in_first_occurrence_order() {
+        // The output is a set in `Vec` clothing: every distinct variable
+        // exactly once, in the order of its FIRST occurrence, which is the
+        // order the traversal reaches the operands (array order for an
+        // n-ary operator).  Sized so that a membership test linear in the
+        // output so far would pay millions of comparisons here – the shape
+        // that made one 24,306-variable assertion cost 295 million.
+        let mut m = TermManager::new();
+        let bool_sort = m.sorts.bool_sort;
+        let vars: Vec<TermId> = (0..3_000)
+            .map(|i| m.mk_var(&format!("v{i}"), bool_sort))
+            .collect();
+        // Each variable occurs three times; the repeats are interleaved so
+        // that the first occurrences are spread through the operand list.
+        let mut operands = Vec::new();
+        for i in 0..vars.len() {
+            if i % 3 == 2 {
+                operands.push(vars[i - 2]); // a repeat of an earlier variable
+            }
+            operands.push(vars[i]);
+            if i % 5 == 4 {
+                operands.push(vars[i - 4]);
+            }
+        }
+        let term = m.mk_and(operands.iter().copied());
+
+        assert_eq!(
+            m.free_vars(term),
+            vars,
+            "every variable once, in first-occurrence (= operand) order"
+        );
+        assert_eq!(m.free_vars_including_patterns(term), vars);
+    }
+
+    #[test]
     fn nested_quantifiers_with_distinct_names_collect_only_free_vars() {
         let mut m = TermManager::new();
         let int_sort = m.sorts.int_sort;
