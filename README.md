@@ -10,6 +10,9 @@ rebranded and developed independently.
 ```sh
 cargo build --release                          # solver binary: target/release/nixie
 cargo nextest run --workspace --all-features   # test suite
+just verify                                   # build, clippy, fmt, docs, and the two
+                                              # shipped configurations: no_std and
+                                              # wasm32-unknown-unknown (both profiles)
 ```
 
 Rust 1.88+, edition 2024.

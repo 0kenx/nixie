@@ -37,7 +37,8 @@
 //!   OS facilities that `core` does not provide and are therefore
 //!   available only with `std`: [`blas`], [`blas_ops`], [`mpfr`],
 //!   [`simd::matrix_simd`], [`simd::simplex_simd`], and
-//!   [`rational::is_prime`] (which needs a random number generator).
+//!   [`rational::is_prime`] and [`rational::pollard_rho`] (which need a
+//!   random number generator).
 //!   Everything else -- polynomials, Gröbner bases, simplex, intervals,
 //!   BDDs, real closure, the transcendental enclosure -- builds in both
 //!   configurations; the `std`-only `f64` methods it calls come from
