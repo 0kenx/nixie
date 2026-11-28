@@ -193,9 +193,7 @@ impl AgilityTracker {
 
     /// Clear assignment history (keeps agility value)
     pub fn clear_assignments(&mut self) {
-        for assignment in &mut self.last_assignment {
-            *assignment = None;
-        }
+        self.last_assignment.fill(None);
     }
 }
 

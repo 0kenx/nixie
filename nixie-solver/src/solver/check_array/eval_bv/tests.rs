@@ -1342,10 +1342,14 @@ fn deep_terms_evaluate_on_a_small_stack() {
     // ~5 B-per-frame threshold is the pin, so never raise one alone.
     const DEPTH: usize = 25_000;
 
+    // The fixture is built out here and boxed in: a fresh `Solver` costs
+    // ~0.1 MB of constructor frames at opt-level 1 (it grows with every
+    // field and toolchain), which is not the stack use this test pins. The
+    // thread's budget goes to building and walking the chain alone.
+    let mut env = Box::new(Env::new());
     let observed = std::thread::Builder::new()
         .stack_size(1 << 17)
-        .spawn(|| {
-            let mut env = Env::new();
+        .spawn(move || {
             let (term, expected) = not_chain(&mut env, DEPTH);
             (env.eval(term), expected)
         })
@@ -1364,10 +1368,14 @@ fn deep_unevaluable_terms_also_stay_off_the_native_stack() {
     // ~5 B-per-frame threshold is the pin, so never raise one alone.
     const DEPTH: usize = 25_000;
 
+    // The fixture is built out here and boxed in: a fresh `Solver` costs
+    // ~0.1 MB of constructor frames at opt-level 1 (it grows with every
+    // field and toolchain), which is not the stack use this test pins. The
+    // thread's budget goes to building and walking the chain alone.
+    let mut env = Box::new(Env::new());
     let observed = std::thread::Builder::new()
         .stack_size(1 << 17)
-        .spawn(|| {
-            let mut env = Env::new();
+        .spawn(move || {
             let free = env.free_var("free", 8);
             let mut term = free;
             for _ in 0..DEPTH {
@@ -1390,10 +1398,14 @@ fn deep_right_leaning_terms_evaluate_on_a_small_stack() {
     // ~10 B-per-frame threshold is the pin, so never raise one alone.
     const DEPTH: usize = 12_500;
 
+    // The fixture is built out here and boxed in: a fresh `Solver` costs
+    // ~0.1 MB of constructor frames at opt-level 1 (it grows with every
+    // field and toolchain), which is not the stack use this test pins. The
+    // thread's budget goes to building and walking the chain alone.
+    let mut env = Box::new(Env::new());
     let observed = std::thread::Builder::new()
         .stack_size(1 << 17)
-        .spawn(|| {
-            let mut env = Env::new();
+        .spawn(move || {
             let one = env.constant(1, 8);
             let mut term = env.constant(0, 8);
             for _ in 0..DEPTH {

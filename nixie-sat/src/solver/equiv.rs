@@ -482,8 +482,12 @@ impl Solver {
             let old_len = self.equiv_substitution.len();
             self.equiv_substitution
                 .resize(num_vars, Lit::pos(Var::new(0)));
-            for v in old_len..num_vars {
-                self.equiv_substitution[v] = Lit::pos(Var::new(v as u32));
+            for (v, slot) in self.equiv_substitution[..num_vars]
+                .iter_mut()
+                .enumerate()
+                .skip(old_len)
+            {
+                *slot = Lit::pos(Var::new(v as u32));
             }
         }
         for v in 0..num_vars {

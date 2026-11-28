@@ -8,6 +8,7 @@ repository.workspace = true
 description = "SMT-COMP benchmark infrastructure for Nixie"
 keywords = ["smt", "benchmark", "smtcomp", "testing"]
 categories = ["development-tools::testing"]
+autotests = false
 
 [lints]
 workspace = true
@@ -40,3 +41,10 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tokio-tungstenite = { workspace = true }
 futures-util.workspace = true
+
+# Integration tests: one binary (see tests/main.rs), plus files
+# that install a global allocator or mutate the process environment,
+# which keep a process of their own under `cargo test`.
+[[test]]
+name = "integration"
+path = "tests/main.rs"

@@ -594,7 +594,8 @@ impl TermManager {
                     self.eq_solve_cache.insert(key, Some(terminal));
                     result = Some(terminal);
                 }
-            } else if let Some(r) = result.take() {
+            } else {
+                let r = result.take()?;
                 match frames.pop() {
                     None => {
                         if r == orig {
@@ -647,10 +648,6 @@ impl TermManager {
                         }
                     },
                 }
-            } else {
-                // Unreachable: the loop starts with `pending` set and
-                // every arm re-establishes exactly one of the two.
-                return None;
             }
         }
     }

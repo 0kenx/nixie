@@ -588,9 +588,7 @@ impl Solver {
             .trail
             .level_start(1)
             .min(self.trail.assignments().len());
-        for m in &mut self.elim_mark {
-            *m = false;
-        }
+        self.elim_mark.fill(false);
         self.elim_mark_count = 0;
         // cadical: `lim.elim = conflicts + elimint * (phases + 1)`.
         let interval = self.config.elim_interval * (self.elim_phases + 1);

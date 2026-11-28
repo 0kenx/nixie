@@ -85,7 +85,6 @@ mod inner {
         ///
         /// Pass the returned value to
         /// [`ParallelRunner::run_all_with_progress`](crate::parallel::ParallelRunner::run_all_with_progress).
-        #[must_use]
         pub fn progress_callback(&self) -> ProgressCallback {
             let sender = self.sender.clone();
             Box::new(move |progress: ParallelProgress| {

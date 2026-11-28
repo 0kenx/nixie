@@ -205,9 +205,7 @@ impl NoveltySelector {
     pub fn reset(&mut self) {
         self.last_flipped = None;
         self.current_time = 0;
-        for age in &mut self.flip_age {
-            *age = 0;
-        }
+        self.flip_age.fill(0);
     }
 }
 
@@ -338,9 +336,7 @@ impl SparrowSelector {
 
     /// Reset
     pub fn reset(&mut self) {
-        for age in &mut self.ages {
-            *age = 0;
-        }
+        self.ages.fill(0);
         self.current_flip = 0;
     }
 }
@@ -449,9 +445,7 @@ impl BmsSelector {
 
     /// Reset
     pub fn reset(&mut self) {
-        for age in &mut self.ages {
-            *age = 0;
-        }
+        self.ages.fill(0);
         self.current_flip = 0;
     }
 }

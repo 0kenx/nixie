@@ -457,9 +457,7 @@ impl Solver {
         self.current_conflict_level = current_level;
 
         // Reset seen flags
-        for s in &mut self.seen {
-            *s = false;
-        }
+        self.seen.fill(false);
 
         // Collect variables to bump in batch (avoids repeated heap sift-ups)
         let mut vars_to_bump: SmallVec<[Var; 32]> = SmallVec::new();
@@ -2502,9 +2500,7 @@ impl Solver {
         };
 
         // Reset seen flags
-        for s in &mut self.seen {
-            *s = false;
-        }
+        self.seen.fill(false);
 
         // Collect variables for batch bumping
         let mut vars_to_bump: SmallVec<[Var; 32]> = SmallVec::new();

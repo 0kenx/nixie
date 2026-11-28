@@ -189,9 +189,7 @@ impl ModelMinimizer {
         for i in 0..self.assignments.len() {
             if stats.checks_performed >= self.max_checks {
                 // Budget exceeded: mark remaining as essential.
-                for j in i..self.assignments.len() {
-                    essential.push(self.assignments[j].clone());
-                }
+                essential.extend(self.assignments.iter().skip(i).cloned());
                 break;
             }
 

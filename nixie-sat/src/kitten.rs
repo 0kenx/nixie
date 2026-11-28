@@ -1049,7 +1049,7 @@ impl Kitten {
     }
 
     fn completely_backtrack_to_root_level(&mut self) {
-        let lits: Vec<u32> = self.trail.drain(..).collect();
+        let lits: Vec<u32> = std::mem::take(&mut self.trail);
         for lit in lits {
             self.unassign(lit);
         }
@@ -2345,8 +2345,8 @@ mod audit_tests {
         k.randomize_phases();
         let mut generator = 0u64;
         let random = next_random64(&mut generator);
-        for i in 0..4 {
-            assert_eq!(k.phases[i], ((random >> i) & 1) as u8);
+        for (i, &phase) in k.phases[..4].iter().enumerate() {
+            assert_eq!(phase, ((random >> i) & 1) as u8);
         }
     }
 
@@ -2426,8 +2426,8 @@ mod audit_tests {
         // emptied) – the model value must be present before backtracking.
         assert_ne!(k.value(elit(1)), 0, "model value present before backtrack");
         k.completely_backtrack_to_root_level();
-        for i in 0..k.lits {
-            assert_eq!(k.values[i], 0, "all values cleared at root, lit {i}");
+        for (i, &value) in k.values[..k.lits].iter().enumerate() {
+            assert_eq!(value, 0, "all values cleared at root, lit {i}");
         }
         assert_eq!(k.unassigned as usize, k.lits / 2);
     }

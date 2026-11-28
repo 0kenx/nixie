@@ -780,7 +780,6 @@ impl Inference {
 
     /// Rémy-style row unification.
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     fn unify_rows(
         &mut self,
         rx: TyId,

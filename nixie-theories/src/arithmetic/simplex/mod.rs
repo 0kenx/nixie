@@ -7304,7 +7304,7 @@ impl Simplex {
                 ));
             }
         }
-        for (b, _row) in self.tableau.iter() {
+        for b in self.tableau.keys() {
             // CHECKED evaluation: the invariant runs on wide trajectories
             // whose row products legitimately leave `i64` width – an
             // overflowing row is unverifiable cheaply here, not a panic

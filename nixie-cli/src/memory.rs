@@ -57,7 +57,11 @@ fn rss_and_peak_fallback() -> (u64, u64) {
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
     let pid = Pid::from_u32(std::process::id());
-    let mut sys = System::new();
+    // sysinfo >= 0.40: constructing a `System` can fail (unsupported
+    // platform); report no measurement rather than panic.
+    let Ok(mut sys) = System::new() else {
+        return (0, 0);
+    };
     sys.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[pid]),
         true,

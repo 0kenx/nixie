@@ -257,11 +257,7 @@ impl FingerprintGenerator {
 
         // Allow 30% difference in depth
         let depth_ratio = (sf1.max_depth as f64) / (sf2.max_depth.max(1) as f64);
-        if !(0.7..=1.3).contains(&depth_ratio) {
-            return false;
-        }
-
-        true
+        (0.7..=1.3).contains(&depth_ratio)
     }
 
     // Helper: Compute size similarity score

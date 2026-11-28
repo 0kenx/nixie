@@ -79,9 +79,7 @@ impl PhaseSaver {
 
     /// Reset all phases
     pub fn reset(&mut self) {
-        for phase in &mut self.phases {
-            *phase = None;
-        }
+        self.phases.fill(None);
     }
 }
 

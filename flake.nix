@@ -36,7 +36,7 @@
       inherit (pkgs) lib;
       srcRoot = ./.;
 
-      rustToolchain = pkgs.rust-bin.stable."1.96.0".default.override {
+      rustToolchain = pkgs.rust-bin.stable."1.100.0".default.override {
         extensions = [
           "rust-src"
           "clippy"

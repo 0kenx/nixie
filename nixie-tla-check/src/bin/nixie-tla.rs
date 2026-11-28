@@ -1277,10 +1277,8 @@ fn run_pass(
                         .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or("spec");
-                    match write_itf_as("violation", &bmc, dir, name, *found) {
-                        Ok(path) => println!("{indent}  wrote {path}"),
-                        Err(code) => return Err(code),
-                    }
+                    let path = write_itf_as("violation", &bmc, dir, name, *found)?;
+                    println!("{indent}  wrote {path}");
                 }
                 if *found >= ctx.args.max_errors {
                     break;

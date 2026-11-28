@@ -90,9 +90,7 @@ impl Solver {
         if !any_unchecked {
             // Every binary has been checked: reset wholesale (cadical's
             // rescheduling sweep) so future rounds re-examine.
-            for f in &mut self.clause_transred_checked {
-                *f = false;
-            }
+            self.clause_transred_checked.fill(false);
             candidates.clear();
             for idx in 0..n {
                 let id = ClauseId::new(idx as u32);

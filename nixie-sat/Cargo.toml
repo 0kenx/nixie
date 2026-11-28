@@ -8,6 +8,7 @@ repository.workspace = true
 description = "High-performance CDCL SAT Solver for Nixie"
 keywords = ["sat", "cdcl", "solver"]
 categories = ["algorithms"]
+autotests = false
 
 [features]
 default = ["std"]
@@ -73,3 +74,50 @@ nixie-proof = { path = "../nixie-proof" }
 
 [lints.clippy]
 unwrap_used = "deny"
+
+# Integration tests: one binary (see tests/main.rs), plus files
+# that install a global allocator or mutate the process environment,
+# which keep a process of their own under `cargo test`.
+[[test]]
+name = "integration"
+path = "tests/main.rs"
+
+[[test]]
+name = "external_branching"
+path = "tests/external_branching.rs"
+
+[[test]]
+name = "fold_class_unit_regression"
+path = "tests/fold_class_unit_regression.rs"
+
+[[test]]
+name = "gate_subsume_soundness"
+path = "tests/gate_subsume_soundness.rs"
+
+[[test]]
+name = "mid_bva_soundness"
+path = "tests/mid_bva_soundness.rs"
+
+[[test]]
+name = "probe_wide_soundness"
+path = "tests/probe_wide_soundness.rs"
+
+[[test]]
+name = "reduce_arm_soundness_adapt"
+path = "tests/reduce_arm_soundness_adapt.rs"
+
+[[test]]
+name = "reduce_arm_soundness_by_used"
+path = "tests/reduce_arm_soundness_by_used.rs"
+
+[[test]]
+name = "reduce_arm_soundness_glue"
+path = "tests/reduce_arm_soundness_glue.rs"
+
+[[test]]
+name = "reduce_arm_soundness_null"
+path = "tests/reduce_arm_soundness_null.rs"
+
+[[test]]
+name = "subsume2_soundness"
+path = "tests/subsume2_soundness.rs"

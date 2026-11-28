@@ -580,12 +580,9 @@ impl CodeTree {
                 }
 
                 CodeTreeInstr::MoveToParent => {
-                    if let Some(parent) = context.term_stack.pop() {
-                        context.current_term = parent;
-                        context.pc += 1;
-                    } else {
-                        return None; // No parent
-                    }
+                    let parent = context.term_stack.pop()?;
+                    context.current_term = parent;
+                    context.pc += 1;
                 }
 
                 CodeTreeInstr::Yield {

@@ -5,7 +5,7 @@
 //! containing SMT-LIB2 benchmark files.
 //!
 //! Example:
-//!   SMTLIB_BENCH_PATH=/path/to/smtlib/benchmarks cargo test --test smtlib_benchmarks
+//!   SMTLIB_BENCH_PATH=/path/to/smtlib/benchmarks cargo test -p nixie-cli --test integration smtlib_benchmarks::
 
 use std::env;
 use std::fs;

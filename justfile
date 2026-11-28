@@ -4,21 +4,42 @@ default:
 _fuzz_dir := "fuzz"
 _fuzz_targets := "fuzz_smtlib_parser fuzz_term_builder fuzz_solver fuzz_theory_arithmetic fuzz_theory_bitvector fuzz_theory_array fuzz_quantifiers fuzz_tactics fuzz_parse_and_solve"
 
+# Every recipe selects the SAME package set and features (`--workspace
+# --all-features`). Cargo resolves features per invocation, and a different
+# selection (`cargo build` vs `cargo test -p x`, with or without
+# `--all-features`) resolves a different feature set for the shared crates –
+# so it compiles and keeps a second copy of them, and every later edit to
+# nixie-core & co. is compiled once per selection you alternate between.
+# Use `just t <pkg> [filter]` for a quick single-crate test run.
+
 # ======== Build ========
 
 build:
-    cargo build --all-features
+    cargo build --workspace --all-features
 
 build-release:
-    cargo build --release --all-features
+    cargo build --workspace --release --all-features
 
 watch:
-    cargo watch -x 'build --all-features'
+    cargo watch -x 'build --workspace --all-features'
 
 # ======== Test ========
 
+# `--lib --bins --tests` skips the ~50 examples: nextest runs no tests from
+# them, yet building them was ~1/4 of a test rebuild's compile+link time.
+# `just lint` (clippy --all-targets) still compiles every example.
+#
+# Run every test in the workspace.
 test:
-    cargo nextest run --workspace --all-features
+    cargo nextest run --workspace --all-features --lib --bins --tests
+
+# Same `--workspace --all-features` selection as `just test`, so it reuses
+# those artifacts instead of resolving (and compiling) a second feature set
+# of nixie-core & co. the way `cargo nextest run -p <pkg>` does.
+#
+# One crate's tests: `just t nixie-sat` or `just t nixie-sat 'test(/^kitten::/)'`.
+t pkg filter="all()":
+    cargo nextest run --workspace --all-features --lib --bins --tests -E 'package({{pkg}}) & ({{filter}})'
 
 test-doc:
     cargo test --doc --workspace --all-features
@@ -30,7 +51,7 @@ test-all:
 # ======== Lint / Format / Audit ========
 
 lint:
-    cargo clippy --all-features --all-targets -- -D warnings
+    cargo clippy --workspace --all-features --all-targets -- -D warnings
     cargo deny check bans
 
 fmt:
@@ -69,13 +90,13 @@ audit:
 # ======== Docs / Verify ========
 
 doc:
-    cargo doc --no-deps --all-features
+    cargo doc --workspace --no-deps --all-features
 
 verify:
-    cargo build --all-features
-    cargo clippy --all-features --all-targets -- -D warnings
+    cargo build --workspace --all-features
+    cargo clippy --workspace --all-features --all-targets -- -D warnings
     cargo fmt --all -- --check
-    cargo doc --no-deps --all-features
+    cargo doc --workspace --no-deps --all-features
 
 verify-full:
     just verify

@@ -677,8 +677,8 @@ impl SparseMatrix {
         let mut col_indices = Vec::new();
         let mut values = Vec::new();
 
-        for i in 0..dense.nrows() {
-            matrix.row_ptr[i] = values.len();
+        for (i, row_start) in matrix.row_ptr.iter_mut().enumerate().take(dense.nrows()) {
+            *row_start = values.len();
             for j in 0..dense.ncols() {
                 let val = dense.get(i, j);
                 if val != Rational64::from(0) {

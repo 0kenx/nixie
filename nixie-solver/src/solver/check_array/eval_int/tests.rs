@@ -971,10 +971,14 @@ fn deep_arithmetic_evaluates_on_a_small_stack() {
     // ~5 B-per-frame threshold is the pin, so never raise one alone.
     const DEPTH: usize = 25_000;
 
+    // The fixture is built out here and boxed in: a fresh `Solver` costs
+    // ~0.1 MB of constructor frames at opt-level 1 (it grows with every
+    // field and toolchain), which is not the stack use this test pins. The
+    // thread's budget goes to building and walking the chain alone.
+    let mut env = Box::new(Env::new());
     let observed = std::thread::Builder::new()
         .stack_size(1 << 17)
-        .spawn(|| {
-            let mut env = Env::new();
+        .spawn(move || {
             let (term, expected) = sub_chain(&mut env, DEPTH);
             (env.eval(term), expected)
         })
@@ -993,10 +997,14 @@ fn deep_right_leaning_and_nary_terms_evaluate_on_a_small_stack() {
     // ~10 B-per-frame threshold is the pin, so never raise one alone.
     const DEPTH: usize = 12_500;
 
+    // The fixture is built out here and boxed in: a fresh `Solver` costs
+    // ~0.1 MB of constructor frames at opt-level 1 (it grows with every
+    // field and toolchain), which is not the stack use this test pins. The
+    // thread's budget goes to building and walking the chain alone.
+    let mut env = Box::new(Env::new());
     let observed = std::thread::Builder::new()
         .stack_size(1 << 17)
-        .spawn(|| {
-            let mut env = Env::new();
+        .spawn(move || {
             let one = env.int(1);
             let mut right = env.int(0);
             for _ in 0..DEPTH {
@@ -1026,10 +1034,14 @@ fn a_deep_alias_chain_folds_on_a_small_stack() {
     // ~21 B-per-frame threshold is the pin, so never raise one alone.
     const DEPTH: usize = 6_250;
 
+    // The fixture is built out here and boxed in: a fresh `Solver` costs
+    // ~0.1 MB of constructor frames at opt-level 1 (it grows with every
+    // field and toolchain), which is not the stack use this test pins. The
+    // thread's budget goes to building and walking the chain alone.
+    let mut env = Box::new(Env::new());
     let observed = std::thread::Builder::new()
         .stack_size(1 << 17)
-        .spawn(|| {
-            let mut env = Env::new();
+        .spawn(move || {
             let top = alias_chain(&mut env, DEPTH);
             env.eval(top)
         })

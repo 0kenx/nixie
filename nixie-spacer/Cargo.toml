@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Property Directed Reachability (PDR/IC3) engine for Nixie - Horn clause solving"
 keywords = ["smt", "pdr", "ic3", "horn", "verification"]
 categories = ["algorithms", "development-tools::testing"]
+autotests = false
 
 [dependencies]
 nixie-core = { workspace = true, features = ["std"] }
@@ -27,3 +28,10 @@ proptest.workspace = true
 
 [lints.clippy]
 unwrap_used = "deny"
+
+# Integration tests: one binary (see tests/main.rs), plus files
+# that install a global allocator or mutate the process environment,
+# which keep a process of their own under `cargo test`.
+[[test]]
+name = "integration"
+path = "tests/main.rs"

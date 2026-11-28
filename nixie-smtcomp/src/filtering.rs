@@ -352,11 +352,7 @@ impl ResultFilterCriteria {
         }
 
         // Check soundness
-        if self.sound_only && result.correct == Some(false) {
-            return false;
-        }
-
-        true
+        !(self.sound_only && result.correct == Some(false))
     }
 }
 

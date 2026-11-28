@@ -245,8 +245,8 @@ impl GaussianElimination {
             if let Some(pivot_var) = self.equations[i].leading_var() {
                 // Clone the equation before using it
                 let eq_i = self.equations[i].clone();
-                for j in 0..i {
-                    self.equations[j].eliminate(pivot_var, &eq_i);
+                for eq in &mut self.equations[..i] {
+                    eq.eliminate(pivot_var, &eq_i);
                 }
             }
         }

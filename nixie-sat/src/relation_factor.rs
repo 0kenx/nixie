@@ -218,7 +218,7 @@ fn derive(
     for pivot in free {
         live_mask &= !(1 << pivot);
         let mut next = Vec::with_capacity(nodes.len() / 2);
-        for pair in nodes.chunks_exact(2) {
+        for pair in nodes.as_chunks::<2>().0 {
             if pair[0].0 ^ pair[1].0 != 1 << pivot {
                 return Err(FactorError::Certificate);
             }
@@ -336,11 +336,11 @@ pub fn factor_relations(
         // Independent local semantic check before generating or deleting any
         // clauses. It proves the reverse implication too, which LRAT additions
         // alone cannot prove (deletion is merely satisfiability preserving).
-        for row in 0..256 {
+        for (row, &slot) in group.rows[..256].iter().enumerate() {
             let satisfies = cubes
                 .iter()
                 .all(|&(mask, forbidden)| (row as u8 & mask) != (forbidden & mask));
-            if satisfies != (group.rows[row] == usize::MAX) {
+            if satisfies != (slot == usize::MAX) {
                 return Err(FactorError::Certificate);
             }
         }

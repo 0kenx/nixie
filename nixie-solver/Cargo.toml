@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Main CDCL(T) Solver API for Nixie"
 keywords = ["smt", "solver", "cdcl"]
 categories = ["algorithms"]
+autotests = false
 
 [dependencies]
 nixie-core = { workspace = true, default-features = false }
@@ -75,3 +76,30 @@ harness = false
 
 [lints.clippy]
 unwrap_used = "deny"
+
+# Integration tests: one binary (see tests/main.rs), plus files
+# that install a global allocator or mutate the process environment,
+# which keep a process of their own under `cargo test`.
+[[test]]
+name = "integration"
+path = "tests/main.rs"
+
+[[test]]
+name = "bv_cegar_regressions"
+path = "tests/bv_cegar_regressions.rs"
+
+[[test]]
+name = "bv_defer_blast_regressions"
+path = "tests/bv_defer_blast_regressions.rs"
+
+[[test]]
+name = "bv_gate_sh_regressions"
+path = "tests/bv_gate_sh_regressions.rs"
+
+[[test]]
+name = "bv_mul_array_regressions"
+path = "tests/bv_mul_array_regressions.rs"
+
+[[test]]
+name = "known_unsound_regressions"
+path = "tests/known_unsound_regressions.rs"

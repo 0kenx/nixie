@@ -144,9 +144,7 @@ impl HyperBinaryResolver {
         let mut results = Vec::new();
 
         // Clear state
-        for seen in &mut self.seen {
-            *seen = false;
-        }
+        self.seen.fill(false);
         self.queue.clear();
 
         // Start with probe literal

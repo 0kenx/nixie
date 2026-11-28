@@ -250,8 +250,8 @@ over a small heaplet vocabulary against independently enumerated finite maps,
 and includes a CVC5 reference test with nil fixed to zero:
 
 ```bash
-cargo test -p nixie-solver --test heap_separation
-CVC5=/path/to/cvc5 cargo test -p nixie-solver --test heap_separation \
+cargo test -p nixie-solver --test integration heap_separation::
+CVC5=/path/to/cvc5 cargo test -p nixie-solver --test integration heap_separation:: \
   cvc5_ -- --ignored
 ```
 
