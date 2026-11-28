@@ -6,6 +6,8 @@
 mod affine;
 
 use super::*;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::sort::binary_field::BinaryField;
 use num_traits::ToPrimitive;
 

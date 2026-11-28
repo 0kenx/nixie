@@ -55,6 +55,9 @@
 //! value flows through it.
 
 #[cfg(not(feature = "std"))]
+use crate::prelude::F64Ext;
+use crate::prelude::FxHashMap;
+#[cfg(not(feature = "std"))]
 use alloc::collections::VecDeque;
 #[cfg(not(feature = "std"))]
 use alloc::vec;
@@ -64,7 +67,6 @@ use nixie_math::transcendental::DI;
 use num_bigint::BigInt;
 use num_rational::{BigRational, Rational64};
 use num_traits::{FromPrimitive, One, ToPrimitive, Zero};
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 #[cfg(feature = "std")]
 use std::collections::VecDeque;

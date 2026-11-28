@@ -23,17 +23,26 @@
 // them, so dead code here is expected.
 #![allow(dead_code)]
 
+#[allow(unused_imports)]
+use crate::prelude::*;
+
+#[cfg(feature = "std")]
 pub mod drat;
 pub mod lrat;
 pub mod tracer;
 
 // Legacy generic-over-`W` text writers (kept for API back-compat; the solver
 // uses the tracers above).
+#[cfg(feature = "std")]
 mod legacy;
 
+#[cfg(feature = "std")]
 pub use drat::DratTracer;
+#[cfg(feature = "std")]
 pub use legacy::{DratWriter, LratWriter, ProofTrimmer};
-pub use lrat::{LratTracer, LratTranscript, LratTranscriptHandle, MemoryLratTracer};
+#[cfg(feature = "std")]
+pub use lrat::LratTracer;
+pub use lrat::{LratTranscript, LratTranscriptHandle, MemoryLratTracer};
 pub use tracer::{ConclusionType, Tracer};
 
 /// The proof manager (`class Proof`).
@@ -395,7 +404,7 @@ impl Proof {
 
     fn fan_add_original_clause(&mut self, restore: bool) {
         let (id, redundant) = (self.clause_id, self.redundant);
-        let clause = std::mem::take(&mut self.clause);
+        let clause = core::mem::take(&mut self.clause);
         for t in self.tracers.iter_mut() {
             t.add_original_clause(id, redundant, &clause, restore);
         }
@@ -404,8 +413,8 @@ impl Proof {
 
     fn fan_add_derived_clause(&mut self) {
         let (id, redundant, witness) = (self.clause_id, self.redundant, self.witness);
-        let clause = std::mem::take(&mut self.clause);
-        let chain = std::mem::take(&mut self.proof_chain);
+        let clause = core::mem::take(&mut self.clause);
+        let chain = core::mem::take(&mut self.proof_chain);
         for t in self.tracers.iter_mut() {
             t.add_derived_clause(id, redundant, witness, &clause, &chain);
         }
@@ -415,7 +424,7 @@ impl Proof {
 
     fn fan_delete_clause(&mut self) {
         let (id, redundant) = (self.clause_id, self.redundant);
-        let clause = std::mem::take(&mut self.clause);
+        let clause = core::mem::take(&mut self.clause);
         for t in self.tracers.iter_mut() {
             t.delete_clause(id, redundant, &clause);
         }
@@ -445,8 +454,8 @@ impl Default for Proof {
     }
 }
 
-impl std::fmt::Debug for Proof {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Proof {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Proof")
             .field("tracers", &self.tracers.len())
             .field("clause_id", &self.clause_id)

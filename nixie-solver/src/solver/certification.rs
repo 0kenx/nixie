@@ -17,7 +17,9 @@ use crate::prelude::*;
 use nixie_core::ast::{
     CachedEvaluator, Model as CertificateModel, ModelValue, TermId, TermKind, TermManager,
 };
-use nixie_sat::{Lit, Solver as SatSolver, SolverResult as SatResult};
+use nixie_sat::Lit;
+#[cfg(feature = "std")]
+use nixie_sat::{Solver as SatSolver, SolverResult as SatResult};
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{One, Zero};
@@ -285,7 +287,7 @@ impl Solver {
                     key.push(find(&mut parent, arg));
                 }
                 match sigs.entry((*func, key)) {
-                    std::collections::hash_map::Entry::Occupied(first) => {
+                    hash_map::Entry::Occupied(first) => {
                         let first = *first.get();
                         let before_a = find(&mut parent, app);
                         let before_b = find(&mut parent, first);
@@ -294,7 +296,7 @@ impl Solver {
                             changed = true;
                         }
                     }
-                    std::collections::hash_map::Entry::Vacant(slot) => {
+                    hash_map::Entry::Vacant(slot) => {
                         slot.insert(app);
                     }
                 }
@@ -369,14 +371,14 @@ impl Solver {
                 if complete && let Some(result) = evaluator.eval(id) {
                     let result_key = format!("{result:?}");
                     match table.entry((*func, arg_key)) {
-                        std::collections::hash_map::Entry::Occupied(existing) => {
+                        hash_map::Entry::Occupied(existing) => {
                             if *existing.get() != result_key {
                                 return Err(
                                     "candidate function interpretation is not well-defined: congruent arguments map to different values".to_string(),
                                 );
                             }
                         }
-                        std::collections::hash_map::Entry::Vacant(slot) => {
+                        hash_map::Entry::Vacant(slot) => {
                             slot.insert(result_key);
                         }
                     }
@@ -1649,14 +1651,14 @@ fn verify_euf_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
                 key.push(find(&mut parent, arg));
             }
             match sigs.entry((*func, key)) {
-                std::collections::hash_map::Entry::Occupied(first) => {
+                hash_map::Entry::Occupied(first) => {
                     let first = *first.get();
                     if find(&mut parent, app) != find(&mut parent, first) {
                         union(&mut parent, app, first);
                         changed = true;
                     }
                 }
-                std::collections::hash_map::Entry::Vacant(slot) => {
+                hash_map::Entry::Vacant(slot) => {
                     slot.insert(app);
                 }
             }
@@ -2080,7 +2082,7 @@ fn lia_conjunction_infeasible(
         // direction-matching arms negate their residual).
         let negate = |mut e: LinExpr| {
             for c in e.coefs.values_mut() {
-                *c = -std::mem::replace(c, BigRational::zero());
+                *c = -core::mem::replace(c, BigRational::zero());
             }
             e.constant = -e.constant;
             e

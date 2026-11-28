@@ -1631,7 +1631,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                 for &e in list {
                     escapes.push(symmetric_difference_at(e, *a, *b, manager));
                 }
-                axioms.push(manager.mk_or(std::iter::once(atom).chain(escapes)));
+                axioms.push(manager.mk_or(core::iter::once(atom).chain(escapes)));
             }
         }
     }
@@ -2005,7 +2005,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // integer, and a model that picks one arbitrarily is not a model.
     let incomplete =
         pair_budget_exceeded || rel_incomplete || congruence_budget_exceeded || card.incomplete;
-    if std::env::var_os("NIXIE_SET_DEBUG").is_some() && incomplete {
+    if crate::env::var_os("NIXIE_SET_DEBUG").is_some() && incomplete {
         eprintln!(
             "[set] incomplete: pair_budget={pair_budget_exceeded} rel={rel_incomplete} congruence={congruence_budget_exceeded} card={} sets={} eqs={}",
             card.incomplete,

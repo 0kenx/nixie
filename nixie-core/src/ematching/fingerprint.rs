@@ -15,7 +15,7 @@
 //! Based on Z3's fingerprint implementation in src/ast/ast_pp_util.cpp
 
 use crate::ast::{TermId, TermKind, TermManager};
-use crate::prelude::hash_map::DefaultHasher;
+use crate::prelude::DefaultHasher;
 #[allow(unused_imports)]
 use crate::prelude::*;
 use core::hash::{Hash, Hasher};

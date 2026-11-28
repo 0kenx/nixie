@@ -2003,7 +2003,7 @@ mod tests {
 pub fn csr_scan_enabled() -> bool {
     #[cfg(feature = "std")]
     {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| {
             std::env::var("NIXIE_CSR_SCAN")
@@ -2023,7 +2023,7 @@ pub fn csr_scan_enabled() -> bool {
 pub fn csr_read_enabled() -> bool {
     #[cfg(feature = "std")]
     {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| {
             std::env::var("NIXIE_CSR_READ")
@@ -2041,7 +2041,7 @@ pub fn csr_read_enabled() -> bool {
 pub fn csr_charge_trace_enabled() -> bool {
     #[cfg(feature = "std")]
     {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| std::env::var("NIXIE_CSR_CHARGE_TRACE").is_ok())
     }
@@ -2059,7 +2059,7 @@ pub fn csr_charge_trace_enabled() -> bool {
 pub fn csr_shadow_enabled() -> bool {
     #[cfg(feature = "std")]
     {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| {
             std::env::var("NIXIE_CSR_SHADOW")
@@ -2082,7 +2082,7 @@ pub fn csr_shadow_enabled() -> bool {
 pub fn csr_b_enabled() -> bool {
     #[cfg(feature = "std")]
     {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         // The flip REVERTED (2026-09-20, the corpus ledger): the slack-CSR
         // as the DEFAULT measured geomean +16% instructions over the

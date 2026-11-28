@@ -130,7 +130,8 @@
 
 use crate::clause::ClauseId;
 use crate::literal::{Lit, Var};
-use rustc_hash::FxHashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use smallvec::SmallVec;
 
 use super::Solver;
@@ -178,7 +179,7 @@ fn factor_budget_override() -> Option<u64> {
 /// `NIXIE_FACTOR_MID=1` (the full kissat shape) for future study.
 #[cfg(feature = "std")]
 pub(super) fn factor_mid_rounds_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
         std::env::var("NIXIE_FACTOR_MID").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -371,7 +372,7 @@ struct FactorState {
     dead_since_compact: usize,
     /// Candidate heap: `(raw watch size, literal code)`, lazy (stale entries
     /// are skipped at pop via the dirty bit / activity checks).
-    schedule: std::collections::BinaryHeap<(u64, u32)>,
+    schedule: BinaryHeap<(u64, u32)>,
     /// Literal-code space at pass start (kissat `initial = LITS`).
     initial: u32,
     /// Fresh hub variables introduced this pass.
@@ -525,7 +526,7 @@ impl Solver {
             qlauses: Vec::new(),
             dead: vec![false; self.clauses.num_slots()],
             dead_since_compact: 0,
-            schedule: std::collections::BinaryHeap::new(),
+            schedule: BinaryHeap::new(),
             initial,
             fresh: Vec::new(),
             bound: 0,

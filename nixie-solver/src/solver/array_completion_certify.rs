@@ -9,11 +9,13 @@
 //! Read-only references: upstream 0.3.4 array_completion_certify and Z3's
 //! model/model_evaluator.cpp. Published-model formatting is checked separately.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
+use crate::prelude::{FxHashMap, FxHashSet};
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::interner::Spur;
 use nixie_core::reserved::reserved_name;
 use nixie_core::sort::{SortId, SortKind};
-use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::model_eval::EvalOutcome;
 use super::types::Model;
@@ -91,7 +93,7 @@ impl CompletionWork {
 /// One budget shared by every proposal stage and independent array group.
 struct QueryBudget {
     used: usize,
-    shared: std::sync::Arc<CompletionWork>,
+    shared: Arc<CompletionWork>,
     charged_conflicts: u64,
     charged_decisions: u64,
     deadline: Option<nixie_time::Instant>,

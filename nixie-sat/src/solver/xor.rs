@@ -39,6 +39,8 @@
 //! clause learning from the matrix, no XOR proof emission.  This slice
 //! only *reads* the formula and *writes phases*.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 use smallvec::SmallVec;
 
 use super::Solver;
@@ -99,16 +101,16 @@ impl Solver {
     pub(super) fn solve_xor_system(
         &self,
         constraints: &[XorConstraint],
-    ) -> Result<rustc_hash::FxHashMap<u32, bool>, ()> {
+    ) -> Result<FxHashMap<u32, bool>, ()> {
         if constraints.is_empty() {
-            return Ok(rustc_hash::FxHashMap::default());
+            return Ok(FxHashMap::default());
         }
         // Column map: var index -> column (deterministic, sorted).
-        let mut col_of: rustc_hash::FxHashMap<u32, usize> = rustc_hash::FxHashMap::default();
+        let mut col_of: FxHashMap<u32, usize> = FxHashMap::default();
         let mut vars: Vec<u32> = Vec::new();
         for c in constraints {
             for &v in &c.vars {
-                if let std::collections::hash_map::Entry::Vacant(e) = col_of.entry(v) {
+                if let hash_map::Entry::Vacant(e) = col_of.entry(v) {
                     e.insert(vars.len());
                     vars.push(v);
                 }
@@ -180,7 +182,7 @@ impl Solver {
             }
             assign[col] = val;
         }
-        let mut out: rustc_hash::FxHashMap<u32, bool> = rustc_hash::FxHashMap::default();
+        let mut out: FxHashMap<u32, bool> = FxHashMap::default();
         for (i, v) in vars.iter().enumerate() {
             out.insert(*v, assign[i]);
         }

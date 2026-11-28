@@ -417,7 +417,7 @@ impl ModelChecker {
         if !self.table_mode || (self.checks_of.is_empty() && self.total_checks_of.is_empty()) {
             return;
         }
-        if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+        if crate::env::var_os("NIXIE_DEBUG_MC").is_some() {
             eprintln!("[mc] barren round: refunding per-quantifier check budgets");
         }
         self.checks_of.clear();
@@ -567,7 +567,7 @@ impl ModelChecker {
                 .count()
                 + computed_count;
             if relevant > MAX_ENTRIES_PER_FUNC {
-                if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+                if crate::env::var_os("NIXIE_DEBUG_MC").is_some() {
                     eprintln!(
                         "[mc] declined: fn {} has {relevant} relevant entries ({} total)",
                         interp.name.into_inner().get(),
@@ -589,14 +589,14 @@ impl ModelChecker {
         ) {
             Ok(body) => body,
             Err(reason) => {
-                if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+                if crate::env::var_os("NIXIE_DEBUG_MC").is_some() {
                     eprintln!("[mc] declined: {reason}");
                 }
                 self.last_decline = Some(reason);
                 return ModelCheckOutcome::Declined;
             }
         };
-        if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+        if crate::env::var_os("NIXIE_DEBUG_MC").is_some() {
             let printer = nixie_core::smtlib::Printer::new(manager);
             eprintln!("[mc] orig  = {}", printer.print_term(q.body));
             eprintln!("[mc] body' = {}", printer.print_term(body_completed));
@@ -625,7 +625,7 @@ impl ModelChecker {
             .get(body_completed)
             .is_some_and(|t| matches!(t.kind, TermKind::True))
         {
-            if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+            if crate::env::var_os("NIXIE_DEBUG_MC").is_some() {
                 eprintln!("[mc] certified by evaluation (body' = true)");
             }
             // Refund the per-quantifier total (table mode only – see
@@ -659,7 +659,7 @@ impl ModelChecker {
         // function's default for one quantifier cannot certify a conjunction:
         // another quantifier may require the original default. Alternative
         // interpretations belong in whole-goal candidate search.
-        if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+        if crate::env::var_os("NIXIE_DEBUG_MC").is_some() {
             eprintln!("[mc] aux verdict q={:?}: {:?}", q.term, result);
         }
 
@@ -914,7 +914,7 @@ impl ModelChecker {
                     };
                 }
                 self.last_decline = None;
-                if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+                if crate::env::var_os("NIXIE_DEBUG_MC").is_some() {
                     let printer = nixie_core::smtlib::Printer::new(manager);
                     for falsifier in &mined {
                         let subs: Vec<String> = falsifier

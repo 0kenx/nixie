@@ -24,6 +24,8 @@ num-integer = { workspace = true, default-features = false }
 hashbrown.workspace = true
 portable-atomic = { workspace = true }
 portable-atomic-util = { workspace = true }
+# `no_std::{Mutex, OnceLock}` (see `src/lib.rs`); reached only by the `no_std` builds.
+spin.workspace = true
 nixie-math = { workspace = true, default-features = false }
 # The single place this crate reads a clock (wasm-safe; see nixie-time).
 nixie-time = { workspace = true }

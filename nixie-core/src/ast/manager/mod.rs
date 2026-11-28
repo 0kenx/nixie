@@ -125,7 +125,7 @@ pub struct TermManager {
     /// for the manager's lifetime, ids never reused), so shared meganode
     /// chains pay the flatten+sort+fold once – the substitution fixpoints
     /// rebuild the same chains millions of times.
-    pub(super) ac_mul_cache: std::cell::RefCell<FxHashMap<(TermId, TermId), TermId>>,
+    pub(super) ac_mul_cache: core::cell::RefCell<FxHashMap<(TermId, TermId), TermId>>,
     /// Memo for [`crate::tactic::quantifier::predicates::contains_quantifier`]:
     /// the ids of terms *proven* quantifier-free by a completed traversal.
     /// Term content is immutable and ids are never reused (append-only
@@ -139,19 +139,19 @@ pub struct TermManager {
     /// `RefCell` because the queries arrive through `&TermManager` (the
     /// manager is not `Sync` – its interner is single-threaded – so plain
     /// interior mutability is sound here).
-    pub(super) quantifier_free_cache: std::cell::RefCell<FxHashSet<TermId>>,
+    pub(super) quantifier_free_cache: core::cell::RefCell<FxHashSet<TermId>>,
     /// Same shape as `quantifier_free_cache`, for set/bag-sortedness (see
     /// `contains_set_or_bag_sort`): per-assert feature-detection walks on
     /// shared meganode prefixes were re-walking the whole prefix per
     /// assertion.
-    pub(super) setbag_free_cache: std::cell::RefCell<FxHashSet<TermId>>,
+    pub(super) setbag_free_cache: core::cell::RefCell<FxHashSet<TermId>>,
     /// Same shape, for `Ite` nodes (see `contains_ite`).
-    pub(super) ite_free_cache: std::cell::RefCell<FxHashSet<TermId>>,
+    pub(super) ite_free_cache: core::cell::RefCell<FxHashSet<TermId>>,
     /// Same shape, for array-sorted subterms (see `contains_array_sort`).
-    pub(super) array_free_cache: std::cell::RefCell<FxHashSet<TermId>>,
+    pub(super) array_free_cache: core::cell::RefCell<FxHashSet<TermId>>,
     /// Same shape, for nonlinear arith products (see
     /// `contains_nonlinear_mul`).
-    pub(super) nonlinear_free_cache: std::cell::RefCell<FxHashSet<TermId>>,
+    pub(super) nonlinear_free_cache: core::cell::RefCell<FxHashSet<TermId>>,
     /// Cross-assertion memo for [`crate::ast::manager::query::simplify`]'s
     /// `subtree_bool_atoms`: each term's Boolean-atom set (sorted dense
     /// ids; `None` = oversized, see `MAX_MEMO_ATOM_SET`).  A set is a pure
@@ -162,8 +162,7 @@ pub struct TermManager {
     /// meganode prefixes: without the memo every assertion rebuilt the
     /// shared prefixes' sets from scratch (the hdp class spent 35 % of a
     /// run in exactly that, pre-sorting-landing).  `RefCell` as above.
-    pub(super) subtree_atom_cache:
-        std::cell::RefCell<FxHashMap<TermId, Option<std::sync::Arc<AtomSet>>>>,
+    pub(super) subtree_atom_cache: core::cell::RefCell<FxHashMap<TermId, Option<Arc<AtomSet>>>>,
     /// Epoch-stamped visited marks shared by every DAG walker that asks
     /// for one ([`TermManager::fresh_visit_epoch`]): one `Vec<u32>`
     /// indexed by the dense term id, a fresh epoch per walk.  This
@@ -172,8 +171,8 @@ pub struct TermManager {
     /// ~30 % of the run in visited-set insert/rehash churn across ~8
     /// distinct per-assert walkers).  Interior mutability as above (the
     /// manager is single-threaded by construction).
-    visit_epoch: std::cell::Cell<u32>,
-    visit_marks: std::cell::RefCell<Vec<u32>>,
+    visit_epoch: core::cell::Cell<u32>,
+    visit_marks: core::cell::RefCell<Vec<u32>>,
 }
 
 impl Default for TermManager {
@@ -242,10 +241,14 @@ impl TermManager {
         let mut manager = Self {
             terms: Vec::with_capacity(expected_terms.max(1024)),
             next_id: AtomicU32::new(0),
+            // The `no_std` interner has no capacity hint or hasher to take.
+            #[cfg(feature = "std")]
             interner: Rodeo::with_capacity_and_hasher(
                 lasso::Capacity::for_strings(expected_terms.max(1024)),
                 crate::interner::FxBuildHasherDbg::default(),
             ),
+            #[cfg(not(feature = "std"))]
+            interner: Rodeo::default(),
             sorts,
             rounding_mode_used: false,
             table: HashTable::with_capacity(expected_terms.max(1024)),
@@ -253,16 +256,16 @@ impl TermManager {
             true_id: TermId(0),
             false_id: TermId(1),
             gc_stats: GCStatistics::default(),
-            quantifier_free_cache: std::cell::RefCell::new(FxHashSet::default()),
-            setbag_free_cache: std::cell::RefCell::new(FxHashSet::default()),
-            ite_free_cache: std::cell::RefCell::new(FxHashSet::default()),
-            array_free_cache: std::cell::RefCell::new(FxHashSet::default()),
-            nonlinear_free_cache: std::cell::RefCell::new(FxHashSet::default()),
-            subtree_atom_cache: std::cell::RefCell::new(FxHashMap::default()),
-            visit_epoch: std::cell::Cell::new(0),
-            visit_marks: std::cell::RefCell::new(Vec::new()),
+            quantifier_free_cache: core::cell::RefCell::new(FxHashSet::default()),
+            setbag_free_cache: core::cell::RefCell::new(FxHashSet::default()),
+            ite_free_cache: core::cell::RefCell::new(FxHashSet::default()),
+            array_free_cache: core::cell::RefCell::new(FxHashSet::default()),
+            nonlinear_free_cache: core::cell::RefCell::new(FxHashSet::default()),
+            subtree_atom_cache: core::cell::RefCell::new(FxHashMap::default()),
+            visit_epoch: core::cell::Cell::new(0),
+            visit_marks: core::cell::RefCell::new(Vec::new()),
             eq_solve_cache: FxHashMap::default(),
-            ac_mul_cache: std::cell::RefCell::new(FxHashMap::default()),
+            ac_mul_cache: core::cell::RefCell::new(FxHashMap::default()),
         };
 
         // Pre-allocate true and false
@@ -730,7 +733,7 @@ impl TermManager {
 pub struct SubstSession {
     subst: FxHashMap<TermId, TermId>,
     cache: SubstMemo,
-    domain: Option<std::rc::Rc<[u64]>>,
+    domain: Option<Rc<[u64]>>,
 }
 
 impl SubstSession {
@@ -803,7 +806,7 @@ pub struct SubstitutionBuilder {
     /// SUBSET of `mapping` (keep-filtering and binder shadowing only
     /// remove entries): a set bit falls through to the exact probe, a
     /// clear bit provably misses.
-    domain_bits: Option<std::rc::Rc<[u64]>>,
+    domain_bits: Option<Rc<[u64]>>,
 }
 
 impl SubstitutionBuilder {
@@ -887,7 +890,7 @@ impl SubstitutionBuilder {
 
     /// One bit per term id up to the mapping's highest domain id; set for
     /// ids present in the mapping's domain.
-    fn build_domain_bits(mapping: &FxHashMap<TermId, TermId>) -> std::rc::Rc<[u64]> {
+    fn build_domain_bits(mapping: &FxHashMap<TermId, TermId>) -> Rc<[u64]> {
         let max_id = mapping.keys().map(|k| k.0 as usize).max().unwrap_or(0);
         let mut bits = vec![0u64; max_id / 64 + 1];
         for &k in mapping.keys() {

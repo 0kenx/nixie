@@ -66,10 +66,12 @@
 //! cap); exceeding a cap emits nothing – a missed lemma is the status quo,
 //! never a wrong answer.
 
+use crate::prelude::FxHashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use num_rational::Rational64;
 use num_traits::{One, ToPrimitive, Zero};
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use super::Solver;
@@ -117,15 +119,15 @@ fn gf2_xor(row: &mut Gf2Row, other: &Gf2Row) {
     let (mut i, mut j) = (0usize, 0usize);
     while i < row.support.len() && j < other.support.len() {
         match row.support[i].cmp(&other.support[j]) {
-            std::cmp::Ordering::Less => {
+            core::cmp::Ordering::Less => {
                 merged.push(row.support[i]);
                 i += 1;
             }
-            std::cmp::Ordering::Greater => {
+            core::cmp::Ordering::Greater => {
                 merged.push(other.support[j]);
                 j += 1;
             }
-            std::cmp::Ordering::Equal => {
+            core::cmp::Ordering::Equal => {
                 // present in both: cancels
                 i += 1;
                 j += 1;

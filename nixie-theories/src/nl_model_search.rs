@@ -41,6 +41,8 @@
 //! Reference: `theory_arith_nl.h::process_non_linear`, `check_monomial_assignments`,
 //! `find_nl_var_for_branching`.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 use num_bigint::BigInt;
 use num_rational::{BigRational, Rational64};
 use num_traits::{ToPrimitive, Zero};
@@ -50,8 +52,8 @@ use nixie_core::ast::{TermId, TermKind, TermManager};
 
 use crate::ania_ground::{ArrayInterp, eval_assertions_true, eval_bool, eval_int};
 use crate::nl_dispatch::{NlDispatchResult, NlSatModel};
-use rustc_hash::FxHashMap;
-use std::collections::HashMap;
+use crate::prelude::FxHashMap;
+use crate::prelude::HashMap;
 
 /// Bound on branch-and-bound nodes (each node re-runs Simplex).
 const MAX_BB_NODES: usize = 4_000;
@@ -236,6 +238,7 @@ pub fn try_model_based_nia_search(
 /// relaxation (infeasible ⇒ sound `Unsat`), then bounded concrete enumeration
 /// and integer branch-and-bound with monomial repair – each returning `Sat`
 /// only on a concretely verified witness.
+#[cfg(feature = "std")]
 fn nia_search_core(
     assertions: &[TermId],
     manager: &mut TermManager,
@@ -257,6 +260,17 @@ fn nia_search_core(
             .ok()?;
         handle.join().ok().flatten()
     })
+}
+
+/// Without threads to spawn (no OS), the search runs on the caller's stack:
+/// the deep bounded B&B then depends on the embedder's stack size.
+#[cfg(not(feature = "std"))]
+fn nia_search_core(
+    assertions: &[TermId],
+    manager: &mut TermManager,
+    nodes: &mut usize,
+) -> Option<NlDispatchResult> {
+    nia_search_core_on_worker(assertions, manager, nodes)
 }
 
 /// Execute one nonlinear search after its unique `TermManager` borrow has
@@ -375,7 +389,7 @@ fn attach_truth_pins(
 fn free_bool_vars_in(assertions: &[TermId], manager: &TermManager) -> Vec<TermId> {
     let bool_sort = manager.sorts.bool_sort;
     let mut out = Vec::new();
-    let mut visited = std::collections::HashSet::new();
+    let mut visited = HashSet::new();
     let mut stack: Vec<TermId> = assertions.to_vec();
     while let Some(id) = stack.pop() {
         if !visited.insert(id) {
@@ -452,7 +466,7 @@ pub(crate) fn collect_bool_defs_into(
         // missed `sat` on a `(= (= b true) (not (= z 0)))` guard whose true
         // model wants `b = false`).
         let mut stack: Vec<TermId> = assertions.to_vec();
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = HashSet::new();
         while let Some(id) = stack.pop() {
             if !seen.insert(id) {
                 continue;
@@ -607,7 +621,7 @@ fn flatten_collect(
 
 fn fully_evaluable(assertions: &[TermId], manager: &TermManager) -> bool {
     let mut stack: Vec<TermId> = assertions.to_vec();
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     while let Some(id) = stack.pop() {
         if !seen.insert(id) {
             continue;
@@ -657,7 +671,7 @@ fn fully_evaluable(assertions: &[TermId], manager: &TermManager) -> bool {
 
 fn free_int_vars(assertions: &[TermId], manager: &TermManager) -> Vec<TermId> {
     let mut out = Vec::new();
-    let mut visited = std::collections::HashSet::new();
+    let mut visited = HashSet::new();
     let mut stack: Vec<TermId> = assertions.to_vec();
     while let Some(id) = stack.pop() {
         if !visited.insert(id) {
@@ -1758,7 +1772,7 @@ impl<'a> Relaxation<'a> {
     /// an inconsistent monomial's factor so an all-integral-but-monomially-
     /// wrong model does not dead-end the search.
     fn pick_branch(&self) -> Option<Branch> {
-        let mono_var_ids: std::collections::HashSet<TermId> = self
+        let mono_var_ids: HashSet<TermId> = self
             .mono_def
             .iter()
             .flat_map(|(_, f)| f.iter().map(|(v, _)| *v))
@@ -2029,7 +2043,7 @@ fn solve_eq_for_var(
     // Merge like monomials.
     terms = merge_like(terms);
     // Variables appearing.
-    let mut all_vars: std::collections::HashSet<TermId> = std::collections::HashSet::new();
+    let mut all_vars: HashSet<TermId> = HashSet::new();
     for (_, m) in &terms {
         for (v, _) in m {
             all_vars.insert(*v);
@@ -2146,7 +2160,7 @@ fn collect_terms(
 }
 
 fn merge_like(terms: Vec<(BigInt, MonoKey)>) -> Vec<(BigInt, MonoKey)> {
-    let mut map: std::collections::BTreeMap<MonoKey, BigInt> = std::collections::BTreeMap::new();
+    let mut map: BTreeMap<MonoKey, BigInt> = BTreeMap::new();
     for (c, mut m) in terms {
         m.sort_by_key(|(t, _)| t.0);
         *map.entry(m).or_insert_with(BigInt::zero) += c;

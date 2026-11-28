@@ -10,7 +10,7 @@ use super::*;
 /// stderr both need it); without `std` tracing is always disabled.
 #[cfg(feature = "std")]
 fn trace_decisions_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
         std::env::var("NIXIE_TRACE_DECISIONS")

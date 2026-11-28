@@ -53,7 +53,8 @@
 use crate::ast::bv_fold::{bv_add, bv_wrap_unsigned};
 use crate::ast::traversal::get_children;
 use crate::ast::{TermId, TermKind, TermManager};
-use crate::prelude::FxHashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use crate::sort::Sort;
 use num_bigint::BigInt;
 use num_rational::Rational64;
@@ -222,7 +223,7 @@ fn consts_equal(a: TermId, b: TermId, manager: &TermManager) -> Option<bool> {
     }
 }
 
-fn compare_nums(a: TermId, b: TermId, manager: &TermManager) -> Option<std::cmp::Ordering> {
+fn compare_nums(a: TermId, b: TermId, manager: &TermManager) -> Option<core::cmp::Ordering> {
     let na = manager.get(a)?;
     let nb = manager.get(b)?;
     match (&na.kind, &nb.kind) {
@@ -254,13 +255,13 @@ fn fold_node(
             // encode-depth guard measures the *normalized* term, not the
             // unfolded chain.
             let is_int = sort_is(manager, sort, Sort::is_int);
-            let disc = std::mem::discriminant(kind);
+            let disc = core::mem::discriminant(kind);
             let mut flat: Vec<TermId> = Vec::with_capacity(kids.len());
             let mut spliced = false;
             for &k in kids {
                 let child = manager
                     .get(k)
-                    .filter(|n| std::mem::discriminant(&n.kind) == disc && n.sort == sort);
+                    .filter(|n| core::mem::discriminant(&n.kind) == disc && n.sort == sort);
                 if let Some(TermKind::Add(cs)) = child.map(|n| &n.kind) {
                     flat.extend_from_slice(cs);
                     spliced = true;
@@ -367,13 +368,13 @@ fn fold_node(
             // constants exactly, so a 5 000-deep constant-xor chain over a
             // variable collapses to `x ⊕ C` before the depth guard runs.
             let width = manager.sorts.get(sort).and_then(Sort::bitvec_width)?;
-            let disc = std::mem::discriminant(kind);
+            let disc = core::mem::discriminant(kind);
             let mut flat: Vec<TermId> = Vec::with_capacity(4);
             let mut spliced = false;
             for &k in kids {
                 let child = manager
                     .get(k)
-                    .filter(|n| std::mem::discriminant(&n.kind) == disc && n.sort == sort);
+                    .filter(|n| core::mem::discriminant(&n.kind) == disc && n.sort == sort);
                 match child.map(|n| &n.kind) {
                     Some(TermKind::BvXor(a, b))
                     | Some(TermKind::BvAdd(a, b))
@@ -477,10 +478,10 @@ fn fold_node(
         {
             let ord = compare_nums(kids[0], kids[1], manager)?;
             let holds = match kind {
-                TermKind::Lt(_, _) => ord == std::cmp::Ordering::Less,
-                TermKind::Le(_, _) => ord != std::cmp::Ordering::Greater,
-                TermKind::Gt(_, _) => ord == std::cmp::Ordering::Greater,
-                TermKind::Ge(_, _) => ord != std::cmp::Ordering::Less,
+                TermKind::Lt(_, _) => ord == core::cmp::Ordering::Less,
+                TermKind::Le(_, _) => ord != core::cmp::Ordering::Greater,
+                TermKind::Gt(_, _) => ord == core::cmp::Ordering::Greater,
+                TermKind::Ge(_, _) => ord != core::cmp::Ordering::Less,
                 _ => return None,
             };
             Some(if holds {

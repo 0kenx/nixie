@@ -4,7 +4,6 @@
 use crate::prelude::*;
 use crate::solver::{Solver, SolverResult};
 use nixie_core::ast::{TermId, TermKind, TermManager};
-#[cfg(feature = "std")]
 use nixie_core::error::Result;
 #[cfg(feature = "std")]
 use nixie_core::smtlib::{Command, parse_script};
@@ -623,7 +622,7 @@ impl Context {
             && !self.solver.array_axioms_saturated
             && !self.solver.model_already_certified()
         {
-            if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+            if crate::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
                 eprintln!("[qround] Sat downgraded: array atoms need theory");
             }
             result = SolverResult::Unknown;
@@ -853,7 +852,7 @@ impl Context {
     }
 
     fn eval_alias_bodies(&mut self, model: &crate::solver::Model) {
-        let aliases = std::mem::take(&mut self.define_fun_aliases);
+        let aliases = core::mem::take(&mut self.define_fun_aliases);
         for (name, body) in &aliases {
             // Substitute the model's assignments for the body's free
             // variables, then fold (`Model::eval` has no bit-vector operator
@@ -1759,6 +1758,10 @@ impl Context {
     /// unsupported sort expression.  The latter used to resolve silently to
     /// `Bool`, mis-sorting the declared symbol and corrupting every
     /// model/value answer that mentioned it.
+    /// `std`-only: the loop answers `get-consequences` through `std`-gated
+    /// machinery. Without `std`, parse with `nixie_core::smtlib::parse_script`
+    /// and drive the context through its typed methods ([`Self::assert`],
+    /// [`Self::check_sat`], ...).
     #[cfg(feature = "std")]
     pub fn execute_script(&mut self, script: &str) -> Result<Vec<String>> {
         let commands = parse_script(script, &mut self.terms)?;

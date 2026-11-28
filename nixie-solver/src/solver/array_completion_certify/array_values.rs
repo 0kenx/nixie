@@ -19,10 +19,12 @@
 //! module cannot read (a non-literal leaf, an index sort whose size it does
 //! not know) is left for the evaluator and the query exactly as before.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
+use crate::prelude::{FxHashMap, FxHashSet};
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::sort::SortKind;
 use num_bigint::BigInt;
-use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::is_array_value;
 

@@ -100,7 +100,7 @@ impl Context {
                 }
                 c if c.is_whitespace() && depth == 0 => {
                     if !current.is_empty() {
-                        tokens.push(std::mem::take(&mut current));
+                        tokens.push(core::mem::take(&mut current));
                     }
                 }
                 c => current.push(c),
@@ -288,18 +288,18 @@ impl Context {
                     }
                 }
                 [head, domain, range] if head.as_str() == "Array" => Ok(SortExprStep::Array {
-                    domain_expr: std::mem::take(domain),
-                    range_expr: std::mem::take(range),
+                    domain_expr: core::mem::take(domain),
+                    range_expr: core::mem::take(range),
                 }),
                 // `(Set elem)`, the finite-sets theory's sort constructor.
                 [head, elem] if head.as_str() == "Set" => Ok(SortExprStep::Set {
-                    elem_expr: std::mem::take(elem),
+                    elem_expr: core::mem::take(elem),
                 }),
                 [head, elem] if head.as_str() == "Seq" => Ok(SortExprStep::Seq {
                     elem_expr: elem.clone(),
                 }),
                 [head, elem] if head.as_str() == "Bag" => Ok(SortExprStep::Bag {
-                    elem_expr: std::mem::take(elem),
+                    elem_expr: core::mem::take(elem),
                 }),
                 // A compound form the sort printer never emits.  This used
                 // to fall back to `Bool` silently – a silently wrong sort

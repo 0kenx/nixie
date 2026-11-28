@@ -3,10 +3,10 @@
 use super::core::*;
 use crate::ast::{TermId, TermKind, TermManager};
 use crate::error::Result;
+use crate::prelude::Rc;
 #[allow(unused_imports)]
 use crate::prelude::*;
 use smallvec::SmallVec;
-use std::rc::Rc;
 
 /// A set of boolean facts assumed true while simplifying a subterm.
 ///

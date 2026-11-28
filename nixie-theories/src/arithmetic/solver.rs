@@ -440,8 +440,8 @@ impl Default for ArithSolver {
 /// No test or caller sets the variable mid-process, so caching cannot change
 /// observable behaviour beyond the cost.
 fn trace_twrites_enabled() -> bool {
-    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var_os("NIXIE_TRACE_TWRITES").is_some())
+    static FLAG: crate::prelude::OnceLock<bool> = crate::prelude::OnceLock::new();
+    *FLAG.get_or_init(|| crate::env::var_os("NIXIE_TRACE_TWRITES").is_some())
 }
 
 /// Debug/A-B probe for the `assert_*` fast path (`NIXIE_ATOM_SLACK_MEMO`):
@@ -457,13 +457,15 @@ enum MemoMode {
 }
 
 fn atom_slack_memo_mode() -> MemoMode {
-    static FLAG: std::sync::OnceLock<MemoMode> = std::sync::OnceLock::new();
-    *FLAG.get_or_init(|| match std::env::var("NIXIE_ATOM_SLACK_MEMO").as_deref() {
-        Ok("0") | Ok("off") | Ok("false") => MemoMode::Off,
-        Ok("nonstrict") => MemoMode::NonStrict,
-        Ok("strict") => MemoMode::Strict,
-        _ => MemoMode::All,
-    })
+    static FLAG: crate::prelude::OnceLock<MemoMode> = crate::prelude::OnceLock::new();
+    *FLAG.get_or_init(
+        || match crate::env::var("NIXIE_ATOM_SLACK_MEMO").as_deref() {
+            Ok("0") | Ok("off") | Ok("false") => MemoMode::Off,
+            Ok("nonstrict") => MemoMode::NonStrict,
+            Ok("strict") => MemoMode::Strict,
+            _ => MemoMode::All,
+        },
+    )
 }
 
 /// Which zero-bound an inequality atom puts on its row slack – the kind
@@ -2935,8 +2937,8 @@ impl ArithSolver {
         // crossing first, then tighten, then consume only what THIS
         // tighten planted (reason ids recycle across pops; no pop runs
         // between the tighten and the consume here).
-        static ROWPROP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *ROWPROP.get_or_init(|| std::env::var("NIXIE_ROWPROP").as_deref() == Ok("1")) {
+        static ROWPROP: crate::prelude::OnceLock<bool> = crate::prelude::OnceLock::new();
+        if *ROWPROP.get_or_init(|| crate::env::var("NIXIE_ROWPROP").as_deref() == Ok("1")) {
             let _ = self.simplex.bound_crossing_conflict();
             self.tighten_tableau_bounds();
         }
@@ -3234,12 +3236,12 @@ impl ArithSolver {
     /// `NIXIE_LIA_BRANCH_LEMMA=0` to restore the unarmed search (the
     /// pre-flip default).
     fn lia_branch_channel_on() -> bool {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static ON: OnceLock<bool> = OnceLock::new();
         if TEST_FORCE_BRANCH_CHANNEL.load(core::sync::atomic::Ordering::Relaxed) {
             return true;
         }
-        *ON.get_or_init(|| std::env::var("NIXIE_LIA_BRANCH_LEMMA").as_deref() != Ok("0"))
+        *ON.get_or_init(|| crate::env::var("NIXIE_LIA_BRANCH_LEMMA").as_deref() != Ok("0"))
     }
 
     /// Total requests the theory will record per solver instance.  The
@@ -3456,9 +3458,9 @@ impl ArithSolver {
         // check() entry, present at the leaf – the corruption window is
         // the dive's branch-bound pushes and their re-feasibility pivots;
         // the victims include wide slacks).
-        if std::env::var("NIXIE_LEAF_TRIPWIRE").is_ok() {
+        if crate::env::var("NIXIE_LEAF_TRIPWIRE").is_ok() {
+            use core::fmt::Write as _;
             use num_rational::BigRational as BR;
-            use std::fmt::Write as _;
             let mut broken = String::new();
             for ((key, reason), &slack) in self.atom_rows.iter() {
                 if !self.simplex.has_live_bound(slack) {
@@ -5340,7 +5342,7 @@ impl ArithSolver {
     /// trace for the `NIXIE_APROP_VERIFY` oracle.
     #[doc(hidden)]
     pub fn debug_derive_trace(&self, terms: &[(TermId, Rational64)]) -> String {
-        use std::fmt::Write as _;
+        use core::fmt::Write as _;
         let mut out = String::new();
         for &(t, coef) in terms {
             let Some(&v) = self.term_to_var.get(&t) else {

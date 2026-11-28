@@ -375,7 +375,7 @@ pub enum BoundValue {
     /// The value fits `Rational64` width (the common case).
     Narrow(DeltaRational),
     /// The exact value; at least one part leaves `Rational64` width.
-    Wide(std::sync::Arc<BigDeltaRational>),
+    Wide(Arc<BigDeltaRational>),
 }
 
 impl BoundValue {
@@ -437,7 +437,7 @@ impl BoundValue {
     pub fn from_big(v: BigDeltaRational) -> Self {
         match v.narrow() {
             Some(d) => BoundValue::Narrow(d),
-            None => BoundValue::Wide(std::sync::Arc::new(v)),
+            None => BoundValue::Wide(Arc::new(v)),
         }
     }
 

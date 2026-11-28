@@ -1513,7 +1513,7 @@ impl BvSolver {
         // Explicit work stack: assertion DAGs from real inputs nest `and`
         // hundreds deep, and this walk must not recurse natively.
         let mut stack = vec![(term, true)];
-        let mut visited = rustc_hash::FxHashSet::default();
+        let mut visited = FxHashSet::default();
         while let Some((tid, positive)) = stack.pop() {
             if !visited.insert((tid, positive)) {
                 continue;

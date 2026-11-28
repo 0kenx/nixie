@@ -52,6 +52,8 @@
 //! returned (the same honest-skip policy as the rest of the arithmetic
 //! stack).
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 /// Magnitude bound for every stored intermediate during elimination.
 /// Update rules multiply at most two stored values (plus a gcd cofactor
 /// of similar size), so `|v| ≤ 2^40` keeps every product below `2^82`,

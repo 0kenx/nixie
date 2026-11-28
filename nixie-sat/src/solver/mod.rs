@@ -45,7 +45,7 @@ mod transred;
 mod walk;
 mod xor;
 
-pub use heuristic::{BoxedBranchingHeuristic, BranchingHeuristic};
+pub use heuristic::{BoxedBranchingHeuristic, BranchingHeuristic, boxed_heuristic};
 
 use crate::chb::CHB;
 use crate::chrono::ChronoBacktrack;
@@ -94,6 +94,7 @@ pub(super) const MF_SHRINKABLE: u8 = 32;
 
 /// Convert a path to a UTF-8 string for the file tracers (which take `&str`,
 /// faithful to upstream). Returns an error for non-UTF8 paths.
+#[cfg(feature = "std")]
 fn path_to_str(path: &std::path::Path) -> std::io::Result<&str> {
     path.to_str().ok_or_else(|| {
         std::io::Error::new(
@@ -1137,8 +1138,8 @@ impl Default for SolverConfig {
             inprocessing_interval: 5000,
             elim_interval: 2000,
             enable_chronological_backtrack: true,
-            chrono_always: std::env::var("NIXIE_CHRONO_ALWAYS").is_ok_and(|v| v == "1"),
-            chrono_reuse: std::env::var("NIXIE_CHRONO_REUSE").is_ok_and(|v| v == "1"),
+            chrono_always: crate::env::var("NIXIE_CHRONO_ALWAYS").is_ok_and(|v| v == "1"),
+            chrono_reuse: crate::env::var("NIXIE_CHRONO_REUSE").is_ok_and(|v| v == "1"),
             restart_maxgap: None,
             restart_drought_maxgap: None,
             chrono_reuse_after: 0,
@@ -1160,7 +1161,7 @@ impl Default for SolverConfig {
             walk: true,
             walk_nonstable: true,
             walk_effort: 80,
-            walk_warmup: std::env::var("NIXIE_WARMUP").is_ok_and(|v| v != "0"),
+            walk_warmup: crate::env::var("NIXIE_WARMUP").is_ok_and(|v| v != "0"),
             reuse_trail: true,
             // Off by default: BOTH probing passes previously had a proven
             // false-UNSAT on satisfiable input (`circuit_48in64out_with_700gates…cnf`,
@@ -2102,7 +2103,7 @@ pub struct Solver {
     /// sees.  Frozen forever once frozen: the set only ever shrinks what the
     /// passes may do, so retaining entries past a hypothetical un-mapping is
     /// the conservative direction.
-    pub(super) frozen_vars: rustc_hash::FxHashSet<Var>,
+    pub(super) frozen_vars: FxHashSet<Var>,
     /// Whether [`Solver::freeze_theory_vars`] has been called – the
     /// precondition that relaxes the `real_theory_attached` gates.
     pub(super) theory_vars_frozen: bool,
@@ -2136,7 +2137,7 @@ pub struct Solver {
     /// walk must no longer toggle their witnesses (a toggle could now
     /// falsify one of the reintroduced live clauses – the walk's repair
     /// direction was chosen against the *retired* obligation set only).
-    pub(super) ext_rementioned: rustc_hash::FxHashSet<Var>,
+    pub(super) ext_rementioned: FxHashSet<Var>,
     /// One-shot latch: once equivalent-literal substitution has rewritten the
     /// clause database we must not run it again (a second pass would operate on
     /// already-substituted clauses and, for incremental callers, on top of
@@ -2295,7 +2296,7 @@ pub struct Solver {
     /// `Reason::Theory` is only observable while assigned) and is simply
     /// overwritten by the next theory propagation of that variable. Bounded by
     /// the variable count.
-    pub(super) theory_prop_reasons: rustc_hash::FxHashMap<Var, SmallVec<[Lit; 8]>>,
+    pub(super) theory_prop_reasons: FxHashMap<Var, SmallVec<[Lit; 8]>>,
     /// Materialized theory-reason clauses so far this solve.  Drives the
     /// one-way lazy switch ([`Solver::theory_lazy_reasons_enabled`]).
     pub(super) theory_reason_clauses: u64,
@@ -2419,7 +2420,7 @@ impl Default for Solver {
 pub(super) fn els_force_enabled() -> bool {
     #[cfg(feature = "std")]
     {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| {
             std::env::var("NIXIE_ELS_FORCE")
@@ -2511,19 +2512,19 @@ impl Solver {
     #[must_use]
     pub fn with_config(config: SolverConfig) -> Self {
         let mut config = config;
-        if let Ok(v) = std::env::var("NIXIE_CHRONO_REUSE") {
+        if let Ok(v) = crate::env::var("NIXIE_CHRONO_REUSE") {
             config.chrono_reuse = v == "1";
         }
-        if let Ok(v) = std::env::var("NIXIE_CHRONO_REUSE_AFTER")
+        if let Ok(v) = crate::env::var("NIXIE_CHRONO_REUSE_AFTER")
             && let Ok(n) = v.parse::<u64>()
         {
             config.chrono_reuse_after = n;
             config.chrono_reuse = true;
         }
-        if let Ok(v) = std::env::var("NIXIE_CHRONO_ALWAYS") {
+        if let Ok(v) = crate::env::var("NIXIE_CHRONO_ALWAYS") {
             config.chrono_always = v == "1";
         }
-        if let Ok(v) = std::env::var("NIXIE_SAT_CACHING")
+        if let Ok(v) = crate::env::var("NIXIE_SAT_CACHING")
             && let Ok(n) = v.parse::<u8>()
         {
             config.sat_caching = n;
@@ -2684,7 +2685,7 @@ impl Solver {
             inproc_diag: [0; 8],
             xor_search: None,
             real_theory_attached: false,
-            frozen_vars: rustc_hash::FxHashSet::default(),
+            frozen_vars: FxHashSet::default(),
             theory_vars_frozen: false,
             chrono_backtrack: {
                 let mut cb = ChronoBacktrack::new(chrono_enabled, chrono_threshold);
@@ -2695,7 +2696,7 @@ impl Solver {
             memory_optimizer: MemoryOptimizer::new(),
             pure_literal_reconstruction: Vec::new(),
             pure_deleted_clauses: Vec::new(),
-            ext_rementioned: rustc_hash::FxHashSet::default(),
+            ext_rementioned: FxHashSet::default(),
             equiv_substitution: Vec::new(),
             bve_def: Vec::new(),
             bve_order: Vec::new(),
@@ -2730,7 +2731,7 @@ impl Solver {
             proof: None,
             lrat: false,
             pending_parse_unit_flushes: Vec::new(),
-            theory_prop_reasons: rustc_hash::FxHashMap::default(),
+            theory_prop_reasons: FxHashMap::default(),
             theory_reason_clauses: 0,
             clause_id: 0,
             clause_lrat_id: Vec::new(),
@@ -2770,6 +2771,7 @@ impl Solver {
     /// empty clause when unconditional UNSAT is derived. The resulting file can
     /// be checked by any DRAT proof checker. Enabling it does not change the
     /// search itself – only whether the trace is recorded.
+    #[cfg(feature = "std")]
     pub fn enable_drat_proof(&mut self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
         self.connect_drat(path, false)
     }
@@ -2814,6 +2816,7 @@ impl Solver {
         self.proof.get_or_insert_with(crate::proof::Proof::new)
     }
 
+    #[cfg(feature = "std")]
     fn connect_drat(
         &mut self,
         path: impl AsRef<std::path::Path>,
@@ -2833,6 +2836,7 @@ impl Solver {
     }
 
     /// Enable **binary** DRAT proof logging to `path`.
+    #[cfg(feature = "std")]
     pub fn enable_drat_proof_binary(
         &mut self,
         path: impl AsRef<std::path::Path>,
@@ -2840,6 +2844,7 @@ impl Solver {
         self.connect_drat(path, true)
     }
 
+    #[cfg(feature = "std")]
     fn connect_lrat(
         &mut self,
         path: impl AsRef<std::path::Path>,
@@ -2863,6 +2868,7 @@ impl Solver {
     }
 
     /// Enable **text** LRAT proof logging to `path`.
+    #[cfg(feature = "std")]
     pub fn enable_lrat_proof(&mut self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
         self.connect_lrat(path, false)
     }
@@ -2891,6 +2897,7 @@ impl Solver {
     }
 
     /// Enable **binary** LRAT proof logging to `path`.
+    #[cfg(feature = "std")]
     pub fn enable_lrat_proof_binary(
         &mut self,
         path: impl AsRef<std::path::Path>,
@@ -3078,7 +3085,7 @@ impl Solver {
         }
         let id = self.proof_next_id();
         let chain = if self.lrat {
-            let c = std::mem::take(&mut self.lrat_chain);
+            let c = core::mem::take(&mut self.lrat_chain);
             // A 0 hint id means a clause/unit id was never bound – the proof
             // would be un-checkable. Catch it early in debug builds.
             debug_assert!(
@@ -3294,7 +3301,7 @@ impl Solver {
     fn finalize_empty_clause(&mut self) {
         let id = self.proof_next_id();
         let chain = if self.lrat {
-            std::mem::take(&mut self.lrat_chain)
+            core::mem::take(&mut self.lrat_chain)
         } else {
             Vec::new()
         };
@@ -3801,7 +3808,10 @@ impl Solver {
     /// literal count; allocation shape only, bounded against inflated
     /// headers - untouched pages cost no RSS).
     pub fn reserve_clause_bytes(&mut self, bytes: usize) {
-        self.clauses.reserve_arena_bytes(bytes.min(1 << 34));
+        // 16 GiB, or the whole address space where that does not fit: on
+        // wasm32 the cap has to be formed in 64 bits or the shift overflows.
+        let cap = (1_u64 << 34).min(usize::MAX as u64) as usize;
+        self.clauses.reserve_arena_bytes(bytes.min(cap));
     }
 
     /// Begin a bulk clause load with deferred BIG materialization.
@@ -4837,7 +4847,7 @@ impl Solver {
         // `solver/bva.rs`), so no reconstruction record is needed.  Slice
         // gates inside the pass: level 0, base scope, no theory, no proof
         // tracer, bounded budgets.  Default off.
-        if self.config.enable_sbva || std::env::var("NIXIE_SBVA").as_deref() == Ok("1") {
+        if self.config.enable_sbva || crate::env::var("NIXIE_SBVA").as_deref() == Ok("1") {
             let (added, saved) = self.structured_bva();
             if added > 0 {
                 #[cfg(feature = "std")]
@@ -4856,7 +4866,7 @@ impl Solver {
         // answered, pending a proof story).  Telemetry: 22 standing-corpus
         // files carry strict groups, incl. mdp-28-14 (one of the four
         // unsolved).  Default off pending the corpus A/B.
-        if self.config.enable_xor_reasoning || std::env::var("NIXIE_XOR").as_deref() == Ok("1") {
+        if self.config.enable_xor_reasoning || crate::env::var("NIXIE_XOR").as_deref() == Ok("1") {
             let (constraints, seeded, inconsistent) = self.xor_phase_seed();
             if constraints > 0 {
                 #[cfg(feature = "std")]
@@ -4871,7 +4881,7 @@ impl Solver {
         // Sound by construction (probe pattern: only conflict-derived
         // units survive at level 0); no verdicts beyond the level-0 unit
         // path every probing pass already uses.  Default off.
-        if std::env::var("NIXIE_XORPROBE").is_ok() {
+        if crate::env::var("NIXIE_XORPROBE").is_ok() {
             let (constraints, forced, inconsistent) = self.xor_probe();
             if constraints > 0 {
                 #[cfg(feature = "std")]
@@ -4891,7 +4901,7 @@ impl Solver {
         // full CDCL participation), and surfaces falsified rows as
         // conflicts.  Proof-gated (parity reasoning is not RUP; the
         // reason clauses are entailed but not UP-derivable in general).
-        if std::env::var("NIXIE_XORSEARCH").is_ok() {
+        if crate::env::var("NIXIE_XORSEARCH").is_ok() {
             let forced = self.xor_search_init();
             if forced > 0 {
                 #[cfg(feature = "std")]
@@ -4915,7 +4925,7 @@ impl Solver {
         // 5-20x better under their own models' phases, with x9-09054
         // collapsing to 0 conflicts.  Default off; `NIXIE_PREWALK=<flips>`
         // is the A/B knob.
-        if let Ok(v) = std::env::var("NIXIE_PREWALK")
+        if let Ok(v) = crate::env::var("NIXIE_PREWALK")
             && let Ok(flips) = v.parse::<u64>()
             && flips > 0
             && self.trail.decision_level() == 0

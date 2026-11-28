@@ -28,13 +28,15 @@
 //!   CLI prints `delta-sat`), never a claimed exact model;
 //! * everything else is `Unknown`.
 
+use crate::prelude::FxHashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::tactic::AckermannizeTactic;
 use nixie_sat::{Lit, Solver as SatSolver, Var};
 use nixie_theories::trans::{Cmp, TransOptions, TransOutcome, TransProblem};
 use num_rational::Rational64;
 use num_traits::{ToPrimitive, Zero};
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use super::Solver;
@@ -47,7 +49,7 @@ const MAX_DPLL_ROUNDS: usize = 20_000;
 /// Does the DAG rooted at `term` mention a transcendental function?
 /// Explicit stack; `TermId` hash-consing prunes shared subterms.
 pub(super) fn term_has_trans(term: TermId, manager: &TermManager) -> bool {
-    use rustc_hash::FxHashSet;
+    use crate::prelude::FxHashSet;
     let mut stack: Vec<TermId> = vec![term];
     let mut visited: FxHashSet<TermId> = FxHashSet::default();
     while let Some(t) = stack.pop() {
@@ -77,7 +79,7 @@ pub(super) fn term_has_trans(term: TermId, manager: &TermManager) -> bool {
 /// Does the DAG rooted at `term` mention an uninterpreted-function
 /// application?  (Same walk shape as [`term_has_trans`].)
 fn term_has_apply(term: TermId, manager: &TermManager) -> bool {
-    use rustc_hash::FxHashSet;
+    use crate::prelude::FxHashSet;
     let mut stack: Vec<TermId> = vec![term];
     let mut visited: FxHashSet<TermId> = FxHashSet::default();
     while let Some(t) = stack.pop() {
@@ -1032,7 +1034,7 @@ impl<'a> AssignmentCtx<'a> {
 
 /// Whether an arithmetic term contains a numeric `ite` (explicit stack).
 fn term_has_numeric_ite(term: TermId, manager: &TermManager) -> bool {
-    use rustc_hash::FxHashSet;
+    use crate::prelude::FxHashSet;
     let mut stack: Vec<TermId> = vec![term];
     let mut visited: FxHashSet<TermId> = FxHashSet::default();
     while let Some(t) = stack.pop() {

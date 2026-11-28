@@ -48,7 +48,9 @@
 //! without manager access) and the [`ManagedTactic`] path (the real
 //! analysis/blasting, for callers with manager access).
 
-use std::collections::HashMap;
+use crate::prelude::HashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 
 use crate::ast::TermManager;
 use crate::error::Result;

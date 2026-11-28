@@ -390,7 +390,7 @@ impl MBQIIntegration {
                 manager,
             ) {
                 Ok(value) => {
-                    if std::env::var_os("NIXIE_DEBUG_GATE").is_some() {
+                    if crate::env::var_os("NIXIE_DEBUG_GATE").is_some() {
                         let printer = nixie_core::smtlib::Printer::new(manager);
                         eprintln!(
                             "[gate] {} -> {}",
@@ -448,7 +448,7 @@ impl MBQIIntegration {
                 self.gate_materialized = true;
             }
         }
-        if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+        if crate::env::var_os("NIXIE_DEBUG_MC").is_some() {
             let printer = nixie_core::smtlib::Printer::new(manager);
             for v in &violations {
                 eprintln!("[mc] assertion gate violation: {}", printer.print_term(*v));
@@ -999,7 +999,7 @@ impl MBQIIntegration {
             // 0 s -> 35 s, no verdict.  See the study.)
             self.barren_streak += 1;
             if self.barren_streak >= 2 && self.model_completer.thaw_axes_only() {
-                if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+                if crate::env::var_os("NIXIE_DEBUG_MC").is_some() {
                     eprintln!("[mc] barren x{}: thawing axis domains", self.barren_streak);
                 }
                 self.barren_streak = 0;
@@ -1010,7 +1010,7 @@ impl MBQIIntegration {
         let quantifier_ids: Vec<QuantifierId> = self.quantifiers.iter().map(|q| q.term).collect();
         self.budget
             .carve_per_quantifier(&quantifier_ids, Some(&self.conflict_scores));
-        if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+        if crate::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
             eprintln!(
                 "[qround-stats] cumulative aux conflicts {}",
                 self.model_checker.cumulative_aux_conflicts()

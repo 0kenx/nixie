@@ -996,10 +996,10 @@ impl ModelCompleter {
             // defends against future callers that bypass it.)
             let candidate = (macro_def.bound_vars.clone(), macro_def.body);
             match harvested.macros.entry(func_name) {
-                std::collections::hash_map::Entry::Vacant(v) => {
+                hash_map::Entry::Vacant(v) => {
                     v.insert(candidate);
                 }
-                std::collections::hash_map::Entry::Occupied(mut o) => {
+                hash_map::Entry::Occupied(mut o) => {
                     let challenger_size =
                         nixie_core::ast::traversal::collect_subterms(macro_def.body, manager).len();
                     let incumbent = o.get().1;
@@ -1104,7 +1104,7 @@ impl ModelCompleter {
             }
             let returned = structure.clone();
             self.structure = Some(structure);
-            if std::env::var_os("NIXIE_DEBUG_MERGE").is_some() {
+            if crate::env::var_os("NIXIE_DEBUG_MERGE").is_some() {
                 let printer = nixie_core::smtlib::Printer::new(manager);
                 eprintln!(
                     "[merge] --- final structure (version {}) ---",
@@ -1274,7 +1274,7 @@ impl ModelCompleter {
                 }
                 assignments.insert(term, value);
             }
-            if std::env::var_os("NIXIE_DEBUG_MERGE").is_some() {
+            if crate::env::var_os("NIXIE_DEBUG_MERGE").is_some() {
                 eprintln!(
                     "[merge] kept {} harvest {} dropped-elem-assigns {} elements {}",
                     structure.assignments.len(),
@@ -1537,9 +1537,7 @@ impl ModelCompleter {
         };
         let mut changed = false;
         for &(compound, rep) in pairs {
-            if let std::collections::hash_map::Entry::Vacant(v) =
-                structure.assignments.entry(compound)
-            {
+            if let hash_map::Entry::Vacant(v) = structure.assignments.entry(compound) {
                 v.insert(rep);
                 changed = true;
             }
@@ -1910,7 +1908,7 @@ impl ModelCompleter {
         // Build function interpretations
         for (func_name, entries) in func_entries {
             match model.function_interps.entry(func_name) {
-                std::collections::hash_map::Entry::Occupied(mut occupied) => {
+                hash_map::Entry::Occupied(mut occupied) => {
                     // Already have an interpretation; just add entries
                     let interp = occupied.get_mut();
                     for (_domain, _range, args, result) in entries {
@@ -1920,7 +1918,7 @@ impl ModelCompleter {
                         }
                     }
                 }
-                std::collections::hash_map::Entry::Vacant(vacant) => {
+                hash_map::Entry::Vacant(vacant) => {
                     if let Some((domain, range, first_args, first_result)) = entries.first() {
                         // Create new interpretation
                         let mut interp =

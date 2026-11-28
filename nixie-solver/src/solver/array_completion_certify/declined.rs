@@ -39,11 +39,13 @@
 //! valid body is valid.  What it changes is only which goals get a
 //! certificate at all.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
+use crate::prelude::{FxHashMap, FxHashSet};
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::interner::Spur;
 use nixie_core::reserved::reserved_name;
 use nixie_core::sort::SortId;
-use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{Combinations, Goal, is_const_array, is_literal, run_query};
 use crate::solver::SolverResult;

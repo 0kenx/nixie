@@ -39,9 +39,11 @@
 //! subsumption passes or the next round's exact-duplicate retire.
 
 use super::Solver;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use crate::{ClauseId, LBool, Lit};
+use core::cmp::Ordering;
 use smallvec::SmallVec;
-use std::cmp::Ordering;
 
 /// Probe work budget: literal comparisons across all subset checks.
 /// Generous (kissat bounds by termination checks only); exists so a
@@ -137,8 +139,7 @@ impl Solver {
         // arena iterator holds an immutable borrow (the rewrite loop's
         // own shape).
         let ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
-        let mut sets: rustc_hash::FxHashMap<u32, SmallVec<[Lit; 8]>> =
-            rustc_hash::FxHashMap::default();
+        let mut sets: FxHashMap<u32, SmallVec<[Lit; 8]>> = FxHashMap::default();
         let mut candidates: Vec<u32> = Vec::new();
         let mut scratch: SmallVec<[Lit; 8]> = SmallVec::new();
         for cid in ids {

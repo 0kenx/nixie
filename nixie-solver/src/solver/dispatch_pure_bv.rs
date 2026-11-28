@@ -44,6 +44,8 @@
 //!   dispatch has no LRAT chain for the main solver's clause numbering).
 
 use crate::SolverResult;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use crate::solver::Solver;
 use crate::solver::types::Model;
 use nixie_theories::Theory;
@@ -82,7 +84,7 @@ impl crate::solver::Solver {
         manager: &mut TermManager,
         allow_elim: bool,
     ) -> Option<SolverResult> {
-        if std::env::var("NIXIE_ELIM_UNCNSTR_TRACE").is_ok() {
+        if crate::env::var("NIXIE_ELIM_UNCNSTR_TRACE").is_ok() {
             eprintln!(
                 "[elim-uncnstr] dispatch entered: quant={} wide_mul={} bv_terms={} arith={}",
                 self.has_quantifiers,
@@ -92,7 +94,7 @@ impl crate::solver::Solver {
             );
         }
         if !self.goal_is_pure_bv(manager) {
-            if std::env::var("NIXIE_ELIM_UNCNSTR_TRACE").is_ok() {
+            if crate::env::var("NIXIE_ELIM_UNCNSTR_TRACE").is_ok() {
                 eprintln!("[elim-uncnstr] dispatch declined at fragment gate");
             }
             return None;
@@ -111,7 +113,7 @@ impl crate::solver::Solver {
         // `NIXIE_BV_ELIM_UNCNSTR=0` disables the pass (A/B null arm): the
         // dispatch then keeps its pre-existing behavior for both routes.
         let elim_enabled =
-            allow_elim && std::env::var("NIXIE_BV_ELIM_UNCNSTR").as_deref() != Ok("0");
+            allow_elim && crate::env::var("NIXIE_BV_ELIM_UNCNSTR").as_deref() != Ok("0");
         let mut elim_uncnstr: Option<super::bv_elim_uncnstr::ElimUncnstrOutcome> = None;
         let mut preprocess_run: Option<super::bv_preprocess::PreprocessOutcome> = None;
         if Self::bv_dispatch_unified() && !self.has_bv_wide_mul {
@@ -119,7 +121,7 @@ impl crate::solver::Solver {
             if elim_enabled {
                 let outcome =
                     super::bv_elim_uncnstr::elim_uncnstr_assertions(&pre.rewritten, manager);
-                if std::env::var("NIXIE_ELIM_UNCNSTR_TRACE").is_ok() {
+                if crate::env::var("NIXIE_ELIM_UNCNSTR_TRACE").is_ok() {
                     eprintln!(
                         "[elim-uncnstr] fresh_vars={} defs={} assertions={}",
                         outcome.fresh_vars,
@@ -190,7 +192,7 @@ impl crate::solver::Solver {
         if elim_enabled && elim_uncnstr.is_none() {
             let pre_nodes = super::bv_elim_uncnstr::dag_nodes(&preprocessed, manager);
             let outcome = super::bv_elim_uncnstr::elim_uncnstr_assertions(&preprocessed, manager);
-            if std::env::var("NIXIE_ELIM_UNCNSTR_TRACE").is_ok() {
+            if crate::env::var("NIXIE_ELIM_UNCNSTR_TRACE").is_ok() {
                 eprintln!(
                     "[elim-uncnstr] fresh_vars={} defs={} assertions={}",
                     outcome.fresh_vars,
@@ -277,7 +279,7 @@ impl crate::solver::Solver {
         // BigUint product and refined (value lemma, then the exact circuit
         // as the guaranteed terminal) below.  Default width 32; disable
         // with NIXIE_BV_CEGAR=0.
-        let cegar_min_width = match std::env::var("NIXIE_BV_CEGAR").as_deref() {
+        let cegar_min_width = match crate::env::var("NIXIE_BV_CEGAR").as_deref() {
             Ok("0") => 0,
             _ => 32,
         };
@@ -289,7 +291,7 @@ impl crate::solver::Solver {
         // lemmas rarely converge there and the round tax is real.  The
         // capability ships sound + regression-tested; enable with
         // `NIXIE_BV_CEGAR_DIV=<width>` (64 = abstract width-64 divisions).
-        let cegar_div_width = match std::env::var("NIXIE_BV_CEGAR_DIV").ok() {
+        let cegar_div_width = match crate::env::var("NIXIE_BV_CEGAR_DIV").ok() {
             Some(v) => v.parse().unwrap_or(0),
             None => 0,
         };
@@ -301,7 +303,7 @@ impl crate::solver::Solver {
         let abstracted = self.bv.take_mul_abstractions();
         self.bv.set_mul_abstraction_width(0);
         self.bv.set_div_abstraction_width(0);
-        if std::env::var("NIXIE_BV_CEGAR_TRACE").is_ok() && !abstracted.is_empty() {
+        if crate::env::var("NIXIE_BV_CEGAR_TRACE").is_ok() && !abstracted.is_empty() {
             eprintln!("[cegar] abstracted {} wide muls", abstracted.len());
         }
 
@@ -330,8 +332,8 @@ impl crate::solver::Solver {
         // a fully exact instance even on adversarial value patterns).
         const CEGAR_MAX_ROUNDS: usize = 50;
         const CEGAR_VALUE_ROUNDS: u32 = 2;
-        let mut terminal: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
-        let mut value_rounds: rustc_hash::FxHashMap<TermId, u32> = rustc_hash::FxHashMap::default();
+        let mut terminal: FxHashSet<TermId> = FxHashSet::default();
+        let mut value_rounds: FxHashMap<TermId, u32> = FxHashMap::default();
         let mut round = 0usize;
         // Diagnostic split (`NIXIE_DUMP_CNF=<path>`): the instance as the
         // search sees it before the first check – run an external SAT
@@ -392,7 +394,7 @@ impl crate::solver::Solver {
                         break;
                     }
                     round += 1;
-                    if std::env::var("NIXIE_BV_CEGAR_TRACE").is_ok() {
+                    if crate::env::var("NIXIE_BV_CEGAR_TRACE").is_ok() {
                         eprintln!(
                             "[cegar] round {round}: {} spurious ({} terminal so far)",
                             spurious.len(),
@@ -495,7 +497,7 @@ impl crate::solver::Solver {
             // refutation gate's fail-open on `Undetermined` is what let the
             // ring-elimination bug reach users as a false `sat`.
             if !self.model_certifies_assertions(manager) {
-                if std::env::var("NIXIE_ELIM_UNCNSTR_TRACE").is_ok() {
+                if crate::env::var("NIXIE_ELIM_UNCNSTR_TRACE").is_ok() {
                     eprintln!("[elim-uncnstr] model failed certification; declining");
                 }
                 // The satisfying assignment does not evaluate to `true`
@@ -619,11 +621,10 @@ impl crate::solver::Solver {
         manager: &mut TermManager,
     ) {
         use nixie_core::ast::TermKind;
-        let defined: rustc_hash::FxHashSet<TermId> =
-            eliminations.iter().map(|&(var, _)| var).collect();
+        let defined: FxHashSet<TermId> = eliminations.iter().map(|&(var, _)| var).collect();
         // Iterative walk (stack-safety rule) collecting every free
         // variable of the roots.
-        let mut seen: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+        let mut seen: FxHashSet<TermId> = FxHashSet::default();
         let mut stack: Vec<TermId> = assertions.to_vec();
         stack.extend(eliminations.iter().map(|&(_, def)| def));
         let mut vars: Vec<TermId> = Vec::new();
@@ -668,7 +669,7 @@ impl crate::solver::Solver {
 /// arithmetic relaxation reasons about natively, while a bitwise-dominated
 /// one is exactly what bit-blasting digests best.
 fn assertions_ring_dominated(assertions: &[TermId], manager: &TermManager) -> bool {
-    let mut visited = rustc_hash::FxHashSet::default();
+    let mut visited = FxHashSet::default();
     let mut stack: Vec<TermId> = assertions.to_vec();
     let mut ring = 0usize;
     let mut total = 0usize;
@@ -738,7 +739,7 @@ pub(super) fn assertion_in_bv_fragment(
 }
 
 fn term_in_blastable_fragment(
-    memo: &std::cell::RefCell<rustc_hash::FxHashSet<TermId>>,
+    memo: &core::cell::RefCell<FxHashSet<TermId>>,
     term: TermId,
     manager: &TermManager,
 ) -> bool {
@@ -775,7 +776,7 @@ fn term_in_blastable_fragment(
     const LINEAR_MAX: usize = 256;
     let mut stack = vec![term];
     let mut visited_linear: Vec<TermId> = Vec::new();
-    let mut visited_hashed: Option<rustc_hash::FxHashSet<TermId>> = None;
+    let mut visited_hashed: Option<FxHashSet<TermId>> = None;
     while let Some(tid) = stack.pop() {
         if visited_linear.contains(&tid) {
             continue;
@@ -794,7 +795,7 @@ fn term_in_blastable_fragment(
             visited_linear.push(tid);
         } else {
             let hashed = visited_hashed.get_or_insert_with(|| {
-                let mut h = rustc_hash::FxHashSet::default();
+                let mut h = FxHashSet::default();
                 h.reserve(visited_linear.len() + 1);
                 h.extend(visited_linear.iter().copied());
                 h

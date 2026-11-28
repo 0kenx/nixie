@@ -23,6 +23,8 @@
 
 use super::super::term::{TermId, TermKind};
 use super::TermManager;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use crate::sort::SortId;
 use crate::sort::field::FieldId;
 use num_bigint::BigInt;

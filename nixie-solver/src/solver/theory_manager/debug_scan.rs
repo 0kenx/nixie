@@ -15,6 +15,8 @@
 //! genuinely `Lt/Le/Gt/Ge`; `Eq`/`Diseq` atoms are checked as (dis)equalities.
 
 use super::TheoryManager;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use crate::solver::Constraint;
 use crate::solver::types::ArithConstraintType::{Ge, Gt, Le, Lt};
 use nixie_core::ast::TermId;

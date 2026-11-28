@@ -66,7 +66,8 @@
 /// Literal encoding: `2*idx + sign`, `u32::MAX` = invalid.
 pub(crate) const INVALID: u32 = u32::MAX;
 
-use crate::prelude::Arc;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 /// kissat's `MAX_VARS` bound: importing a variable at or beyond this
@@ -1049,7 +1050,7 @@ impl Kitten {
     }
 
     fn completely_backtrack_to_root_level(&mut self) {
-        let lits: Vec<u32> = std::mem::take(&mut self.trail);
+        let lits: Vec<u32> = core::mem::take(&mut self.trail);
         for lit in lits {
             self.unassign(lit);
         }

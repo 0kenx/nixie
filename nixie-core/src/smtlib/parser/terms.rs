@@ -28,9 +28,10 @@ use crate::error::{NixieError, Result};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::sort::SortId;
+#[cfg(feature = "std")]
+use core::cell::Cell;
 use num_bigint::BigInt;
 use smallvec::SmallVec;
-use std::cell::Cell;
 
 /// Maximum depth of the **term this parser builds**, as accepted by
 /// [`Parser::parse_term`].
@@ -68,6 +69,7 @@ use std::cell::Cell;
 /// it: that walk is iterative too.
 const MAX_PARSE_DEPTH: u32 = 65536;
 
+#[cfg(feature = "std")]
 thread_local! {
     /// Current *logical* term nesting depth on this thread.
     ///
@@ -78,6 +80,9 @@ thread_local! {
     /// across those re-entries rather than restarting at zero for each.
     static PARSE_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
+/// The same counter without threads: the one thread there is shares it.
+#[cfg(not(feature = "std"))]
+static PARSE_DEPTH: crate::no_std::LocalU32 = crate::no_std::LocalU32::new(0);
 
 /// Restores [`PARSE_DEPTH`] to the value it had when a driver was entered,
 /// on every exit path including an early `?` return.
@@ -299,7 +304,7 @@ impl Parser<'_> {
     /// finished operands back to the innermost pending compound term. Native
     /// stack usage is constant in the nesting depth of the input.
     pub fn parse_term(&mut self) -> Result<TermId> {
-        let outer = PARSE_DEPTH.with(Cell::get);
+        let outer = PARSE_DEPTH.with(|d| d.get());
         let _restore = DepthReset(outer);
         let mut frames: Vec<Frame> = Vec::new();
         // Count of `Frame::Op` entries in `frames`, maintained incrementally.
@@ -376,7 +381,7 @@ impl Parser<'_> {
     /// sum is the depth of the term about to be built, which is exactly what
     /// [`MAX_PARSE_DEPTH`] promises to bound.
     pub(super) fn charge_fold_depth(&self, extra: u32) -> Result<()> {
-        let depth = PARSE_DEPTH.with(Cell::get).saturating_add(extra);
+        let depth = PARSE_DEPTH.with(|d| d.get()).saturating_add(extra);
         if depth > MAX_PARSE_DEPTH {
             return Err(NixieError::ParseError {
                 position: self.lexer.position(),
@@ -411,7 +416,7 @@ impl Parser<'_> {
     /// the depth of the term that is actually being built, so the error is an
     /// honest `ParseError` here rather than a stack death downstream.
     pub(super) fn charge_binding_depth(&self, what: &str, term: TermId) -> Result<()> {
-        let used = PARSE_DEPTH.with(Cell::get);
+        let used = PARSE_DEPTH.with(|d| d.get());
         let budget = MAX_PARSE_DEPTH.saturating_sub(used);
         if self.term_depth_exceeds(term, budget) {
             return Err(NixieError::ParseError {

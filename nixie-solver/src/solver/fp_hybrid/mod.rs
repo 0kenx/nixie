@@ -7,13 +7,15 @@ mod domain;
 mod tests;
 
 use super::{Solver, SolverResult, types::Model};
+#[allow(unused_imports)]
+use crate::prelude::*;
+use crate::prelude::{FxHashMap, FxHashSet};
 use circuit::{Circuit, Expr};
 use nixie_core::ast::{RoundingMode, TermId, TermKind, TermManager};
 use nixie_sat::{Solver as SatSolver, SolverResult as SatResult};
 use nixie_theories::{FpFormat, FpValue, bv::BvSolver};
 use num_bigint::{BigInt, BigUint};
 use num_traits::{ToPrimitive, Zero};
-use rustc_hash::{FxHashMap, FxHashSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Sort {

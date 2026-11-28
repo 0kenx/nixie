@@ -21,6 +21,8 @@
 //! ground constructor value, or a sort whose values cannot be spelled (an
 //! uninterpreted field), leaves the caller to decline as before.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::sort::{SortId, SortKind};
 use num_bigint::BigInt;

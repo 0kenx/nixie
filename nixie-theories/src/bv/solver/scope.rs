@@ -91,6 +91,8 @@
 //! handed an explanation that omits its hypotheses.
 
 use super::{BuildTarget, BvSolver, ComparisonKey, Sig};
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::TermId;
 use nixie_sat::{Lit, SolverResult, Var};
 use smallvec::SmallVec;

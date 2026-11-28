@@ -618,7 +618,7 @@ impl TheoryCoordinator {
         let plan: Vec<(TermId, Vec<TheoryId>)> = self
             .formula_theories
             .iter()
-            .filter(|(formula, _)| keep.contains(formula))
+            .filter(|(formula, _)| keep.contains(*formula))
             .map(|(&formula, theories)| (formula, theories.iter().copied().collect()))
             .collect();
         for (formula, theories) in plan {

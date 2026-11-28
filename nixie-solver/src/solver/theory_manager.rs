@@ -146,9 +146,9 @@ fn aprop_row_note_stale(stale: &TermId) {
 }
 
 fn restart_resync_disabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("NIXIE_NO_RESTART_RESYNC").is_ok())
+    *FLAG.get_or_init(|| crate::env::var("NIXIE_NO_RESTART_RESYNC").is_ok())
 }
 
 /// Incremental arithmetic bound-propagation mode, set from `NIXIE_BOUND_PROP`
@@ -1378,7 +1378,7 @@ impl<'a> TheoryManager<'a> {
                 Constraint::BoolApp(t) => roots.push(*t),
             }
         }
-        let mut encoded = rustc_hash::FxHashSet::default();
+        let mut encoded = FxHashSet::default();
         for root in roots {
             super::encode::blast_bv_term(self.bv, root, self.manager, &mut encoded);
         }
@@ -1593,7 +1593,7 @@ impl<'a> TheoryManager<'a> {
             for &member in &members[1..] {
                 let (mut t1, mut t2) = (rep, member);
                 if t1 > t2 {
-                    std::mem::swap(&mut t1, &mut t2);
+                    core::mem::swap(&mut t1, &mut t2);
                 }
                 if !dedup.insert((t1, t2)) {
                     continue;
@@ -2096,8 +2096,7 @@ impl<'a> TheoryManager<'a> {
             // pairs (x − y ≤ c) + live EUF disequality operands.  No model-equal
             // filter – the probe is sound regardless and catches chain-derived
             // equalities the model-equal filter misses.
-            let mut candidates: rustc_hash::FxHashSet<(TermId, TermId)> =
-                rustc_hash::FxHashSet::default();
+            let mut candidates: FxHashSet<(TermId, TermId)> = FxHashSet::default();
             for parsed in self.var_to_parsed_arith.values() {
                 if parsed.terms.len() == 2 {
                     let (t0, c0) = (parsed.terms[0].0, parsed.terms[0].1);
@@ -2123,8 +2122,7 @@ impl<'a> TheoryManager<'a> {
             // (capped) for the probe.  Sound: `entailed_equal_reason`
             // re-verifies entailment per pair.
             const MAX_MODEL_EQ_PAIRS: usize = 256;
-            let mut by_val: rustc_hash::FxHashMap<Rational64, Vec<TermId>> =
-                rustc_hash::FxHashMap::default();
+            let mut by_val: FxHashMap<Rational64, Vec<TermId>> = FxHashMap::default();
             // Only UF-ARGUMENT terms can enable a congruence `f(x)=f(y)` when
             // merged, so restrict the model-equal probe set to them (the
             // purification proxies are UF arguments; UF *results*, plain
@@ -2659,8 +2657,10 @@ impl<'a> TheoryManager<'a> {
                 // asserted reason atom) plus the NEGATED forced literal are
                 // unsatisfiable.  A satisfiable LP means the propagation is
                 // invalid - dump the clause shape and drop it.
-                static APROP_VERIFY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-                if *APROP_VERIFY.get_or_init(|| std::env::var_os("NIXIE_APROP_VERIFY").is_some()) {
+                static APROP_VERIFY: crate::prelude::OnceLock<bool> =
+                    crate::prelude::OnceLock::new();
+                if *APROP_VERIFY.get_or_init(|| crate::env::var_os("NIXIE_APROP_VERIFY").is_some())
+                {
                     let valid = self.arith.prop_verify_probe(
                         &parsed.terms,
                         parsed.constant,
@@ -2752,13 +2752,16 @@ impl<'a> TheoryManager<'a> {
                         // write it for external checking (reasons true,
                         // forced literal negated - a `sat` from the checker
                         // is a genuinely invalid clause).
-                        static CLAUSE_N: std::sync::atomic::AtomicU32 =
-                            std::sync::atomic::AtomicU32::new(0);
-                        if std::env::var("NIXIE_APROP_VERIFY").as_deref() == Ok("2") {
-                            let n = CLAUSE_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        // (Writing the file is `std`'s.)
+                        #[cfg(feature = "std")]
+                        static CLAUSE_N: core::sync::atomic::AtomicU32 =
+                            core::sync::atomic::AtomicU32::new(0);
+                        #[cfg(feature = "std")]
+                        if crate::env::var("NIXIE_APROP_VERIFY").as_deref() == Ok("2") {
+                            let n = CLAUSE_N.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                             if n < 500 {
                                 let atom_t = parsed.reason_term;
-                                let mut vars = std::collections::BTreeSet::new();
+                                let mut vars = BTreeSet::new();
                                 nixie_core::ast::pp::collect_var_names(
                                     self.manager,
                                     atom_t,
@@ -2778,7 +2781,7 @@ impl<'a> TheoryManager<'a> {
                                         .get(&r)
                                         .and_then(|rv| self.assigned_pol_of(*rv));
                                     let rs = nixie_core::ast::pp::to_smt2(self.manager, r);
-                                    use std::fmt::Write as _;
+                                    use core::fmt::Write as _;
                                     match pol {
                                         Some(true) => {
                                             let _ = writeln!(&mut body, "(assert {rs})");
@@ -2793,7 +2796,7 @@ impl<'a> TheoryManager<'a> {
                                     }
                                 }
                                 let atom_s = nixie_core::ast::pp::to_smt2(self.manager, atom_t);
-                                use std::fmt::Write as _;
+                                use core::fmt::Write as _;
                                 let _ = writeln!(
                                     &mut body,
                                     "(assert {})",

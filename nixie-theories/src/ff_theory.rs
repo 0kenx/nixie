@@ -46,6 +46,9 @@
 
 mod binary;
 
+#[allow(unused_imports)]
+use crate::prelude::*;
+use crate::prelude::{FxHashMap, FxHashSet};
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::sort::SortKind;
 use nixie_core::sort::field::FieldId;
@@ -60,7 +63,6 @@ use nixie_math::ff::uni_poly::UniPoly;
 use nixie_math::polynomial::{Monomial, Var};
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
-use rustc_hash::{FxHashMap, FxHashSet};
 
 /// The verdict of a finite-field check. The last variants are the honesty
 /// gate: a search that stopped because its budget ran out is **not** an
@@ -829,7 +831,7 @@ fn encode_generators<'f>(
                 Some((pa, pb)) => generators.push(FrontGen {
                     literal: Some(index),
                     poly: pa.sub(f, &pb),
-                    origin: std::iter::once(index).collect(),
+                    origin: core::iter::once(index).collect(),
                 }),
                 None => return Err(FfOutcome::OutOfBudget { where_: "encoding" }),
             },
@@ -846,7 +848,7 @@ fn encode_generators<'f>(
                                 generators.push(FrontGen {
                                     literal: Some(index),
                                     poly: pa.sub(f, &pb).mul(f, &w_poly).sub(f, &one),
-                                    origin: std::iter::once(index).collect(),
+                                    origin: core::iter::once(index).collect(),
                                 });
                             }
                             None => {
@@ -868,7 +870,7 @@ fn encode_generators<'f>(
             }
         }
     }
-    for (origin, poly) in std::mem::take(&mut enc.bitsum_generators) {
+    for (origin, poly) in core::mem::take(&mut enc.bitsum_generators) {
         generators.push(FrontGen {
             literal: None,
             poly,
@@ -929,7 +931,7 @@ fn split_grobner_basis(
     }
     let mut l_basis: Option<GrobnerBasis> = None;
     let mut nl_basis: Option<GrobnerBasis> = None;
-    if std::env::var_os("NIXIE_FF_STATS").is_some() {
+    if crate::env::var_os("NIXIE_FF_STATS").is_some() {
         eprintln!(
             "[ff-stats] split partition: {} linear, {} nonlinear",
             l_inputs.len(),
@@ -958,7 +960,7 @@ fn split_grobner_basis(
             // The split never mints certificates (its merged inputs are
             // not replayable) – the rows are pure overhead here.
             let r = grobner_basis_untraced(f, &gens, budget);
-            if std::env::var_os("NIXIE_FF_STATS").is_some() {
+            if crate::env::var_os("NIXIE_FF_STATS").is_some() {
                 eprintln!(
                     "[ff-stats] split l-GB ({} gens) -> {}",
                     gens.len(),
@@ -976,7 +978,7 @@ fn split_grobner_basis(
             );
             gens.append(&mut new_nl);
             let r = grobner_basis_untraced(f, &gens, budget);
-            if std::env::var_os("NIXIE_FF_STATS").is_some() {
+            if crate::env::var_os("NIXIE_FF_STATS").is_some() {
                 eprintln!(
                     "[ff-stats] split nl-GB ({} gens) -> {}",
                     gens.len(),
@@ -1032,7 +1034,7 @@ fn split_grobner_basis(
         merged.basis.extend(b.basis.iter().cloned());
         merged.inputs.extend(b.inputs.iter().cloned());
     }
-    if std::env::var_os("NIXIE_FF_STATS").is_some() {
+    if crate::env::var_os("NIXIE_FF_STATS").is_some() {
         eprintln!(
             "[ff-stats] split: {} rounds, linear {}, nonlinear {}",
             round,
@@ -1096,7 +1098,7 @@ fn form_windows(component: &[&FrontGen], var_cap: usize, gen_cap: usize) -> Vec<
             let mut best: Option<(usize, usize, Vec<Var>)> = None;
             for i in (0..component.len()).filter(|&i| !assigned[i]) {
                 let ivs = component[i].poly.variables();
-                let shared = ivs.iter().filter(|v| vars.contains(v)).count();
+                let shared = ivs.iter().filter(|v| vars.contains(*v)).count();
                 if shared == 0 {
                     continue;
                 }
@@ -1184,7 +1186,7 @@ fn window_grobner_basis(
                 .collect()
         })
         .collect();
-    if std::env::var_os("NIXIE_FF_STATS").is_some() {
+    if crate::env::var_os("NIXIE_FF_STATS").is_some() {
         eprintln!(
             "[ff-stats] windows: {} (gens {:?}, vars {:?})",
             n_w,
@@ -1220,7 +1222,7 @@ fn window_grobner_basis(
     // membership-skipped or strictly grows the target window's ideal),
     // bounded in practice by a total-admissions cap – a capacity
     // limit, never an answer.
-    let mut worklist: std::collections::VecDeque<usize> = (0..n_w).collect();
+    let mut worklist: VecDeque<usize> = (0..n_w).collect();
     let mut admissions = 0usize;
     const MAX_ADMISSIONS: usize = 4096;
     // Skipped windows (budget-out on recompute) stay dead; offers into
@@ -1248,7 +1250,7 @@ fn window_grobner_basis(
         // window's burn decide a later window's verdict.
         let mut wbudget = GrobnerBudget::new(budget_steps);
         let r = grobner_basis_untraced(f, &gens, &mut wbudget);
-        if std::env::var_os("NIXIE_FF_STATS").is_some() {
+        if crate::env::var_os("NIXIE_FF_STATS").is_some() {
             eprintln!(
                 "[ff-stats] window {w}-GB ({} gens) -> {}",
                 gens.len(),
@@ -1306,13 +1308,13 @@ fn window_grobner_basis(
             }
         }
         bases[w] = Some(new_basis);
-        if offered > 0 && std::env::var_os("NIXIE_FF_STATS").is_some() {
+        if offered > 0 && crate::env::var_os("NIXIE_FF_STATS").is_some() {
             eprintln!(
                 "[ff-stats] window exchange: {w} offered {offered} (total {admissions}, {skipped} skipped)"
             );
         }
     }
-    if std::env::var_os("NIXIE_FF_STATS").is_some() {
+    if crate::env::var_os("NIXIE_FF_STATS").is_some() {
         eprintln!(
             "[ff-stats] window exchange fixpoint: {admissions} admissions ({skipped} window(s) skipped)"
         );
@@ -1333,7 +1335,7 @@ fn window_grobner_basis(
     let mut ubudget = GrobnerBudget::new(budget_steps);
     match grobner_basis_untraced(f, &all, &mut ubudget) {
         Ok(union) => {
-            if std::env::var_os("NIXIE_FF_STATS").is_some() {
+            if crate::env::var_os("NIXIE_FF_STATS").is_some() {
                 eprintln!(
                     "[ff-stats] window union-GB: {} elements -> basis of {}",
                     all.len(),
@@ -1355,7 +1357,7 @@ fn window_grobner_basis(
                 merged.basis.extend(b.basis.iter().cloned());
                 merged.inputs.extend(b.inputs.iter().cloned());
             }
-            if std::env::var_os("NIXIE_FF_STATS").is_some() {
+            if crate::env::var_os("NIXIE_FF_STATS").is_some() {
                 eprintln!(
                     "[ff-stats] window union-GB: {} elements -> budget-out (merged union used)",
                     all.len()
@@ -1426,7 +1428,7 @@ fn grobner_path(
     // own budget (component counts are small; a shared cap would starve
     // late components).
     let components = connected_components(&generators);
-    if std::env::var_os("NIXIE_FF_STATS").is_some() {
+    if crate::env::var_os("NIXIE_FF_STATS").is_some() {
         eprintln!(
             "[ff-stats] field p>{}: {} generators after front end, {} components (sizes {:?}), budget 2^{}",
             f.modulus().bits(),
@@ -1573,7 +1575,7 @@ fn grobner_path(
                 };
             }
         }
-        if std::env::var_os("NIXIE_FF_STATS").is_some() {
+        if crate::env::var_os("NIXIE_FF_STATS").is_some() {
             eprintln!(
                 "[ff-stats] component: {} generators -> {} basis of {}{}",
                 component.len(),
@@ -1598,7 +1600,7 @@ fn grobner_path(
                     .map(|cg| {
                         let idx = generators
                             .iter()
-                            .position(|g| std::ptr::eq(g, *cg))
+                            .position(|g| core::ptr::eq(g, *cg))
                             .unwrap_or(0);
                         generator_exprs.get(idx).cloned().unwrap_or_default()
                     })
@@ -1643,7 +1645,7 @@ fn grobner_path(
                     .map(|cg| {
                         let idx = generators
                             .iter()
-                            .position(|g| std::ptr::eq(g, *cg))
+                            .position(|g| core::ptr::eq(g, *cg))
                             .unwrap_or(0);
                         generator_exprs.get(idx).cloned().unwrap_or_default()
                     })
@@ -1796,7 +1798,7 @@ struct FrontGen {
     /// The polynomial.
     poly: MPoly,
     /// The literal indices this generator derives from.
-    origin: std::collections::BTreeSet<usize>,
+    origin: BTreeSet<usize>,
 }
 
 /// Extract the traced core from a `1 ∈ I` basis: the asserted literals
@@ -1861,7 +1863,7 @@ fn traced_unsat(
             composed[at] = composed[at].add(f, cof);
         }
     }
-    let mut core: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+    let mut core: BTreeSet<usize> = BTreeSet::new();
     for (gen_idx, generator) in originals.iter().enumerate() {
         if composed.get(gen_idx).is_some_and(|c| !c.is_zero()) {
             core.extend(generator.origin.iter().copied());
@@ -1912,7 +1914,7 @@ struct Encoder<'a> {
     /// with the literal whose encoding minted it – provenance for cores
     /// (a definition is not a fact, but the fact that REQUIRED it
     /// belongs in any core the definition participates in).
-    bitsum_generators: Vec<(std::collections::BTreeSet<usize>, MPoly)>,
+    bitsum_generators: Vec<(BTreeSet<usize>, MPoly)>,
     /// The literal whose terms are currently being encoded.
     current_literal: Option<usize>,
     /// Fresh witness variables minted for disequalities (pair key → ring
@@ -1955,7 +1957,7 @@ impl<'a> Encoder<'a> {
         root: TermId,
         budget: u64,
     ) -> Result<(), ()> {
-        let mut visited: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
         let mut stack: Vec<TermId> = vec![root];
         let mut steps = 0u64;
         while let Some(t) = stack.pop() {
@@ -2162,7 +2164,7 @@ impl<'a> Encoder<'a> {
                             self.bitsum_generators.push((
                                 self.current_literal
                                     .into_iter()
-                                    .collect::<std::collections::BTreeSet<usize>>(),
+                                    .collect::<BTreeSet<usize>>(),
                                 definition,
                             ));
                             let mut out = MPoly::zero();
@@ -2219,7 +2221,7 @@ fn find_zero(
         /// Certificate tracking: the expressions of the node's INPUT
         /// basis elements over the atom list (shared with siblings),
         /// and the atom of the branch literal that created this node.
-        input_base: Option<std::rc::Rc<Vec<Vec<MPoly>>>>,
+        input_base: Option<Rc<Vec<Vec<MPoly>>>>,
         extra_atom: Option<usize>,
     }
 
@@ -2305,12 +2307,12 @@ fn find_zero(
             n_base: usize,
             f: &FieldCtx,
             tbudget: &mut GrobnerBudget,
-        ) -> Option<std::rc::Rc<Vec<Vec<MPoly>>>> {
+        ) -> Option<Rc<Vec<Vec<MPoly>>>> {
             let mut all = Vec::with_capacity(self.basis.basis.len());
             for i in 0..self.basis.basis.len() {
                 all.push(self.expr_of(i, n_now, n_base, f, tbudget)?);
             }
-            Some(std::rc::Rc::new(all))
+            Some(Rc::new(all))
         }
     }
 
@@ -2318,9 +2320,7 @@ fn find_zero(
         basis: basis.clone(),
         is_gb: cert.root_is_gb,
         path: Vec::new(),
-        input_base: cert
-            .root_input_exprs
-            .map(|exprs| std::rc::Rc::new(exprs.to_vec())),
+        input_base: cert.root_input_exprs.map(|exprs| Rc::new(exprs.to_vec())),
         extra_atom: None,
     }];
     // Whether any round-robin enumerated fewer than p values: an
@@ -2343,7 +2343,7 @@ fn find_zero(
                 where_: "FindZero search",
             };
         }
-        if std::env::var_os("NIXIE_FF_STATS").is_some() && steps % 10 == 1 {
+        if crate::env::var_os("NIXIE_FF_STATS").is_some() && steps % 10 == 1 {
             eprintln!(
                 "[fz] node {steps}: stack {} basis {} gbudget 2^{}",
                 stack.len(),
@@ -2587,7 +2587,7 @@ fn find_zero(
                     }
                 }
             } else {
-                if std::env::var_os("NIXIE_FF_STATS").is_some() {
+                if crate::env::var_os("NIXIE_FF_STATS").is_some() {
                     eprintln!("[fz] round-robin on var {free_var:?} at node {steps}");
                 }
                 // Positive-dimensional: enumerate the free variable's
@@ -2648,7 +2648,7 @@ fn find_zero(
         let elements: Vec<MPoly> = node.basis.basis.iter().map(|t| t.poly.clone()).collect();
         // The parent's element expressions, materialized once for all
         // children (shared `Rc`).
-        let child_base: Option<std::rc::Rc<Vec<Vec<MPoly>>>> = if tracking {
+        let child_base: Option<Rc<Vec<Vec<MPoly>>>> = if tracking {
             match node.all_elem_exprs(
                 n_atoms_current(&lit_reg, n_atoms_base),
                 n_atoms_base,
@@ -2725,8 +2725,8 @@ fn find_zero(
         };
         FfCertificate::CaseTree {
             field: cert.field,
-            literals: std::mem::take(&mut lit_reg),
-            entries: std::mem::take(&mut entries)
+            literals: core::mem::take(&mut lit_reg),
+            entries: core::mem::take(&mut entries)
                 .into_iter()
                 .map(|(path, entry)| {
                     let entry = match entry {
@@ -2793,7 +2793,7 @@ fn collect_field_variables(
     assertions: &[TermId],
 ) -> Result<Vec<TermId>, String> {
     let mut vars: Vec<TermId> = Vec::new();
-    let mut visited: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+    let mut visited: FxHashSet<TermId> = FxHashSet::default();
     let mut stack: Vec<TermId> = assertions.to_vec();
     while let Some(t) = stack.pop() {
         if !visited.insert(t) {
@@ -3138,7 +3138,7 @@ enum FrontResult {
     /// An inconsistent linear row; the payloads are the literal indices
     /// of its origin and (when tracked) the ideal-membership certificate
     /// – the row's own combination IS one: `Σ combo_i · gᵢ = c ≠ 0`.
-    Inconsistent(std::collections::BTreeSet<usize>, Option<FfCertificate>),
+    Inconsistent(BTreeSet<usize>, Option<FfCertificate>),
 }
 
 /// Constant propagation + sparse Gaussian elimination over the linear
@@ -3149,8 +3149,8 @@ enum FrontResult {
 /// literal provenance, so an inconsistent row is a certified `1 ∈
 /// ⟨support⟩` traceable to asserted facts.
 fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult {
+    use BTreeMap;
     use nixie_math::polynomial::Var;
-    use std::collections::BTreeMap;
     // Snapshot for certificate construction: (literal, poly) per
     // generator, in the encoder's order (the combo vectors index this).
     let snapshot: Vec<(Option<usize>, MPoly)> =
@@ -3160,7 +3160,7 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
     struct Row {
         coeffs: BTreeMap<Var, Limbs>,
         constant: Limbs,
-        origin: std::collections::BTreeSet<usize>,
+        origin: BTreeSet<usize>,
         literal: Option<usize>,
         /// The row's combination over the ORIGINAL linear generators
         /// (dense over the linear prefix, in partition order): the row
@@ -3270,12 +3270,12 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
         // BTreeMap/Limbs copies were the FF chains' dominant cost
         // (~40% of the 1024x1536 profile; scan #3 item #1a).  Identical
         // arithmetic and provenance, no per-row copies.
-        let pivot_row = std::mem::replace(
+        let pivot_row = core::mem::replace(
             &mut rows[ri],
             Row {
                 coeffs: BTreeMap::new(),
                 constant: f.zero(),
-                origin: std::collections::BTreeSet::new(),
+                origin: BTreeSet::new(),
                 literal: None,
                 combo: Vec::new(),
             },

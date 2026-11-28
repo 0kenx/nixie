@@ -37,8 +37,10 @@
 //! conclusions retain it. Scope journals and the shared refinement budget are
 //! the same ones used by existing datatype and array lemmas.
 
+use crate::prelude::FxHashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
-use rustc_hash::FxHashMap;
 
 use super::Solver;
 
@@ -93,9 +95,7 @@ impl Solver {
             let term = self.euf.node_term(node)?;
             let data = manager.get(term)?;
             if let TermKind::DtConstructor { constructor, args } = &data.kind {
-                if let std::collections::hash_map::Entry::Vacant(entry) =
-                    declarations.entry(data.sort)
-                {
+                if let hash_map::Entry::Vacant(entry) = declarations.entry(data.sort) {
                     entry.insert(super::dt_axioms::resolve_decl(data.sort, manager)?);
                 }
                 let declaration = declarations.get(&data.sort)?;

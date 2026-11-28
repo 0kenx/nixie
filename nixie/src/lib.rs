@@ -9,8 +9,8 @@
 //! - **Z3-Compatible**: Extensive theory support and familiar API patterns
 //! - **High Performance**: Optimized SAT core with advanced heuristics (VSIDS, LRB, CHB)
 //! - **Modular Design**: Use only what you need via feature flags
-//! - **SMT-LIB2 Support**: Full parser and printer for standard format (requires `std` feature)
-//! - **no_std Support**: Core solver compiles for bare-metal targets (RISC-V, zkVM)
+//! - **SMT-LIB2 Support**: Full parser and printer for standard format
+//! - **no_std Support**: The solver core builds without `std` (see below)
 //!
 //! ## Module Overview
 //!
@@ -44,12 +44,37 @@
 //! nixie = "0.3.2"  # Default: std + core solver
 //! ```
 //!
-//! For no_std (e.g., zkVM):
+//! Without `std` (a hosted `no_std` target, a zkVM, a kernel):
 //!
 //! ```toml
 //! [dependencies]
 //! nixie = { version = "0.3.2", default-features = false }
 //! ```
+//!
+//! # The `no_std` configuration
+//!
+//! `default-features = false` turns the `std` feature off in every library
+//! crate: they build as `no_std` + `alloc`, and the solver core – `Solver`,
+//! `TermManager`, the theories – is the same code as under `std` (`just
+//! verify` compiles it with warnings denied and runs `nixie-nostd-smoke`
+//! through it). What the configuration does not have, because it needs an
+//! operating system:
+//!
+//! * the environment: every `NIXIE_*` knob reads as unset, so each gated
+//!   path takes its "off" branch (on `wasm32-unknown-unknown` the same holds,
+//!   there being no environment there either);
+//! * a clock: `nixie-time` is frozen without its `std` feature, so
+//!   `(set-option :timeout N)` never fires – bound a search with
+//!   `:max-conflicts` instead (see `nixie-time`'s docs);
+//! * files and threads: the DRAT/LRAT file tracers (`Context::enable_*`
+//!   to a path), `Context::execute_script`, the `TimeoutTactic` and
+//!   `ParallelTactic` combinators, the `z3_compat` and `heap` modules, and
+//!   the nonlinear search's large-stack worker thread (it runs on the
+//!   caller's stack instead).
+//!
+//! SMT-LIB text still parses and prints without `std` through
+//! `nixie_core::smtlib`; drive `Context` through its typed methods
+//! (`assert`, `check_sat`, ...) rather than `execute_script`.
 //!
 //! With additional features:
 //!

@@ -21,9 +21,12 @@
 //! (little-endian base-128), exactly as upstream's `put_binary_lit` /
 //! `put_binary_id`.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
+#[cfg(feature = "std")]
 use std::fs::File;
+#[cfg(feature = "std")]
 use std::io::{self, BufWriter, Write};
-use std::sync::{Arc, Mutex};
 
 use super::tracer::Tracer;
 
@@ -207,6 +210,7 @@ impl Tracer for MemoryLratTracer {
 }
 
 /// Streaming LRAT proof writer (text or binary).
+#[cfg(feature = "std")]
 pub struct LratTracer {
     writer: Mutex<BufWriter<File>>,
     binary: bool,
@@ -222,6 +226,7 @@ pub struct LratTracer {
     closed: bool,
 }
 
+#[cfg(feature = "std")]
 impl LratTracer {
     /// Open `path` for a **text** LRAT proof (truncates an existing file).
     pub fn open(path: &str) -> io::Result<Self> {
@@ -416,6 +421,7 @@ impl LratTracer {
     }
 }
 
+#[cfg(feature = "std")]
 impl Tracer for LratTracer {
     fn add_derived_clause(
         &mut self,

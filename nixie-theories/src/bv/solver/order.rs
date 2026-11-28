@@ -220,7 +220,7 @@ impl BvSolver {
 
     /// Whether `NIXIE_BV_DISTINCT_ORDER=0` disables the order encoding.
     pub(crate) fn order_env_disabled() -> bool {
-        match std::env::var("NIXIE_BV_DISTINCT_ORDER") {
+        match crate::env::var("NIXIE_BV_DISTINCT_ORDER") {
             Ok(v) => v == "0" || v.is_empty(),
             Err(_) => false,
         }

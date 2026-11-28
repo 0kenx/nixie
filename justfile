@@ -97,6 +97,20 @@ verify:
     cargo clippy --workspace --all-features --all-targets -- -D warnings
     cargo fmt --all -- --check
     cargo doc --workspace --no-deps --all-features
+    # The `no_std` configuration: the library crates built without their
+    # `std` feature (`--no-default-features`), warnings denied, then run.
+    # `-p nixie` is the root of the no_std dependency graph; `-p
+    # nixie-nostd-smoke` is a binary whose graph turns no library's `std`
+    # feature on, so the solver it runs is the one compiled without `std`
+    # (issue #53: 599 cfg sites had never been built by any command).
+    RUSTFLAGS="-Dwarnings" cargo check -p nixie --no-default-features
+    cargo run -p nixie-nostd-smoke
+    # The shipped wasm configuration (scripts/wasm_build.sh) builds for
+    # wasm32-unknown-unknown with `std`: the one target on the frozen
+    # nixie-time clock. Both profiles, `full` (the default) and `minimal`;
+    # the target is pinned in rust-toolchain.toml.
+    cargo check -p nixie-wasm --target wasm32-unknown-unknown
+    cargo check -p nixie-wasm --target wasm32-unknown-unknown --no-default-features --features minimal
 
 verify-full:
     just verify

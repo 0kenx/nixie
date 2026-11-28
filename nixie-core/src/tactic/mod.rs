@@ -46,9 +46,9 @@ pub use registry::{ManagedTactic, TacticRegistry, default_registry};
 pub use ackermann::{AckermannizeTactic, StatelessAckermannizeTactic};
 pub use aggressive_simplify::{AggressiveSimplifyTactic, StatelessAggressiveSimplifyTactic};
 pub use bitblast::{BitBlastTactic, StatelessBitBlastTactic};
-pub use combinators::{
-    OrElseTactic, ParallelTactic, RepeatTactic, ThenTactic, TimeoutTactic, cancellation_requested,
-};
+pub use combinators::{OrElseTactic, RepeatTactic, ThenTactic, cancellation_requested};
+#[cfg(feature = "std")]
+pub use combinators::{ParallelTactic, TimeoutTactic};
 pub use ctx_simplify::{CtxSolverSimplifyTactic, StatelessCtxSolverSimplifyTactic};
 pub use eliminate::{EliminateUnconstrainedTactic, StatelessEliminateUnconstrainedTactic};
 pub use pb2bv::{Pb2BvTactic, StatelessPb2BvTactic};

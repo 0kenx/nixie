@@ -4,23 +4,23 @@
 /// Diagnostic-only flag, fixed for the process like the SAT tracing flags.
 /// Bound writes are a hot path: do not scan the process environment per write.
 fn bound_tripwire_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("NIXIE_BOUND_TRIPWIRE").is_ok())
+    static ENABLED: crate::prelude::OnceLock<bool> = crate::prelude::OnceLock::new();
+    *ENABLED.get_or_init(|| crate::env::var("NIXIE_BOUND_TRIPWIRE").is_ok())
 }
 
 /// `NIXIE_S6_NDIR2=1` – the general narrow direction-2 derivation in
 /// [`Simplex::propagate_bounds_in`] (read once per process like
 /// `bound_tripwire_enabled`; that pass runs per final-check fixpoint round).
 fn slice6_ndir2_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("NIXIE_S6_NDIR2").as_deref() == Ok("1"))
+    static ENABLED: crate::prelude::OnceLock<bool> = crate::prelude::OnceLock::new();
+    *ENABLED.get_or_init(|| crate::env::var("NIXIE_S6_NDIR2").as_deref() == Ok("1"))
 }
 
 /// `NIXIE_S6_PINNED=0` – opts OUT of the pinned-basic direction-2
 /// derivation (default on; read once per process).
 fn slice6_pinned_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("NIXIE_S6_PINNED").map_or(true, |v| v != "0"))
+    static ENABLED: crate::prelude::OnceLock<bool> = crate::prelude::OnceLock::new();
+    *ENABLED.get_or_init(|| crate::env::var("NIXIE_S6_PINNED").map_or(true, |v| v != "0"))
 }
 
 /// Diagnosis counters of the slice-6 candidate scan
@@ -56,6 +56,7 @@ fn s6_scan_trace_add(kind: S6ScanKind, n: u64) {
 
 use super::delta::{BigDeltaRational, BoundValue, DeltaRational};
 use crate::config::SimplexConfig;
+use crate::prelude::Arc;
 #[allow(unused_imports)]
 use crate::prelude::*;
 #[cfg(feature = "profiling")]
@@ -63,7 +64,6 @@ use nixie_core::profiling::{ProfilingCategory, ScopedTimer};
 use num_rational::Rational64;
 use num_traits::{One, Signed, Zero};
 use smallvec::SmallVec;
-use std::sync::Arc;
 /// Variable index
 pub type VarId = u32;
 
@@ -270,7 +270,7 @@ fn gcd_i128(a: i128, b: i128) -> i128 {
     let k = za.min(zb);
     loop {
         if a > b {
-            std::mem::swap(&mut a, &mut b);
+            core::mem::swap(&mut a, &mut b);
         }
         b -= a;
         if b == 0 {
@@ -315,7 +315,7 @@ fn gcd_u64(mut x: u64, mut y: u64) -> u64 {
     // every subtraction is followed by at least one shift.
     loop {
         if x > y {
-            std::mem::swap(&mut x, &mut y);
+            core::mem::swap(&mut x, &mut y);
         }
         y -= x;
         if y == 0 {
@@ -2068,7 +2068,7 @@ impl Simplex {
 
     /// TEMP DIAG helper reused by tests.
     pub fn dbg_tableau(&mut self) -> String {
-        use std::fmt::Write;
+        use core::fmt::Write;
         let mut out = String::new();
         let _ = writeln!(out, "rows={}", self.tableau.len());
         let keys: Vec<VarId> = self.tableau.keys().copied().collect();
@@ -2402,8 +2402,8 @@ impl Simplex {
     /// A slack's narrow defining row (the atom-row canary).  A row still
     /// in its integer form is materialized for the caller (unmemoized –
     /// the canary path is cold).
-    pub fn row_of(&self, slack: VarId) -> Option<std::sync::Arc<LinExpr>> {
-        Some(std::sync::Arc::new(match self.tableau.get(&slack)? {
+    pub fn row_of(&self, slack: VarId) -> Option<Arc<LinExpr>> {
+        Some(Arc::new(match self.tableau.get(&slack)? {
             TableRow::Lin(arc) | TableRow::LinNoInt(arc) => arc.as_ref().clone(),
             TableRow::Int(int_row) => materialize_lin(int_row),
         }))
@@ -7238,7 +7238,10 @@ impl Simplex {
     /// TEMP debug invariant check: every basic variable's assignment equals
     /// its row evaluated over the current nonbasic assignments, and every
     /// nonbasic sits inside its bound window.  Returns the first violation.
-    #[cfg(feature = "std")]
+    /// Compiled wherever a caller is: the `std` diagnostic in
+    /// `ArithSolver::snapshot_lia_model` (`NIXIE_INV_TRACE`) or the
+    /// `debug_assertions` gate of [`Simplex::check`].
+    #[cfg(any(feature = "std", debug_assertions))]
     pub fn debug_verify_invariant(&self) -> Option<String> {
         for i in 0..self.assignment.len() {
             // WIDE basics are certified against their EXACT row evaluation
@@ -7262,7 +7265,7 @@ impl Simplex {
             // the EXACT value, like the wide-basic loop below.
             if let Some(w) = self.wide_points.get(&(i as VarId)) {
                 if let Some(lo) = &lb
-                    && lo.cmp_value(&BoundValue::Wide(std::sync::Arc::new(w.clone())))
+                    && lo.cmp_value(&BoundValue::Wide(Arc::new(w.clone())))
                         == core::cmp::Ordering::Greater
                 {
                     return Some(format!(
@@ -7271,7 +7274,7 @@ impl Simplex {
                     ));
                 }
                 if let Some(hi) = &ub
-                    && hi.cmp_value(&BoundValue::Wide(std::sync::Arc::new(w.clone())))
+                    && hi.cmp_value(&BoundValue::Wide(Arc::new(w.clone())))
                         == core::cmp::Ordering::Less
                 {
                     return Some(format!(
@@ -7764,7 +7767,7 @@ impl Simplex {
     /// that must reason about the slack's actual defining form – e.g. the
     /// integrality re-check after a *rescaled* intern (see the private
     /// `RowInternMode`). A wide-store basic has no narrow row; `None` then.
-    pub fn defining_row(&self, var: VarId) -> Option<std::borrow::Cow<'_, LinExpr>> {
+    pub fn defining_row(&self, var: VarId) -> Option<Cow<'_, LinExpr>> {
         self.row_lin_view(var)
     }
     /// The row of `var` in its CANONICAL rational form – the single
@@ -7795,12 +7798,10 @@ impl Simplex {
     /// `&mut` hot paths use [`Self::row_lin`] (memoizing); a profile that
     /// shows an `&self` reader paying repeatedly on `Int` rows is the
     /// signal to migrate that reader to `&mut`.
-    fn row_lin_view(&self, var: VarId) -> Option<std::borrow::Cow<'_, LinExpr>> {
+    fn row_lin_view(&self, var: VarId) -> Option<Cow<'_, LinExpr>> {
         match self.tableau.get(&var)? {
-            TableRow::Lin(arc) | TableRow::LinNoInt(arc) => {
-                Some(std::borrow::Cow::Borrowed(arc.as_ref()))
-            }
-            TableRow::Int(int_row) => Some(std::borrow::Cow::Owned(materialize_lin(int_row))),
+            TableRow::Lin(arc) | TableRow::LinNoInt(arc) => Some(Cow::Borrowed(arc.as_ref())),
+            TableRow::Int(int_row) => Some(Cow::Owned(materialize_lin(int_row))),
         }
     }
 
@@ -7918,15 +7919,13 @@ impl Simplex {
     /// Iterate `(basic_var, canonical row)` pairs.  Integer-form rows are
     /// materialized on the fly (unmemoized – `&self`): the cut/propagation
     /// readers this serves are cold relative to the pivot loop.
-    pub(super) fn tableau_iter(&self) -> Vec<(VarId, std::borrow::Cow<'_, LinExpr>)> {
+    pub(super) fn tableau_iter(&self) -> Vec<(VarId, Cow<'_, LinExpr>)> {
         self.tableau
             .iter()
             .map(|(v, entry)| {
                 let cow = match entry {
-                    TableRow::Lin(arc) | TableRow::LinNoInt(arc) => {
-                        std::borrow::Cow::Borrowed(arc.as_ref())
-                    }
-                    TableRow::Int(int_row) => std::borrow::Cow::Owned(materialize_lin(int_row)),
+                    TableRow::Lin(arc) | TableRow::LinNoInt(arc) => Cow::Borrowed(arc.as_ref()),
+                    TableRow::Int(int_row) => Cow::Owned(materialize_lin(int_row)),
                 };
                 (*v, cow)
             })

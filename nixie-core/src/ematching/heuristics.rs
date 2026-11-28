@@ -113,7 +113,7 @@ impl InstantiationHeuristic for ConflictDrivenHeuristic {
     fn compute_priority(&self, _quant: TermId, instances: &[TermId]) -> InstantiationPriority {
         let conflict_count = instances
             .iter()
-            .filter(|t| self.conflict_terms.contains(t))
+            .filter(|t| self.conflict_terms.contains(*t))
             .count();
         InstantiationPriority(conflict_count as f64)
     }

@@ -7,9 +7,9 @@
 //! - Array extensionality reasoning
 
 use crate::ast::{TermId, TermKind, TermManager};
+use crate::prelude::Rc;
 #[allow(unused_imports)]
 use crate::prelude::*;
-use std::rc::Rc;
 
 /// Select-store elimination tactic.
 pub struct SelectStoreElimTactic {

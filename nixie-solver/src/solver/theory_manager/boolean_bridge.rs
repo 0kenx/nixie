@@ -1,6 +1,8 @@
 //! SAT values of Boolean theory arguments belong to EUF's two-element domain.
 
 use super::{Polarity, TheoryManager};
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::TermKind;
 use nixie_sat::TheoryCheckResult;
 

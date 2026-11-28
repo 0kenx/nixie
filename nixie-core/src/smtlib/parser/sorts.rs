@@ -6,7 +6,8 @@ use crate::error::{NixieError, Result};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::sort::SortId;
-use std::cell::Cell;
+#[cfg(feature = "std")]
+use core::cell::Cell;
 
 /// Maximum recursive nesting depth accepted by [`Parser::parse_sort`].
 /// Mirrors the identical guard on [`Parser::parse_term`] in `terms.rs`:
@@ -16,10 +17,14 @@ use std::cell::Cell;
 /// honest [`NixieError::ParseError`] instead of aborting the process.
 const MAX_SORT_PARSE_DEPTH: u32 = 512;
 
+#[cfg(feature = "std")]
 thread_local! {
     /// Current recursion depth of [`Parser::parse_sort`] on this thread.
     static SORT_PARSE_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
+/// The same counter without threads: the one thread there is shares it.
+#[cfg(not(feature = "std"))]
+static SORT_PARSE_DEPTH: crate::no_std::LocalU32 = crate::no_std::LocalU32::new(0);
 
 /// RAII guard that decrements the [`SORT_PARSE_DEPTH`] counter when it
 /// leaves scope, including on error unwinding, so the depth stays accurate

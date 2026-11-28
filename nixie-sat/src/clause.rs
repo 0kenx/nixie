@@ -3,6 +3,8 @@
 use crate::literal::Lit;
 #[allow(unused_imports)]
 use crate::memory::{ClauseArena, ClauseRef, ClauseView};
+#[allow(unused_imports)]
+use crate::prelude::*;
 use crate::watched::WatchLists;
 
 use smallvec::SmallVec;

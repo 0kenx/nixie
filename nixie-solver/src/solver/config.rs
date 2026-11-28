@@ -19,6 +19,8 @@
 //! [`Solver::settings_changed`]**, and the fingerprint additionally carries the
 //! settings by value so a future setter that forgets is still caught.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_theories::arithmetic::ArithSolver;
 

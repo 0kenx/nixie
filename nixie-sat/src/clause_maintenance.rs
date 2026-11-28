@@ -93,7 +93,7 @@ impl ClauseMaintenance {
         let mut removed_clauses = Vec::new();
 
         // Process cleanup queue
-        let queue: Vec<_> = std::mem::take(&mut self.cleanup_queue);
+        let queue: Vec<_> = core::mem::take(&mut self.cleanup_queue);
         for clause_id in queue {
             if clauses.get(clause_id).is_none_or(|c| c.deleted) {
                 continue;

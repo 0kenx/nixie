@@ -26,7 +26,7 @@
 //! only is what keeps a declared `@uc_U_0` from turning an abstract value
 //! into a self-reference.
 
-use std::cmp::Ordering;
+use core::cmp::Ordering;
 
 use crate::prelude::*;
 use nixie_core::sort::SortId;

@@ -117,6 +117,8 @@
 //! ```
 
 use crate::graph::{GraphModel, VertexId};
+#[allow(unused_imports)]
+use crate::prelude::*;
 use crate::prelude::{FxHashMap, FxHashSet};
 use crate::user_propagator::UserPropagator;
 use nixie_core::ast::{TermId, TermManager};

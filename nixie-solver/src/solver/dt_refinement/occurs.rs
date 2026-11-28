@@ -20,8 +20,10 @@
 //! application is impossible: `¬E` is an instance of a
 //! theorem of the datatype theory (acyclicity), valid at every assertion level.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
+use crate::prelude::{FxHashMap, FxHashSet};
 use nixie_core::ast::{TermId, TermKind, TermManager};
-use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::super::Solver;
 
@@ -61,7 +63,7 @@ impl Solver {
             }
             pending.push(self.euf.node_term(node)?);
         }
-        pending.sort_unstable_by_key(|term| std::cmp::Reverse(term.raw()));
+        pending.sort_unstable_by_key(|term| core::cmp::Reverse(term.raw()));
         let mut seen = FxHashSet::default();
         let mut declarations = FxHashMap::default();
         let mut work = 0usize;
@@ -77,8 +79,7 @@ impl Solver {
             let TermKind::DtConstructor { constructor, args } = &data.kind else {
                 continue;
             };
-            if let std::collections::hash_map::Entry::Vacant(entry) = declarations.entry(data.sort)
-            {
+            if let hash_map::Entry::Vacant(entry) = declarations.entry(data.sort) {
                 entry.insert(super::super::dt_axioms::resolve_decl(data.sort, manager)?);
             }
             let declaration = declarations.get(&data.sort)?;

@@ -369,9 +369,13 @@ impl SortManager {
             float64_sort_cached: None,
             float128_sort_cached: None,
             aliases: FxHashMap::default(),
+            #[cfg(feature = "std")]
             interner: crate::interner::Rodeo::with_hasher(
                 crate::interner::FxBuildHasherDbg::default(),
             ),
+            // The `no_std` interner has no hasher to take.
+            #[cfg(not(feature = "std"))]
+            interner: crate::interner::Rodeo::default(),
             parametric_decls: FxHashMap::default(),
             parametric_defs: FxHashMap::default(),
             datatypes: FxHashMap::default(),

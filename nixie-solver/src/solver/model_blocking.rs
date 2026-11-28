@@ -81,6 +81,8 @@
 //! search is the user's `timeout_ms`'s business" – so the round budget is the
 //! only bound here, with no `affordable` gate.)
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_sat::{LBool, Lit, Var};
 
 use super::Solver;

@@ -3,6 +3,8 @@
 //! `std`-gated upstream too, so both feature builds carry it.
 
 use super::Solver;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use crate::solver::types::{Model, SolverResult};
 use nixie_core::ast::{TermId, TermKind, TermManager};
 
@@ -105,7 +107,7 @@ pub(super) fn term_is_integer_sorted_pub(term: TermId, manager: &TermManager) ->
     /// Iterative walk: term depth is input-controlled.
     fn all_int(term: TermId, manager: &TermManager) -> bool {
         let mut stack = vec![term];
-        let mut seen = rustc_hash::FxHashSet::default();
+        let mut seen = FxHashSet::default();
         while let Some(t) = stack.pop() {
             if !seen.insert(t) {
                 continue;

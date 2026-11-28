@@ -178,7 +178,7 @@ pub struct Solver {
     /// Solver-owned rather than thread-local so two solvers on one thread
     /// (two `Context`s in one Python process, say) never read each other's
     /// TermIds – see the memo's doc there.
-    pub(super) blastable_memo: std::cell::RefCell<rustc_hash::FxHashSet<TermId>>,
+    pub(super) blastable_memo: core::cell::RefCell<FxHashSet<TermId>>,
     /// Shared "decide these first" queue for opt-in domain-first branching
     /// (`SolverConfig::enable_domain_first_branching`). Populated by
     /// `push_branch_priority`; read by the SAT engine's external branching
@@ -443,7 +443,7 @@ pub struct Solver {
     /// trailed (stale high counts can only disable the deferral, i.e. keep
     /// the default eager blast – the conservative direction, same stance
     /// as `has_bv_wide_mul`).
-    pub(super) bv_elim_var_occurrences: rustc_hash::FxHashMap<TermId, u32>,
+    pub(super) bv_elim_var_occurrences: FxHashMap<TermId, u32>,
     /// Assertions whose eager circuit linking was deferred by the
     /// elim-uncnstr deferral bet (see `bv_elim_defer_eager_blast`): paid
     /// back by `bv_restore_deferred_circuits` when the dispatch declines.
@@ -766,10 +766,10 @@ pub struct Solver {
     /// walk skips proven subtrees instead of re-walking every shared
     /// meganode prefix (same shape as `blastable_memo`; solver-owned
     /// because TermIds are manager-relative).
-    pub(super) array_free_memo: std::cell::RefCell<rustc_hash::FxHashSet<TermId>>,
+    pub(super) array_free_memo: core::cell::RefCell<FxHashSet<TermId>>,
     /// Shared budget for independent model certificates.
     pub(super) certified_array_model: Option<FxHashMap<TermId, TermId>>,
-    completion_work: std::sync::Arc<array_completion_certify::CompletionWork>,
+    completion_work: Arc<array_completion_certify::CompletionWork>,
     replaced_candidate: Option<array_completion_certify::ReplacedCandidate>,
     candidate_certified_as_printed: bool,
     /// Incremental array-theory bookkeeping (Stage 1 of
@@ -919,7 +919,7 @@ pub struct Solver {
     /// the collision `Undetermined` (a collision must never veto a `not (=
     /// ..)` candidate – see `combine_eq`).  Saved/restored around the
     /// certificate's evaluations; evaluation-local, never trailed.
-    pub(super) eq_collision_verifies: std::cell::Cell<bool>,
+    pub(super) eq_collision_verifies: core::cell::Cell<bool>,
     /// The certificate's δ-instantiation (`real + δ₀·delta` concretizes the
     /// strict-bound deltas – the same trick as the dive leaf's snapshot,
     /// item 90): computed once per [`Solver::model_certifies_assertions`]
@@ -927,7 +927,7 @@ pub struct Solver {
     /// positive δ₀ exists (a point that violates its own strict bounds –
     /// the certificate then reads without instantiation and the boundary
     /// comparisons soften as ever).  Evaluation-local, never trailed.
-    pub(super) certify_delta0: std::cell::RefCell<Option<num_rational::BigRational>>,
+    pub(super) certify_delta0: core::cell::RefCell<Option<num_rational::BigRational>>,
 
     /// Minted CDCL-visible LIA branch atoms (`(>= form k)`, the item-96
     /// channel – see the `LiaBranchRequest` type in the arithmetic solver).
@@ -979,14 +979,13 @@ pub struct Solver {
     /// cleared on entry to every nonlinear dispatch and invalidated by
     /// `invalidate_results` with the rest of the last check's state.
     /// (Ported from upstream v0.3.3.)
-    pub(super) nl_algebraic_values:
-        rustc_hash::FxHashMap<TermId, nixie_theories::nl_witness::NlWitnessValue>,
+    pub(super) nl_algebraic_values: FxHashMap<TermId, nixie_theories::nl_witness::NlWitnessValue>,
     /// `dt.size!` variables whose model entries the CURRENT build actually
     /// re-derived from a reconstructed value (`rederive_size_measures`).
     /// The collision gate consults this: a size side is only in scope when
     /// its value is authoritative (a failed derivation leaves the tableau
     /// default, which is noise for this purpose).
-    pub(super) dt_derived_size_vars: rustc_hash::FxHashSet<TermId>,
+    pub(super) dt_derived_size_vars: FxHashSet<TermId>,
     /// Test-only event log: one entry per ground candidate model, recording
     /// whether `self.model` was still populated when `check_core` reached the
     /// case-split / array-axiom repair paths.
@@ -1071,8 +1070,8 @@ pub(super) const ENCODE_DEPTH_LIMIT: u32 = 512;
 /// [`set_encode_depth_limit`] raises it.  Process-wide and read at every
 /// encode, so it must be set before the first `assert`/`check` (the CLI
 /// sets it once at startup – see `nixie-cli/src/main.rs`).
-static ENCODE_DEPTH_LIMIT_LIVE: std::sync::atomic::AtomicU32 =
-    std::sync::atomic::AtomicU32::new(ENCODE_DEPTH_LIMIT);
+static ENCODE_DEPTH_LIMIT_LIVE: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(ENCODE_DEPTH_LIMIT);
 
 /// Raise the Tseitin encoder's structural depth cap above the 512 default.
 ///
@@ -1085,12 +1084,12 @@ static ENCODE_DEPTH_LIMIT_LIVE: std::sync::atomic::AtomicU32 =
 /// (an input deeper than the cap answers `Unknown`, never a guess) is
 /// unchanged; a too-high value risks a stack-overflow abort instead.
 pub fn set_encode_depth_limit(limit: u32) {
-    ENCODE_DEPTH_LIMIT_LIVE.store(limit, std::sync::atomic::Ordering::Relaxed);
+    ENCODE_DEPTH_LIMIT_LIVE.store(limit, core::sync::atomic::Ordering::Relaxed);
 }
 
 /// The live encoder depth cap (see [`set_encode_depth_limit`]).
 pub(super) fn encode_depth_limit() -> u32 {
-    ENCODE_DEPTH_LIMIT_LIVE.load(std::sync::atomic::Ordering::Relaxed)
+    ENCODE_DEPTH_LIMIT_LIVE.load(core::sync::atomic::Ordering::Relaxed)
 }
 
 /// A fully-evaluated ground value used by the model-verification soundness gate
@@ -1146,7 +1145,7 @@ impl Default for Solver {
 fn term_is_pure_boolean(term: TermId, manager: &TermManager) -> bool {
     const MAX_VISITED: usize = 2_000_000;
     let mut stack = vec![term];
-    let mut visited = rustc_hash::FxHashSet::default();
+    let mut visited = FxHashSet::default();
     while let Some(tid) = stack.pop() {
         if !visited.insert(tid) {
             continue;
@@ -1246,8 +1245,8 @@ impl Solver {
             enable_bve: freeze_collapse,
             enable_equiv_substitution: freeze_collapse,
             enable_inprocessing: config.enable_inprocessing
-                && std::env::var_os("NIXIE_SMT_NO_INPROC").is_none(),
-            inprocessing_interval: std::env::var("NIXIE_SMT_INPROC_INT")
+                && crate::env::var_os("NIXIE_SMT_NO_INPROC").is_none(),
+            inprocessing_interval: crate::env::var("NIXIE_SMT_INPROC_INT")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(config.inprocessing_interval),
@@ -1261,7 +1260,7 @@ impl Solver {
             // The default stays `false` (the measured 91:45 QF_UF decision);
             // this knob exists so that decision can be re-measured after
             // search-core changes without a rebuild.
-            focused_vmtf: std::env::var("NIXIE_SAT_VMTF_FOCUS").is_ok_and(|v| v == "1"),
+            focused_vmtf: crate::env::var("NIXIE_SAT_VMTF_FOCUS").is_ok_and(|v| v == "1"),
             external_branching: if config.enable_domain_first_branching {
                 Some(priority_heuristic)
             } else {
@@ -1280,7 +1279,7 @@ impl Solver {
         // - Symmetry breaking (via SymmetryBreaker)
 
         Self {
-            blastable_memo: std::cell::RefCell::new(rustc_hash::FxHashSet::default()),
+            blastable_memo: core::cell::RefCell::new(FxHashSet::default()),
             user_state: user_propagation::UserState::default(),
             config,
             sat: {
@@ -1378,7 +1377,7 @@ impl Solver {
             bv_terms: FxHashSet::default(),
             has_bv_ring_ops: false,
             has_bv_wide_mul: false,
-            bv_elim_var_occurrences: rustc_hash::FxHashMap::default(),
+            bv_elim_var_occurrences: FxHashMap::default(),
             bv_elim_deferred: Vec::new(),
             bv_preprocess_at_count: usize::MAX,
             bv_preprocess_cache: None,
@@ -1431,9 +1430,9 @@ impl Solver {
             ff_terms_unconstrained: false,
             ff_dispatch_answered: false,
             has_array_ops: false,
-            array_free_memo: std::cell::RefCell::new(rustc_hash::FxHashSet::default()),
+            array_free_memo: core::cell::RefCell::new(FxHashSet::default()),
             certified_array_model: None,
-            completion_work: std::sync::Arc::default(),
+            completion_work: Arc::default(),
             replaced_candidate: None,
             candidate_certified_as_printed: false,
             array_select_terms: Vec::new(),
@@ -1462,14 +1461,14 @@ impl Solver {
             settings_epoch: 0,
             case_split_terms: FxHashSet::default(),
             lia_branch_atoms: FxHashSet::default(),
-            eq_collision_verifies: std::cell::Cell::new(false),
-            certify_delta0: std::cell::RefCell::new(None),
+            eq_collision_verifies: core::cell::Cell::new(false),
+            certify_delta0: core::cell::RefCell::new(None),
             lia_branch_rounds: 0,
             case_split_rounds: 0,
             model_blocking_active: 0,
             model_blocks_nongenuine: 0,
-            dt_derived_size_vars: rustc_hash::FxHashSet::default(),
-            nl_algebraic_values: rustc_hash::FxHashMap::default(),
+            dt_derived_size_vars: FxHashSet::default(),
+            nl_algebraic_values: FxHashMap::default(),
             #[cfg(test)]
             repair_paths_saw_model: Vec::new(),
             arrangement_rounds: 0,
@@ -1671,7 +1670,7 @@ impl Solver {
             // A cached solve spends no search work, but its publication is a
             // new query and must not inherit an expired certificate budget.
             self.completion_work =
-                std::sync::Arc::new(array_completion_certify::CompletionWork::cached_query());
+                Arc::new(array_completion_certify::CompletionWork::cached_query());
             self.check_deadline = (self.config.timeout_ms > 0)
                 .then(|| {
                     nixie_time::Instant::now()
@@ -1683,7 +1682,7 @@ impl Solver {
 
         self.model_euf_snapshot = None;
         self.mbqi.publication_candidate = None;
-        self.completion_work = std::sync::Arc::default();
+        self.completion_work = Arc::default();
         self.certified_array_model = None;
         self.replaced_candidate = None;
         self.candidate_certified_as_printed = false;
@@ -1781,7 +1780,7 @@ impl Solver {
         // sound, but a `Sat` may rest on constraints the truncation lost and
         // must degrade to `Unknown`.
         if result == SolverResult::Sat && self.encode_depth_exceeded {
-            if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+            if crate::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
                 eprintln!("[qround] Sat downgraded: encode depth exceeded");
             }
             self.model = None;
@@ -1802,7 +1801,7 @@ impl Solver {
         // set theory is wired into Nelson-Oppen, a `Sat` over set atoms is not
         // a model of anything.
         if result == SolverResult::Sat && self.set_terms_unconstrained {
-            if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+            if crate::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
                 eprintln!("[qround] Sat downgraded: set terms unconstrained");
             }
             self.model = None;
@@ -1826,7 +1825,7 @@ impl Solver {
             && self.arith_defs_incomplete(manager)
             && !self.nl_dispatch_answered
         {
-            if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+            if crate::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
                 eprintln!("[qround] Sat downgraded: arith defs incomplete");
             }
             self.model = None;
@@ -1882,7 +1881,7 @@ impl Solver {
                         break;
                     }
                     crate::solver::model_eval::CertStatus::Refuted => {
-                        if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                        if crate::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
                             eprintln!("[qround] J5 refuted candidate: blocking + re-solve");
                         }
                         if !self.block_refuted_model_and_rebase() {
@@ -1897,7 +1896,7 @@ impl Solver {
                 }
             }
             if !certified {
-                if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                if crate::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
                     eprintln!("[qround] Sat downgraded: arith big-const abstraction uncertified");
                 }
                 self.model = None;
@@ -1910,7 +1909,7 @@ impl Solver {
         // `Unsat` from a subset of the axioms is still `Unsat`; a `Sat` is a
         // guess and is reported as `Unknown`.
         if result == SolverResult::Sat && self.dt_axioms_incomplete {
-            if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+            if crate::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
                 eprintln!("[qround] Sat downgraded: dt axioms incomplete");
             }
             self.model = None;
@@ -2853,11 +2852,11 @@ impl Solver {
             && !self.bv_terms.is_empty()
             && self.all_assertions_bv_fragment
             && (self.bv_preprocess_at_count != self.assertions.len() || defer_active)
-            && std::env::var("NIXIE_BV_NO_PARITY").is_err()
+            && crate::env::var("NIXIE_BV_NO_PARITY").is_err()
         {
             self.bv_preprocess_at_count = self.assertions.len();
             let pp = self.bv_preprocess_assertions(manager);
-            if std::env::var("NIXIE_PRE_TRACE").is_ok() {
+            if crate::env::var("NIXIE_PRE_TRACE").is_ok() {
                 eprintln!(
                     "[defer] stage4 runs, rewritten={} deferred={}",
                     pp.rewritten.len(),
@@ -2891,7 +2890,7 @@ impl Solver {
             // pop (`deferred_incremental_sequence_matches`).
             let trivially_unsat =
                 bv_preprocess::rewrite_set_trivially_unsat(&pp.rewritten, manager).is_some();
-            if trivially_unsat && std::env::var("NIXIE_PRE_TRACE").is_ok() {
+            if trivially_unsat && crate::env::var("NIXIE_PRE_TRACE").is_ok() {
                 eprintln!(
                     "[defer] stage4 rewrite set trivially unsat – emitting the refutation units"
                 );
@@ -3082,7 +3081,7 @@ impl Solver {
                 && !features.has_uf()
                 && features.num_quantifiers == 0
                 && self.ite_result_terms.is_empty();
-            if std::env::var("NIXIE_DL_TRACE").is_ok() {
+            if crate::env::var("NIXIE_DL_TRACE").is_ok() {
                 eprintln!(
                     "nixie-dl-route\troute={} is_diff_logic={} dense={} has_int={} has_real={} has_uf={} quant={} ite_results={} consts={}",
                     route,
@@ -3392,7 +3391,7 @@ impl Solver {
                 }
                 SatResult::Sat => {
                     #[cfg(debug_assertions)]
-                    if std::env::var("NIXIE_SCAN_VIOL").is_ok() {
+                    if crate::env::var("NIXIE_SCAN_VIOL").is_ok() {
                         theory_manager.debug_scan_theory_model_violations("check_core Sat");
                         theory_manager.debug_scan_congruence_gaps(8);
                     }
@@ -3788,7 +3787,7 @@ impl Solver {
                             // below compares an unreconstructed model
                             // against the original assertions and blocks
                             // into `Unknown` – the first deferred `sat`).
-                            let elims = std::mem::take(&mut self.deferred_eliminations);
+                            let elims = core::mem::take(&mut self.deferred_eliminations);
                             // `build_model` completed the eliminated
                             // variables with sort defaults (they carry no
                             // circuits in the rewritten-only core); clear
@@ -4248,7 +4247,7 @@ impl Solver {
                         && self.mbqi.hard_stop_when_exhausted()
                         && self.mbqi.round_limit_reached()
                     {
-                        if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                        if crate::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
                             eprintln!(
                                 "[mbqi-limit] stop: rounds={} max_hard={}",
                                 self.mbqi.rounds_consumed(),
@@ -4309,14 +4308,14 @@ impl Solver {
                             self.sat.add_clause(lits);
                         }
                     }
-                    if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                    if crate::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
                         let tag = self.debug_tag.unwrap_or("");
                         let desc = match &mbqi_result {
                             MBQIResult::NoQuantifiers => "NoQuantifiers".to_string(),
                             MBQIResult::Satisfied => "Satisfied".to_string(),
                             MBQIResult::NewInstantiations(v) => {
                                 let mut reasons = String::new();
-                                if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+                                if crate::env::var_os("NIXIE_DEBUG_MC").is_some() {
                                     let mut counts: FxHashMap<&str, usize> = FxHashMap::default();
                                     for inst in v {
                                         *counts
@@ -4375,7 +4374,7 @@ impl Solver {
                         MBQIResult::Satisfied => {
                             // All quantifiers satisfied by the current model.
                             if self.downgrade_if_injective_model_dishonest(manager) {
-                                if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                                if crate::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
                                     eprintln!("[qround] Satisfied downgraded: injective-dishonest");
                                 }
                                 {
@@ -4396,7 +4395,7 @@ impl Solver {
                             // ...)` forgotten).
                             if self.unowned_quantifier_seen && !self.certify_quantified_sat(manager)
                             {
-                                if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                                if crate::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
                                     eprintln!(
                                         "[qround] Satisfied downgraded: unowned quantifier uncertified"
                                     );
@@ -5055,7 +5054,7 @@ impl Solver {
     #[must_use]
     pub fn nl_algebraic_values(
         &self,
-    ) -> &rustc_hash::FxHashMap<TermId, nixie_theories::nl_witness::NlWitnessValue> {
+    ) -> &FxHashMap<TermId, nixie_theories::nl_witness::NlWitnessValue> {
         &self.nl_algebraic_values
     }
 
@@ -5215,7 +5214,7 @@ impl Solver {
         if self.deferred_bv_asserts.is_empty() {
             return;
         }
-        let deferred = std::mem::take(&mut self.deferred_bv_asserts);
+        let deferred = core::mem::take(&mut self.deferred_bv_asserts);
         for d in deferred {
             self.emit_assertion_clauses(d, manager);
             self.link_or_blast_bv_circuits(d, manager);
@@ -5748,8 +5747,8 @@ impl Solver {
 pub(crate) fn freeze_collapse_enabled() -> bool {
     // Memoized: consulted per check over the constraint vocabulary, and env
     // reads are linear scans over the environment.
-    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("NIXIE_FREEZE_COLLAPSE").as_deref() != Ok("0"))
+    static FLAG: crate::prelude::OnceLock<bool> = crate::prelude::OnceLock::new();
+    *FLAG.get_or_init(|| crate::env::var("NIXIE_FREEZE_COLLAPSE").as_deref() != Ok("0"))
 }
 
 mod assert_fold;

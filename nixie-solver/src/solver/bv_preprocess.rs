@@ -49,6 +49,8 @@
 //! `flatten_product`, bitwise chains) are worklist loops, never native
 //! recursion, per the repository-wide stack-safety rule.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use num_bigint::BigInt;
 use num_integer::Integer;
@@ -107,19 +109,19 @@ impl Mono {
 /// are rewritten once.
 #[derive(Debug, Default)]
 pub(super) struct BvPreprocessor {
-    memo: rustc_hash::FxHashMap<TermId, TermId>,
+    memo: FxHashMap<TermId, TermId>,
     /// Memo of the distributed polynomial of a term (`None` = not computable
     /// within the bounds).  Populated lazily by `poly_of`.
-    poly_memo: rustc_hash::FxHashMap<TermId, Option<Vec<Mono>>>,
+    poly_memo: FxHashMap<TermId, Option<Vec<Mono>>>,
     /// Memo of the Boolean reading of a 1-bit expression (`None` = not
     /// liftable).  Populated lazily by [`BvPreprocessor::to_bool`].
-    bool_memo: rustc_hash::FxHashMap<TermId, Option<TermId>>,
+    bool_memo: FxHashMap<TermId, Option<TermId>>,
     /// Bit-permutation wiring (the `bitrev` lever): per-assertion
     /// activation, set from the const-shift count of the root (see
     /// [`BvPreprocessor::rewrite`]).
     wiring: bool,
     /// Memo of the const-shift count of a subtree (the activation scan).
-    wiring_scan: rustc_hash::FxHashMap<TermId, u32>,
+    wiring_scan: FxHashMap<TermId, u32>,
     /// Created-node budget of the wiring rules for the current assertion:
     /// the normal form is an optional equivalence – on exhaustion every
     /// rule falls back to the plain rebuild (sound either way).
@@ -131,7 +133,7 @@ pub(super) struct BvPreprocessor {
     /// concat subterms exponentially (a hash-consed ~1024-node ladder DAG
     /// measured 524 799 "segments"), and per-window spine descents are
     /// quadratic in the spine depth.
-    spine_cache: rustc_hash::FxHashMap<TermId, Option<std::rc::Rc<[TermId]>>>,
+    spine_cache: FxHashMap<TermId, Option<Rc<[TermId]>>>,
 }
 
 impl BvPreprocessor {
@@ -220,11 +222,11 @@ impl BvPreprocessor {
         // experiment behind `NIXIE_BV_SHIFT_WIRING` defaulted off for
         // exactly that), so the cascade keeps non-ladder goals
         // bit-identical to the old path.
-        self.wiring = std::env::var("NIXIE_BV_WIRING_FORCE").is_ok()
+        self.wiring = crate::env::var("NIXIE_BV_WIRING_FORCE").is_ok()
             || self.const_shift_count(root, manager) >= WIRING_MIN_CONST_SHIFTS;
         self.wiring_budget = WIRING_NODE_BUDGET;
         let out = self.rewrite_walk(root, manager);
-        if self.wiring && std::env::var("NIXIE_PRE_TRACE").is_ok() {
+        if self.wiring && crate::env::var("NIXIE_PRE_TRACE").is_ok() {
             eprintln!("[wire] assertion wired, budget_left={}", self.wiring_budget);
         }
         out
@@ -602,7 +604,7 @@ impl BvPreprocessor {
             TermKind::Distinct(ref args) => {
                 let rewritten: Vec<TermId> = args.iter().map(kid).collect();
                 // `distinct` with a repeated argument is false.
-                let mut seen = std::collections::BTreeSet::new();
+                let mut seen = BTreeSet::new();
                 if rewritten.iter().any(|t| !seen.insert(*t)) {
                     return manager.mk_false();
                 }
@@ -881,12 +883,7 @@ impl BvPreprocessor {
     /// its widths do not bookkeep to `w`, or the materialization exceeds
     /// the share cap (`2w + 64` segments) – diamond-shared concat DAGs
     /// expand exponentially and are declined, never mis-flattened.
-    fn spine_of(
-        &mut self,
-        t: TermId,
-        w: u32,
-        manager: &TermManager,
-    ) -> Option<std::rc::Rc<[TermId]>> {
+    fn spine_of(&mut self, t: TermId, w: u32, manager: &TermManager) -> Option<Rc<[TermId]>> {
         if let Some(cached) = self.spine_cache.get(&t) {
             return cached.clone();
         }
@@ -919,7 +916,7 @@ impl BvPreprocessor {
                             // A leaf segment: its own single-element list.
                             self.spine_cache.insert(
                                 node,
-                                Some(std::iter::once(node).collect::<Vec<_>>().into()),
+                                Some(core::iter::once(node).collect::<Vec<_>>().into()),
                             );
                         }
                     }
@@ -1441,7 +1438,7 @@ fn ring_poly(
     term: TermId,
     width: u32,
     manager: &TermManager,
-    memo: &mut rustc_hash::FxHashMap<TermId, Option<Vec<Mono>>>,
+    memo: &mut FxHashMap<TermId, Option<Vec<Mono>>>,
 ) -> Option<Vec<Mono>> {
     if let Some(cached) = memo.get(&term) {
         return cached.clone();
@@ -1661,7 +1658,7 @@ fn slice_direct(hi: u32, lo: u32, t: TermId, manager: &mut TermManager) -> TermI
 /// the builder during the left-associated rebuild).  `None` when the
 /// list's width bookkeeping fails.
 fn serve_window(
-    spine: &Option<std::rc::Rc<[TermId]>>,
+    spine: &Option<Rc<[TermId]>>,
     w: u32,
     hi: u32,
     lo: u32,
@@ -1910,8 +1907,8 @@ fn product_term(
 /// caller turns the equality into `true`.
 fn cancel_monomials(lhs: &mut Vec<Mono>, rhs: &mut Vec<Mono>, width: u32) {
     let modulus = modulus(width);
-    let mut l = combine_like(std::mem::take(lhs), &modulus);
-    let mut r = combine_like(std::mem::take(rhs), &modulus);
+    let mut l = combine_like(core::mem::take(lhs), &modulus);
+    let mut r = combine_like(core::mem::take(rhs), &modulus);
     // Both sides are sorted by key after combine_like.
     let mut new_l = Vec::with_capacity(l.len());
     let mut new_r = Vec::with_capacity(r.len());
@@ -2342,8 +2339,7 @@ fn flatten_bitwise(a: TermId, b: TermId, manager: &mut TermManager, op: BitwiseO
         BitwiseOp::Xor => {
             let mut acc = BigInt::zero();
             // Parity of identical non-constant factors.
-            let mut counts: std::collections::BTreeMap<TermId, bool> =
-                std::collections::BTreeMap::new();
+            let mut counts: BTreeMap<TermId, bool> = BTreeMap::new();
             for f in factors {
                 if let Some(v) = const_bits(&f, manager) {
                     acc ^= v % &modulus;
@@ -2480,8 +2476,8 @@ impl Solver {
             .map(|&eq| (eq, eq))
             .chain(self.assertions.iter().map(|&a| (a, a)))
             .collect();
-        let tr = std::env::var("NIXIE_PRE_TRACE").is_ok();
-        let t0 = std::time::Instant::now();
+        let tr = crate::env::var("NIXIE_PRE_TRACE").is_ok();
+        let t0 = nixie_time::Instant::now();
         if tr {
             eprintln!("[pre] stage0 pairs={} t0", pairs.len());
         }
@@ -2613,7 +2609,7 @@ impl Solver {
         // `spear` goals with ~400 definition eliminations, flipping `sat`
         // verdicts to `unknown`.)
         for _round in 0..=eliminations.len() {
-            let assignments: rustc_hash::FxHashMap<TermId, TermId> =
+            let assignments: FxHashMap<TermId, TermId> =
                 model.assignments().iter().map(|(&t, &v)| (t, v)).collect();
             // One substitution session per ROUND: the mapping is fixed
             // within it, so every definition substitutes through a shared
@@ -2667,7 +2663,7 @@ impl Solver {
 /// core-preserving (each conjunct keeps the parent as its origin).
 fn normalize_assertions(pairs: &mut Vec<(TermId, TermId)>, manager: &TermManager) {
     let mut out: Vec<(TermId, TermId)> = Vec::with_capacity(pairs.len());
-    let mut work: std::collections::VecDeque<(TermId, TermId)> = pairs.drain(..).collect();
+    let mut work: VecDeque<(TermId, TermId)> = pairs.drain(..).collect();
     while let Some((t, origin)) = work.pop_front() {
         let kind = manager.get(t).map(|td| td.kind.clone());
         match kind {
@@ -2690,10 +2686,16 @@ fn normalize_assertions(pairs: &mut Vec<(TermId, TermId)>, manager: &TermManager
     *pairs = out;
 }
 
+#[cfg(feature = "std")]
 thread_local! {
     static BUDGET_BREAKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static MEGANODE_SKIPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
+/// The same counters without threads: the one thread there is shares them.
+#[cfg(not(feature = "std"))]
+static BUDGET_BREAKS: nixie_core::no_std::LocalU64 = nixie_core::no_std::LocalU64::new(0);
+#[cfg(not(feature = "std"))]
+static MEGANODE_SKIPS: nixie_core::no_std::LocalU64 = nixie_core::no_std::LocalU64::new(0);
 
 /// Eliminate variable definitions from an assertion list (Z3's
 /// `solve_eqs` tactic, the step that dissolves `wienand-cav2008` and the
@@ -2732,11 +2734,10 @@ fn solve_equations(
     let mut eliminations: Vec<(TermId, TermId)> = Vec::new();
     // One memo for the whole call (see `mentions_memo`): the pair terms
     // are stable across rounds, so every (body, var) walk happens once.
-    let mut mentions_memo_map: rustc_hash::FxHashMap<(TermId, TermId), bool> =
-        rustc_hash::FxHashMap::default();
+    let mut mentions_memo_map: FxHashMap<(TermId, TermId), bool> = FxHashMap::default();
     for round in 0..MAX_ROUNDS {
-        let tr = std::env::var("NIXIE_PRE_TRACE").is_ok();
-        let rt0 = std::time::Instant::now();
+        let tr = crate::env::var("NIXIE_PRE_TRACE").is_ok();
+        let rt0 = nixie_time::Instant::now();
         // ======== collect candidate definitions ========
         // Variables defined by the nullary define-fun equations (the head
         // of `pairs` in round 0).  Their bodies are fully inlined chains
@@ -2746,14 +2747,14 @@ fn solve_equations(
         // apply, and model replay evaluates each definition with its
         // dependencies already assigned (the worklist resolves them in
         // topological order).  They still serve as definition *sources*.
-        let mut define_vars: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+        let mut define_vars: FxHashSet<TermId> = FxHashSet::default();
         let define_pair_end = if round == 0 {
             n_define_pairs.min(pairs.len())
         } else {
             0
         };
-        let mut defs: rustc_hash::FxHashMap<TermId, TermId> = rustc_hash::FxHashMap::default();
-        let mut conflicted: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+        let mut defs: FxHashMap<TermId, TermId> = FxHashMap::default();
+        let mut conflicted: FxHashSet<TermId> = FxHashSet::default();
         for (idx, &(a, _)) in pairs.iter().enumerate() {
             if let Some(TermKind::Eq(lhs, rhs)) = manager.get(a).map(|t| &t.kind).cloned() {
                 if idx < define_pair_end
@@ -2800,25 +2801,24 @@ fn solve_equations(
         // to zero, and the defining substitution is applied to a body only
         // when one of *its* variables resolves.
         let mut pending: Vec<(TermId, TermId)> = defs.into_iter().collect();
-        let mut resolved: rustc_hash::FxHashMap<TermId, TermId> = rustc_hash::FxHashMap::default();
-        let index_of: rustc_hash::FxHashMap<TermId, usize> = pending
+        let mut resolved: FxHashMap<TermId, TermId> = FxHashMap::default();
+        let index_of: FxHashMap<TermId, usize> = pending
             .iter()
             .enumerate()
             .map(|(i, (x, _))| (*x, i))
             .collect();
         // var -> pending indices whose body mentions it (each list holds
         // distinct indices; a body never lists the same var twice).
-        let mut occurrences: rustc_hash::FxHashMap<TermId, Vec<usize>> =
-            rustc_hash::FxHashMap::default();
+        let mut occurrences: FxHashMap<TermId, Vec<usize>> = FxHashMap::default();
         // Distinct-pending-variable reference count per body; 0 = ready.
         let mut unmet: Vec<usize> = vec![0; pending.len()];
         // Per-round memo of subtree nodes proven free of tracked variables
         // (see `collect_var_mentions`): with chained definitions the
         // bodies share the entire inlined prefix, and re-walking that
         // prefix per body is quadratic.
-        let mut clean: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+        let mut clean: FxHashSet<TermId> = FxHashSet::default();
         for (i, (_, t)) in pending.iter().enumerate() {
-            let mut seen_here = rustc_hash::FxHashSet::default();
+            let mut seen_here = FxHashSet::default();
             collect_var_mentions(*t, &index_of, manager, &mut seen_here, &mut clean);
             unmet[i] = seen_here.len();
             for v in seen_here {
@@ -2844,7 +2844,7 @@ fn solve_equations(
         const MAX_SUBSTITUTED_NODES: usize = 8_000_000;
         let mut substitutions = 0usize;
         let mut substituted_nodes = 0usize;
-        let mut size_memo: rustc_hash::FxHashMap<TermId, usize> = rustc_hash::FxHashMap::default();
+        let mut size_memo: FxHashMap<TermId, usize> = FxHashMap::default();
         // Whether pending body `i` has been substituted into since
         // collection: only a substituted body can mention the variable it
         // is being resolved to (its collection-time mention set – possibly
@@ -2854,8 +2854,7 @@ fn solve_equations(
         let mut touched = vec![false; pending.len()];
         // Deterministic FIFO worklist of ready bodies (initial pass in
         // index order).
-        let mut worklist: std::collections::VecDeque<usize> =
-            (0..pending.len()).filter(|&i| unmet[i] == 0).collect();
+        let mut worklist: VecDeque<usize> = (0..pending.len()).filter(|&i| unmet[i] == 0).collect();
         if tr {
             eprintln!("[eqs] round {} mentions {:?}", round, rt0.elapsed());
         }
@@ -2881,7 +2880,7 @@ fn solve_equations(
             };
             // One single-variable substitution per affected body: exactly
             // the pass the naive version did for *every* pending body.
-            let single = std::iter::once((x, t)).collect::<rustc_hash::FxHashMap<_, _>>();
+            let single = core::iter::once((x, t)).collect::<FxHashMap<_, _>>();
             for j in affected {
                 unmet[j] -= 1;
                 let (xj, tj) = pending[j];
@@ -2958,8 +2957,8 @@ fn solve_equations(
             }
         }
         // ======== apply: substitute everywhere, drop resolved definitions ========
-        let resolved_vars: rustc_hash::FxHashSet<TermId> = resolved.keys().copied().collect();
-        let mut def_indices: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
+        let resolved_vars: FxHashSet<TermId> = resolved.keys().copied().collect();
+        let mut def_indices: FxHashSet<usize> = FxHashSet::default();
         // Nullary define-fun equations are definitionally satisfiable (the
         // named constant occurs nowhere in the user assertions – the parser
         // inlines every use), so dropping them is answer-preserving in both
@@ -3040,7 +3039,7 @@ fn solve_ring_equations(
     fn poly_diff(
         a: TermId,
         manager: &TermManager,
-        memo: &mut rustc_hash::FxHashMap<TermId, Option<Vec<Mono>>>,
+        memo: &mut FxHashMap<TermId, Option<Vec<Mono>>>,
     ) -> Option<(u32, Vec<Mono>)> {
         let Some(TermKind::Eq(l, r)) = manager.get(a).map(|t| t.kind.clone()) else {
             return None;
@@ -3072,8 +3071,7 @@ fn solve_ring_equations(
     }
 
     let mut eliminations: Vec<(TermId, TermId)> = Vec::new();
-    let mut memo: rustc_hash::FxHashMap<TermId, Option<Vec<Mono>>> =
-        rustc_hash::FxHashMap::default();
+    let mut memo: FxHashMap<TermId, Option<Vec<Mono>>> = FxHashMap::default();
 
     // ======== incremental index over the working set ========
     //
@@ -3097,12 +3095,11 @@ fn solve_ring_equations(
     // contains free BV variable `v` (an occurrence count of assertions, the
     // same quantity the historical per-round recount computed).
     let mut pair_poly: Vec<Option<(u32, Vec<Mono>)>> = Vec::with_capacity(pairs.len());
-    let mut pair_vars: Vec<rustc_hash::FxHashSet<TermId>> = Vec::with_capacity(pairs.len());
-    let mut mentions: rustc_hash::FxHashMap<TermId, rustc_hash::FxHashSet<usize>> =
-        rustc_hash::FxHashMap::default();
+    let mut pair_vars: Vec<FxHashSet<TermId>> = Vec::with_capacity(pairs.len());
+    let mut mentions: FxHashMap<TermId, FxHashSet<usize>> = FxHashMap::default();
     for (idx, &(a, _)) in pairs.iter().enumerate() {
         pair_poly.push(poly_diff(a, manager, &mut memo));
-        let mut vars = rustc_hash::FxHashSet::default();
+        let mut vars = FxHashSet::default();
         collect_free_bv_vars(a, manager, &mut vars);
         for v in &vars {
             mentions.entry(*v).or_default().insert(idx);
@@ -3110,9 +3107,9 @@ fn solve_ring_equations(
         pair_vars.push(vars);
     }
 
-    let mut trace_rounds = std::env::var("NIXIE_PRE_TRACE").is_ok();
+    let mut trace_rounds = crate::env::var("NIXIE_PRE_TRACE").is_ok();
     let _ = &mut trace_rounds;
-    let trace_t0 = std::time::Instant::now();
+    let trace_t0 = nixie_time::Instant::now();
     let mut trace_n = 0usize;
     loop {
         if eliminations.len() >= MAX_ELIMS {
@@ -3214,7 +3211,7 @@ fn solve_ring_equations(
 
         // ======== drop the solved equation, substitute everywhere else ========
         drop_pair(eq_idx, pairs, &mut pair_poly, &mut pair_vars, &mut mentions);
-        let single = std::iter::once((var, def)).collect::<rustc_hash::FxHashMap<TermId, TermId>>();
+        let single = core::iter::once((var, def)).collect::<FxHashMap<TermId, TermId>>();
         // Substitute into exactly the assertions that mention `var` (the
         // defining equation was just dropped).  Iterate over a snapshot:
         // the substitution rewrites existing indices' terms but never adds
@@ -3227,9 +3224,9 @@ fn solve_ring_equations(
             let new_a = manager.substitute(a_j, &single);
             pairs[j].0 = new_a;
             // Refresh the index for the rewritten assertion only.
-            let mut new_vars = rustc_hash::FxHashSet::default();
+            let mut new_vars = FxHashSet::default();
             collect_free_bv_vars(new_a, manager, &mut new_vars);
-            let old_vars = std::mem::replace(&mut pair_vars[j], new_vars);
+            let old_vars = core::mem::replace(&mut pair_vars[j], new_vars);
             for v in old_vars.difference(&pair_vars[j]) {
                 if let Some(s) = mentions.get_mut(v) {
                     s.remove(&j);
@@ -3261,8 +3258,8 @@ fn drop_pair(
     idx: usize,
     pairs: &mut Vec<(TermId, TermId)>,
     pair_poly: &mut Vec<Option<(u32, Vec<Mono>)>>,
-    pair_vars: &mut Vec<rustc_hash::FxHashSet<TermId>>,
-    mentions: &mut rustc_hash::FxHashMap<TermId, rustc_hash::FxHashSet<usize>>,
+    pair_vars: &mut Vec<FxHashSet<TermId>>,
+    mentions: &mut FxHashMap<TermId, FxHashSet<usize>>,
 ) {
     let last = pairs.len() - 1;
     // Un-index the dropped pair's variables.
@@ -3318,12 +3315,8 @@ fn is_free_bv_var(term: TermId, manager: &TermManager) -> bool {
 }
 
 /// Collect the free bit-vector variables of `term` (one DAG walk).
-fn collect_free_bv_vars(
-    term: TermId,
-    manager: &TermManager,
-    out: &mut rustc_hash::FxHashSet<TermId>,
-) {
-    let mut seen = rustc_hash::FxHashSet::default();
+fn collect_free_bv_vars(term: TermId, manager: &TermManager, out: &mut FxHashSet<TermId>) {
+    let mut seen = FxHashSet::default();
     let mut stack = vec![term];
     while let Some(t) = stack.pop() {
         if !seen.insert(t) {
@@ -3347,10 +3340,10 @@ fn collect_free_bv_vars(
 fn collect_def_candidates(
     lhs: TermId,
     rhs: TermId,
-    defs: &mut rustc_hash::FxHashMap<TermId, TermId>,
-    conflicted: &mut rustc_hash::FxHashSet<TermId>,
+    defs: &mut FxHashMap<TermId, TermId>,
+    conflicted: &mut FxHashSet<TermId>,
     manager: &TermManager,
-    mentions_memo_map: &mut rustc_hash::FxHashMap<(TermId, TermId), bool>,
+    mentions_memo_map: &mut FxHashMap<(TermId, TermId), bool>,
 ) {
     if let Some(TermKind::And(args)) = manager.get(lhs).map(|t| &t.kind).cloned() {
         for &arg in &args {
@@ -3412,7 +3405,7 @@ fn mentions_memo(
     t: TermId,
     x: TermId,
     manager: &TermManager,
-    memo: &mut rustc_hash::FxHashMap<(TermId, TermId), bool>,
+    memo: &mut FxHashMap<(TermId, TermId), bool>,
 ) -> bool {
     if let Some(&hit) = memo.get(&(t, x)) {
         return hit;
@@ -3437,11 +3430,7 @@ fn mentions_memo(
 /// (The first draft summed true DAG shares bottom-up – that is not
 /// compositional, and the debug profile caught the overflow the release
 /// profile silently truncated.)
-fn dag_size(
-    term: TermId,
-    manager: &TermManager,
-    memo: &mut rustc_hash::FxHashMap<TermId, usize>,
-) -> usize {
+fn dag_size(term: TermId, manager: &TermManager, memo: &mut FxHashMap<TermId, usize>) -> usize {
     use nixie_core::ast::traversal::get_children;
     enum Step {
         Enter(TermId),
@@ -3478,7 +3467,7 @@ fn dag_size(
                     memo.insert(t, 1);
                     continue;
                 };
-                let total: usize = std::iter::once(1usize)
+                let total: usize = core::iter::once(1usize)
                     .chain(
                         get_children(&data.kind)
                             .iter()
@@ -3494,15 +3483,15 @@ fn dag_size(
 
 fn collect_var_mentions(
     term: TermId,
-    tracked: &rustc_hash::FxHashMap<TermId, usize>,
+    tracked: &FxHashMap<TermId, usize>,
     manager: &TermManager,
-    out: &mut rustc_hash::FxHashSet<TermId>,
-    clean: &mut rustc_hash::FxHashSet<TermId>,
+    out: &mut FxHashSet<TermId>,
+    clean: &mut FxHashSet<TermId>,
 ) {
     if tracked.is_empty() {
         return;
     }
-    let mut seen = rustc_hash::FxHashSet::default();
+    let mut seen = FxHashSet::default();
     let mut stack = vec![term];
     let mut hits = false;
     while let Some(t) = stack.pop() {
@@ -3653,8 +3642,7 @@ pub(super) fn rewrite_set_trivially_unsat(
         }
     }
 
-    let mut pins: rustc_hash::FxHashMap<TermId, (PinValue, usize)> =
-        rustc_hash::FxHashMap::default();
+    let mut pins: FxHashMap<TermId, (PinValue, usize)> = FxHashMap::default();
     for (index, &assertion) in rewritten.iter().enumerate() {
         if manager
             .get(assertion)
@@ -3686,7 +3674,7 @@ fn var_def_operand(
     lhs: TermId,
     rhs: TermId,
     manager: &TermManager,
-    mentions_memo_map: &mut rustc_hash::FxHashMap<(TermId, TermId), bool>,
+    mentions_memo_map: &mut FxHashMap<(TermId, TermId), bool>,
 ) -> Option<(TermId, TermId)> {
     let data = manager.get(lhs)?;
     if !matches!(data.kind, TermKind::Var(_)) {

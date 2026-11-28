@@ -5,7 +5,8 @@
 //! circular crate dependency. The solver calls `select` when it has a candidate
 //! list; the heuristic may return `None` to fall back to the built-in strategy.
 
-use std::sync::{Arc, Mutex};
+#[allow(unused_imports)]
+use crate::prelude::{Arc, Box, Mutex};
 
 use crate::literal::Var;
 
@@ -55,8 +56,32 @@ pub trait BranchingHeuristic: Send + Sync {
 /// This is `Arc<Mutex<dyn BranchingHeuristic>>`, which is both `Clone` and
 /// `Send + Sync`. Storing it in `SolverConfig` (which derives `Clone`) works
 /// because `Arc` is `Clone` and `Mutex<dyn Trait>` is `Send + Sync` when
-/// `dyn Trait: Send + Sync`.
+/// `dyn Trait: Send + Sync`. Build one with [`boxed_heuristic`].
+#[cfg(feature = "std")]
 pub type BoxedBranchingHeuristic = Arc<Mutex<dyn BranchingHeuristic>>;
+
+/// The `no_std` form of [`BoxedBranchingHeuristic`]: `Arc<Mutex<Box<dyn
+/// BranchingHeuristic>>>`. Turning a sized `Mutex<T>` into `Mutex<dyn Trait>`
+/// is an unsized coercion (`CoerceUnsized`, unstable on purpose) that only
+/// `std`'s `Mutex` performs, so without `std` the erasure happens one layer
+/// in, on the box. The lock's guard reaches the heuristic through the same
+/// dereferences either way.
+#[cfg(not(feature = "std"))]
+pub type BoxedBranchingHeuristic = Arc<Mutex<Box<dyn BranchingHeuristic>>>;
+
+/// Wraps `heuristic` as a [`BoxedBranchingHeuristic`].
+#[cfg(feature = "std")]
+pub fn boxed_heuristic<H: BranchingHeuristic + 'static>(heuristic: H) -> BoxedBranchingHeuristic {
+    Arc::new(Mutex::new(heuristic))
+}
+
+/// Wraps `heuristic` as a [`BoxedBranchingHeuristic`].
+#[cfg(not(feature = "std"))]
+pub fn boxed_heuristic<H: BranchingHeuristic + 'static>(heuristic: H) -> BoxedBranchingHeuristic {
+    Arc::new(Mutex::new(
+        Box::new(heuristic) as Box<dyn BranchingHeuristic>
+    ))
+}
 
 #[cfg(test)]
 mod tests {

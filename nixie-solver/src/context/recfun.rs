@@ -345,13 +345,13 @@ impl Context {
             self.solver.push();
             self.recfun.pending_pop = true;
             for &inst in &unfolding.instances {
-                if std::env::var("NIXIE_RECFUN_TRACE").is_ok() {
+                if crate::env::var("NIXIE_RECFUN_TRACE").is_ok() {
                     let pr = nixie_core::smtlib::Printer::new(&self.terms);
                     eprintln!("[recfun-inst] {}", pr.print_term(inst));
                 }
                 self.solver.assert(inst, &mut self.terms);
             }
-            let dbg = std::env::var("NIXIE_RECFUN_TRACE").is_ok();
+            let dbg = crate::env::var("NIXIE_RECFUN_TRACE").is_ok();
             let round_result = self.check_round(&assumptions);
             if dbg {
                 eprintln!(
@@ -482,7 +482,7 @@ impl Context {
     /// nothing here may recurse natively.
     fn unfold_recfun(&mut self, roots: &[TermId], learned: &[TermId], fuel: usize) -> Unfolding {
         let mut seen: FxHashSet<TermId> = FxHashSet::default();
-        let mut queue: std::collections::VecDeque<TermId> = std::collections::VecDeque::new();
+        let mut queue: VecDeque<TermId> = VecDeque::new();
 
         // Concrete applications a rejected model taught us about, first: their
         // instances are what refute that model, so they must not be squeezed

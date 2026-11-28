@@ -11,8 +11,7 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-#[cfg(feature = "std")]
-use std::sync::OnceLock;
+use crate::prelude::OnceLock;
 
 /// The traced literal code, when the env is armed.
 #[cfg(feature = "std")]
@@ -44,7 +43,7 @@ pub(crate) fn armed() -> bool {
 /// The `NIXIE_CSR_MUT_TRACE=all` global-stream mode, read once.
 fn all_mode() -> bool {
     static ALL: OnceLock<bool> = OnceLock::new();
-    *ALL.get_or_init(|| std::env::var("NIXIE_CSR_MUT_TRACE").as_deref() == Ok("all"))
+    *ALL.get_or_init(|| crate::env::var("NIXIE_CSR_MUT_TRACE").as_deref() == Ok("all"))
 }
 
 /// The global mutation-op counter (strictly increasing per logged event;
@@ -81,7 +80,7 @@ pub(crate) fn code_matches(code: usize) -> bool {
 /// The `NIXIE_CWRITE=<id>` clause-watch target (cached; `None` when unset).
 #[cfg(feature = "std")]
 pub fn cwrite_target() -> Option<usize> {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static T: OnceLock<Option<usize>> = OnceLock::new();
     *T.get_or_init(|| {
         std::env::var("NIXIE_CWRITE")

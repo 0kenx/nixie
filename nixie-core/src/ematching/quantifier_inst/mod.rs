@@ -470,8 +470,8 @@ mod tests {
         let bool_sort = manager.sorts.bool_sort;
 
         // Create ground terms: f(a) and f(b)
-        let a = manager.mk_apply("a", std::iter::empty::<TermId>(), int_sort);
-        let b = manager.mk_apply("b", std::iter::empty::<TermId>(), int_sort);
+        let a = manager.mk_apply("a", core::iter::empty::<TermId>(), int_sort);
+        let b = manager.mk_apply("b", core::iter::empty::<TermId>(), int_sort);
         let f_a = manager.mk_apply("f", [a], int_sort);
         let _f_b = manager.mk_apply("f", [b], int_sort);
 
@@ -519,7 +519,7 @@ mod tests {
         let int_sort = manager.sorts.int_sort;
         let bool_sort = manager.sorts.bool_sort;
 
-        let a = manager.mk_apply("a", std::iter::empty::<TermId>(), int_sort);
+        let a = manager.mk_apply("a", core::iter::empty::<TermId>(), int_sort);
         let _f_a = manager.mk_apply("f", [a], int_sort);
 
         let x = manager.mk_var("x", int_sort);
@@ -598,8 +598,8 @@ mod tests {
         let x = manager.mk_var("x", int_sort);
         let f_xx = manager.mk_apply("f", [x, x], int_sort);
 
-        let a = manager.mk_apply("a", std::iter::empty::<TermId>(), int_sort);
-        let b = manager.mk_apply("b", std::iter::empty::<TermId>(), int_sort);
+        let a = manager.mk_apply("a", core::iter::empty::<TermId>(), int_sort);
+        let b = manager.mk_apply("b", core::iter::empty::<TermId>(), int_sort);
 
         // f(a, a) should match
         let f_aa = manager.mk_apply("f", [a, a], int_sort);
@@ -707,9 +707,9 @@ mod tests {
         let int_sort = manager.sorts.int_sort;
 
         let x = manager.mk_var("x", int_sort);
-        let a = manager.mk_apply("a", std::iter::empty::<TermId>(), int_sort);
-        let b = manager.mk_apply("b", std::iter::empty::<TermId>(), int_sort);
-        let c = manager.mk_apply("c", std::iter::empty::<TermId>(), int_sort);
+        let a = manager.mk_apply("a", core::iter::empty::<TermId>(), int_sort);
+        let b = manager.mk_apply("b", core::iter::empty::<TermId>(), int_sort);
+        let c = manager.mk_apply("c", core::iter::empty::<TermId>(), int_sort);
 
         // Pattern f(x, a) vs candidate f(b, c): x binds to b, then a vs c
         // refutes the match.
@@ -742,9 +742,9 @@ mod tests {
         let int_sort = manager.sorts.int_sort;
 
         let x = manager.mk_var("x", int_sort);
-        let a = manager.mk_apply("a", std::iter::empty::<TermId>(), int_sort);
-        let b = manager.mk_apply("b", std::iter::empty::<TermId>(), int_sort);
-        let c = manager.mk_apply("c", std::iter::empty::<TermId>(), int_sort);
+        let a = manager.mk_apply("a", core::iter::empty::<TermId>(), int_sort);
+        let b = manager.mk_apply("b", core::iter::empty::<TermId>(), int_sort);
+        let c = manager.mk_apply("c", core::iter::empty::<TermId>(), int_sort);
 
         let pattern = manager.mk_apply("f", [x, a], int_sort);
         let candidate = manager.mk_apply("f", [b, c], int_sort);
@@ -786,8 +786,8 @@ mod tests {
         // canonicalisation keeps the operands as written.
         let x = manager.mk_var("x", int_sort);
         let y = manager.mk_var("y", int_sort);
-        let p = manager.mk_apply("p", std::iter::empty::<TermId>(), int_sort);
-        let q = manager.mk_apply("q", std::iter::empty::<TermId>(), int_sort);
+        let p = manager.mk_apply("p", core::iter::empty::<TermId>(), int_sort);
+        let q = manager.mk_apply("q", core::iter::empty::<TermId>(), int_sort);
 
         let eq_xy = manager.mk_eq(x, y);
         let eq_pq = manager.mk_eq(p, q);
@@ -815,8 +815,8 @@ mod tests {
         let int_sort = manager.sorts.int_sort;
 
         let x = manager.mk_var("x", int_sort);
-        let a = manager.mk_apply("a", std::iter::empty::<TermId>(), int_sort);
-        let b = manager.mk_apply("b", std::iter::empty::<TermId>(), int_sort);
+        let a = manager.mk_apply("a", core::iter::empty::<TermId>(), int_sort);
+        let b = manager.mk_apply("b", core::iter::empty::<TermId>(), int_sort);
 
         let pattern = manager.mk_eq(x, a);
         let candidate = manager.mk_eq(a, b);
@@ -847,8 +847,8 @@ mod tests {
         let g_x = manager.mk_apply("g", [x], int_sort);
         let pattern = manager.mk_apply("f", [g_x, g_x], int_sort);
 
-        let a = manager.mk_apply("a", std::iter::empty::<TermId>(), int_sort);
-        let b = manager.mk_apply("b", std::iter::empty::<TermId>(), int_sort);
+        let a = manager.mk_apply("a", core::iter::empty::<TermId>(), int_sort);
+        let b = manager.mk_apply("b", core::iter::empty::<TermId>(), int_sort);
         let g_a = manager.mk_apply("g", [a], int_sort);
         let g_b = manager.mk_apply("g", [b], int_sort);
 

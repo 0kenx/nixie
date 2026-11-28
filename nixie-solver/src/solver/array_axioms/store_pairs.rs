@@ -22,8 +22,8 @@
 //! stores seen, all pairs, pairs the walk visited, pairs instantiated, and
 //! whether the cap cut the sequence.
 
-use std::cmp::Ordering;
-use std::sync::OnceLock;
+use crate::prelude::OnceLock;
+use core::cmp::Ordering;
 
 use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
@@ -230,7 +230,7 @@ fn instance(
 /// refinement round).
 fn pair_log_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("NIXIE_ARRAY_PAIR_LOG").is_ok())
+    *ON.get_or_init(|| crate::env::var("NIXIE_ARRAY_PAIR_LOG").is_ok())
 }
 
 #[cfg(test)]

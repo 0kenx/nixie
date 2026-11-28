@@ -15,6 +15,8 @@
 
 use super::field::FieldCtx;
 use super::uni_poly::UniPoly;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
 

@@ -70,6 +70,8 @@
 
 use crate::clause::ClauseId;
 use crate::literal::Lit;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use smallvec::SmallVec;
 
 use super::Solver;
@@ -140,9 +142,8 @@ impl Solver {
     /// `NIXIE_ANDGATE=2` = kissat's 2-chain shape: one hub per pivot PAIR
     /// across ALL its shared tails (dividers `(t∨x_1)`,`(t∨x_2)` + one
     /// quotient `(¬t∨q)` per shared tail – `2|Q|` clauses become `|Q|+2`).
-    #[cfg(feature = "std")]
     fn andgate_pair_mode(&self) -> bool {
-        std::env::var("NIXIE_ANDGATE").as_deref() == Ok("2")
+        crate::env::var("NIXIE_ANDGATE").as_deref() == Ok("2")
     }
 
     /// The pair-mode core of [`Self::and_gate_factoring_mid`]: for pivot
@@ -166,11 +167,11 @@ impl Solver {
         // implication targets of a literal ARE its binary co-occurrences.
         // This eliminates the O(N) DB scan + HashMap inserts per round
         // – the wall bottleneck at worker-class scale (10M+ binaries).
-        let top: usize = std::env::var("NIXIE_ANDGATE_TOP")
+        let top: usize = crate::env::var("NIXIE_ANDGATE_TOP")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(256);
-        let max_intros = std::env::var("NIXIE_ANDGATE_MAXI")
+        let max_intros = crate::env::var("NIXIE_ANDGATE_MAXI")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(max_intros);
@@ -248,7 +249,7 @@ impl Solver {
                 // quotient one tail at a time; we approximate by keeping
                 // the K tails with the FEWEST other commitments (lowest
                 // global occurrence count = most specific structure).
-                let max_tails: usize = std::env::var("NIXIE_ANDGATE_MAXT")
+                let max_tails: usize = crate::env::var("NIXIE_ANDGATE_MAXT")
                     .ok()
                     .and_then(|v| v.parse().ok())
                     .filter(|k| *k >= 3)
@@ -268,7 +269,7 @@ impl Solver {
                             })
                             .collect();
                         ranked.sort_unstable_by_key(|&(_, spec, _)| spec);
-                        let keep: std::collections::HashSet<usize> =
+                        let keep: HashSet<usize> =
                             ranked[..max_tails].iter().map(|&(_, _, i)| i).collect();
                         let mut t2 = Vec::new();
                         let mut i2 = Vec::new();
@@ -393,8 +394,7 @@ impl Solver {
 
         // ---- 1. Tail index over original binaries: literal q -> partners
         // (with clause ids).  Each binary (a ∨ b) feeds both orientations.
-        let mut tail_index: std::collections::HashMap<u32, SmallVec<[(u32, u32); 8]>> =
-            std::collections::HashMap::default();
+        let mut tail_index: HashMap<u32, SmallVec<[(u32, u32); 8]>> = HashMap::default();
         let mut scanned = 0usize;
         'outer: for cid in self.clauses.iter_ids() {
             let Some(c) = self.clauses.get(cid) else {
@@ -543,7 +543,7 @@ impl Solver {
     /// Pre-search one-shot (see the module doc).  Returns
     /// `(vars_introduced, literals_saved)`.
     pub(super) fn structured_bva(&mut self) -> (usize, i64) {
-        let null_arm = std::env::var("NIXIE_SBVA_NULL").is_ok();
+        let null_arm = crate::env::var("NIXIE_SBVA_NULL").is_ok();
         let mut opts = BvaOpts::presearch();
         opts.null_arm = null_arm;
         self.structured_bva_with(opts)
@@ -588,8 +588,7 @@ impl Solver {
         // For each unordered literal pair, the original clauses containing
         // both.  A mergeable group is a subset of one pair's list whose
         // full intersection `G` (⊇ the pair by construction) is beneficial.
-        let mut pair_index: std::collections::HashMap<(u32, u32), SmallVec<[ClauseId; 8]>> =
-            std::collections::HashMap::default();
+        let mut pair_index: HashMap<(u32, u32), SmallVec<[ClauseId; 8]>> = HashMap::default();
         let mut entries = 0usize;
         'outer: for cid in self.clauses.iter_ids() {
             let Some(c) = self.clauses.get(cid) else {

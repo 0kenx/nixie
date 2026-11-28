@@ -12,8 +12,8 @@ use crate::sort::SortId;
 use smallvec::SmallVec;
 
 use super::subst::substitute_single_var;
+use crate::prelude::Rc;
 use crate::tactic::{Goal, TacticResult};
-use std::rc::Rc;
 
 /// Which node a [`SkFrame::Rebuild`] reconstructs from its children.
 #[derive(Debug, Clone, Copy)]

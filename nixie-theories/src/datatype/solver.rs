@@ -1012,7 +1012,7 @@ impl Theory for DatatypeSolver {
         //    use as the value.
 
         let mut assignments: Vec<(TermId, TermId)> = Vec::new();
-        let mut seen: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+        let mut seen: FxHashSet<TermId> = FxHashSet::default();
 
         // (1) Constructor applications: each is its own value
         for &term in self.constructor_apps.keys() {

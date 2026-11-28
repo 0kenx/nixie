@@ -40,6 +40,8 @@
 //! is (decision (40)).
 
 use super::*;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use crate::prelude::{FxHashMap, FxHashSet};
 
 /// What the last `sat` publishes; reset by every check and by every command
@@ -391,7 +393,7 @@ impl Context {
         let mut sorted: Vec<&String> = names.iter().collect();
         sorted.sort();
         for name in sorted {
-            let single: FxHashSet<String> = std::iter::once(name.clone()).collect();
+            let single: FxHashSet<String> = core::iter::once(name.clone()).collect();
             if self.applies_one_of(term, &single) {
                 return name.clone();
             }

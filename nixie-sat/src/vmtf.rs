@@ -9,6 +9,8 @@
 //! implementation (which reset the pointer on every bump → O(n) per decision).
 
 use crate::literal::Var;
+#[allow(unused_imports)]
+use crate::prelude::*;
 
 const NULL: u32 = u32::MAX;
 

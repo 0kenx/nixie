@@ -612,7 +612,7 @@ impl Solver {
                     contradicted = true;
                 }
             }
-            if std::env::var_os("NIXIE_DEBUG_BAGFOLD").is_some() {
+            if crate::env::var_os("NIXIE_DEBUG_BAGFOLD").is_some() {
                 eprintln!(
                     "[bagfold] declined={} unresolvable={unresolvable} contradicted={contradicted} mentions={}",
                     declined.len(),

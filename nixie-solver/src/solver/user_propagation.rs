@@ -1,6 +1,8 @@
 //! Boolean user callbacks composed with the existing CDCL(T) callback.
 
 use super::*;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_sat::{TheoryCallback, TheoryCheckResult};
 use nixie_theories::user_propagator::{
     Consequence, PropagatorResult, UserPropagator, UserPropagatorManager,
@@ -95,7 +97,7 @@ impl UserState {
                                 .check(original, consequence.term, &consequence.justification)
                                 .is_ok()
                     });
-                    if !ok && std::env::var("NIXIE_GRAPH_CERT_DEBUG").is_ok() {
+                    if !ok && crate::env::var("NIXIE_GRAPH_CERT_DEBUG").is_ok() {
                         eprintln!(
                             "CERT FAIL rule={:?} term={:?} premises={:?}",
                             certificate.rule(),

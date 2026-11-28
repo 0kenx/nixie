@@ -20,6 +20,7 @@ members = [
     "nixie-smtcomp",
     "nixie-testcorpus",
     "nixie-ml",
+    "nixie-nostd-smoke",
     "bench/regression",
     "bench/profile",
 ]
@@ -43,6 +44,7 @@ default-members = [
     "nixie-cli",
     "nixie-smtcomp",
     "nixie-ml",
+    "nixie-nostd-smoke",
     "bench/regression",
     "bench/profile",
 ]
@@ -184,6 +186,9 @@ num-traits = { version = "0.2", default-features = false }
 num-integer = { version = "0.1", default-features = false }
 libm = "0.2"
 portable-atomic = { version = "1.15", default-features = false, features = ["critical-section"] }
+# `OnceLock` and `Mutex` for the `no_std` builds of the library crates (see
+# `nixie_core::no_std`): `spin`'s have the same semantics and are `no_std`.
+spin = { version = "0.9", default-features = false, features = ["spin_mutex", "once"] }
 portable-atomic-util = { version = "0.2", default-features = false, features = ["alloc"] }
 rand = "0.10"
 

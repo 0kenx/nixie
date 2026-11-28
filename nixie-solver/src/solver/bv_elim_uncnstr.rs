@@ -64,12 +64,14 @@
 //! or vars the model assigns), so model reconstruction resolves in one
 //! forward pass.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
+use crate::prelude::{FxHashMap, FxHashSet};
 use nixie_core::ast::traversal::get_children;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{One, Zero};
-use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Hard bound on fixpoint rounds.  Every rewriting round strictly removes
 /// at least one variable occurrence, so the loop terminates well before
@@ -149,7 +151,7 @@ pub(super) fn elim_uncnstr_assertions(
             next.push(rewritten);
         }
         // Latest round's defs first (dependency order; module doc).
-        let round_defs = std::mem::take(&mut round.defs);
+        let round_defs = core::mem::take(&mut round.defs);
         defs.splice(..0, round_defs);
         if !changed {
             break;
@@ -253,7 +255,7 @@ impl Round<'_> {
         }
         let v = self.mk_fresh(sort, manager);
         self.fresh_for_app.insert(app, v);
-        if std::env::var("NIXIE_ELIM_UNCNSTR_TRACE").is_ok() {
+        if crate::env::var("NIXIE_ELIM_UNCNSTR_TRACE").is_ok() {
             let kind = manager
                 .get(app)
                 .map(|td| format!("{:?}", td.kind))

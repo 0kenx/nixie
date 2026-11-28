@@ -61,6 +61,25 @@ const CTX_WALK_RECURSION_LIMIT: u32 = 1024;
 
 use super::super::AtomSet;
 
+/// A fresh hasher for the `ctx_walk` memo signature ([`TermManager::ctx_signature`]).
+///
+/// The signature is a memo key that is compared on its own, so the hash must
+/// be well distributed over 64 bits and deterministic within a run. Under
+/// `std` that is `DefaultHasher` (SipHash-1-3, fixed keys). Under `no_std`
+/// `std` has no `DefaultHasher` to reach for, and `core` has no `SipHasher`
+/// on stable, so the stand-in is hashbrown's default hasher (foldhash) – the
+/// one the crate's `no_std` hash maps already use.
+#[cfg(feature = "std")]
+fn signature_hasher() -> std::collections::hash_map::DefaultHasher {
+    std::collections::hash_map::DefaultHasher::new()
+}
+
+#[cfg(not(feature = "std"))]
+fn signature_hasher() -> impl core::hash::Hasher {
+    use core::hash::BuildHasher;
+    hashbrown::DefaultHashBuilder::default().build_hasher()
+}
+
 /// The comparison family of [`TermManager::cmp_ite_rule`]: which
 /// operator a distributed residual keeps.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -749,7 +768,7 @@ impl TermManager {
             // (ite (not c) a b) ==> (ite c b a)
             if let Some(TermKind::Not(inner)) = self.get(c).map(|d| d.kind.clone()) {
                 c = inner;
-                std::mem::swap(&mut t, &mut e);
+                core::mem::swap(&mut t, &mut e);
             }
             // (ite c (ite c t1 t2) t3) ==> (ite c t1 t3)
             if let Some(TermKind::Ite(c2, t1, _)) = self.get(t).map(|d| d.kind.clone())
@@ -972,10 +991,7 @@ impl TermManager {
     /// of rebuilding them (hdp-class files assert ~4 200 heavily sharing
     /// formulas; the rebuild was 7.9 % of the class even after the
     /// sorted-set landing).
-    fn subtree_bool_atoms(
-        &self,
-        root: TermId,
-    ) -> FxHashMap<TermId, Option<std::sync::Arc<AtomSet>>> {
+    fn subtree_bool_atoms(&self, root: TermId) -> FxHashMap<TermId, Option<Arc<AtomSet>>> {
         /// Beyond this many distinct atoms a subtree's set is stored as
         /// `None` (no memoization for it) – the set itself would cost
         /// more than the re-walk it saves on typical inputs.
@@ -983,7 +999,7 @@ impl TermManager {
         /// Two-pointer union of two ascending-sorted id slices into
         /// `dst` (duplicates dropped – the ids are a set).
         fn merge_sorted_union(dst: &mut AtomSet, src: &[TermId]) {
-            use std::cmp::Ordering;
+            use core::cmp::Ordering;
             if src.is_empty() {
                 return;
             }
@@ -1014,7 +1030,7 @@ impl TermManager {
             merged.extend_from_slice(&src[j..]);
             *dst = merged;
         }
-        let mut out: FxHashMap<TermId, Option<std::sync::Arc<AtomSet>>> = FxHashMap::default();
+        let mut out: FxHashMap<TermId, Option<Arc<AtomSet>>> = FxHashMap::default();
         // Two-phase Expand/Combine (children's sets exist before the
         // parent unions them – the post-order trap the share-for-printing
         // pass already recorded once).
@@ -1077,7 +1093,7 @@ impl TermManager {
                     {
                         set = None;
                     }
-                    let shared = set.map(std::sync::Arc::new);
+                    let shared = set.map(Arc::new);
                     self.subtree_atom_cache
                         .borrow_mut()
                         .insert(t, shared.clone());
@@ -1096,7 +1112,7 @@ impl TermManager {
         &self,
         t: TermId,
         ctx: &FxHashMap<TermId, bool>,
-        sub_atoms: &FxHashMap<TermId, Option<std::sync::Arc<AtomSet>>>,
+        sub_atoms: &FxHashMap<TermId, Option<Arc<AtomSet>>>,
     ) -> Option<u64> {
         let relevant = sub_atoms.get(&t)?;
         let set = relevant.as_ref()?;
@@ -1104,8 +1120,8 @@ impl TermManager {
         // case-split/conjunct path) and test subtree membership – the
         // intersection is what the walk can consult.  Membership in the
         // sorted set is a binary search.
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        use std::hash::Hash;
+        let mut h = signature_hasher();
+        use core::hash::Hash;
         let mut entries: SmallVec<[(TermId, bool); 8]> = SmallVec::new();
         for (&atom, &pol) in ctx.iter() {
             if set.binary_search(&atom).is_ok() {
@@ -1117,7 +1133,7 @@ impl TermManager {
             atom.0.hash(&mut h);
             pol.hash(&mut h);
         }
-        Some(std::hash::Hasher::finish(&h))
+        Some(core::hash::Hasher::finish(&h))
     }
 
     /// DAG node count of `t`'s subtree (the growth guard's metric).
@@ -1169,7 +1185,7 @@ impl TermManager {
         t: TermId,
         ctx: &mut FxHashMap<TermId, bool>,
         fuel: &mut u32,
-        sub_atoms: &FxHashMap<TermId, Option<std::sync::Arc<AtomSet>>>,
+        sub_atoms: &FxHashMap<TermId, Option<Arc<AtomSet>>>,
         memo: &mut FxHashMap<(TermId, u64), TermId>,
         depth: u32,
     ) -> TermId {
@@ -1194,7 +1210,7 @@ impl TermManager {
         t: TermId,
         ctx: &mut FxHashMap<TermId, bool>,
         fuel: &mut u32,
-        sub_atoms: &FxHashMap<TermId, Option<std::sync::Arc<AtomSet>>>,
+        sub_atoms: &FxHashMap<TermId, Option<Arc<AtomSet>>>,
         memo: &mut FxHashMap<(TermId, u64), TermId>,
         depth: u32,
     ) -> TermId {
@@ -1328,7 +1344,7 @@ impl TermManager {
         args: SmallVec<[TermId; 4]>,
         ctx: &mut FxHashMap<TermId, bool>,
         fuel: &mut u32,
-        sub_atoms: &FxHashMap<TermId, Option<std::sync::Arc<AtomSet>>>,
+        sub_atoms: &FxHashMap<TermId, Option<Arc<AtomSet>>>,
         memo: &mut FxHashMap<(TermId, u64), TermId>,
         depth: u32,
     ) -> TermId {

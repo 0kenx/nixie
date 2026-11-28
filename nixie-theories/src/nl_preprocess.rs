@@ -52,11 +52,13 @@
 //! stops the elimination and returns the goal as far as it was reduced –
 //! always an equivalent goal, never a guess.
 
+use crate::prelude::HashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::traversal::{contains_term, get_children};
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
-use std::collections::HashMap;
 
 /// Maximum number of flattened conjuncts considered.
 const MAX_CONJUNCTS: usize = 40_000;
@@ -112,7 +114,7 @@ pub fn gaussian_eliminate(assertions: &[TermId], manager: &mut TermManager) -> G
     // stays in place, merely excluded from future pivot scans.  (Removing it,
     // as an earlier revision did, silently dropped a conjunct and weakened
     // the goal.)
-    let mut banned: std::collections::HashSet<TermId> = std::collections::HashSet::new();
+    let mut banned: HashSet<TermId> = HashSet::new();
     loop {
         if conjuncts.len() > MAX_CONJUNCTS || substitutions >= MAX_SUBSTITUTIONS {
             break;
@@ -149,7 +151,7 @@ pub fn gaussian_eliminate(assertions: &[TermId], manager: &mut TermManager) -> G
         // eliminated, even when no other conjunct mentioned the symbol.
         changed = true;
 
-        let mut subst: rustc_hash::FxHashMap<TermId, TermId> = rustc_hash::FxHashMap::default();
+        let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
         subst.insert(sym, def);
         let solved = conjuncts.remove(idx);
         banned.remove(&solved);
@@ -202,7 +204,7 @@ pub fn gaussian_eliminate(assertions: &[TermId], manager: &mut TermManager) -> G
 /// select-product box).  Z3's `solve-eqs` restricts itself the same way.
 fn pick_pivot(
     conjuncts: &[TermId],
-    banned: &std::collections::HashSet<TermId>,
+    banned: &HashSet<TermId>,
     manager: &mut TermManager,
 ) -> Option<(usize, TermId, BigInt, SLin)> {
     for (i, &c) in conjuncts.iter().enumerate() {
@@ -241,7 +243,7 @@ fn pick_pivot(
 /// the spurs survive).
 fn definition_is_foreign(def: TermId, manager: &TermManager) -> bool {
     let mut stack = vec![def];
-    let mut seen: std::collections::HashSet<TermId> = std::collections::HashSet::new();
+    let mut seen: HashSet<TermId> = HashSet::new();
     while let Some(id) = stack.pop() {
         if !seen.insert(id) {
             continue;
@@ -755,7 +757,7 @@ fn flatten_and(term: TermId, manager: &TermManager, out: &mut Vec<TermId>) {
 
 /// `true` iff any conjunct contains a quantifier (deeply).
 fn contains_quantifier(conjuncts: &[TermId], manager: &TermManager) -> bool {
-    let mut seen: std::collections::HashSet<TermId> = std::collections::HashSet::new();
+    let mut seen: HashSet<TermId> = HashSet::new();
     let mut stack: Vec<TermId> = conjuncts.to_vec();
     while let Some(id) = stack.pop() {
         if !seen.insert(id) {
@@ -783,7 +785,7 @@ fn contains_quantifier(conjuncts: &[TermId], manager: &TermManager) -> bool {
 #[must_use]
 pub fn eval_rational(
     term: TermId,
-    env: &std::collections::HashMap<TermId, num_rational::BigRational>,
+    env: &HashMap<TermId, num_rational::BigRational>,
     manager: &TermManager,
 ) -> Option<num_rational::BigRational> {
     use num_rational::BigRational;
@@ -792,8 +794,7 @@ pub fn eval_rational(
         Combine(TermId),
     }
     let mut stack = vec![Frame::Expand(term)];
-    let mut memo: std::collections::HashMap<TermId, Option<BigRational>> =
-        std::collections::HashMap::new();
+    let mut memo: HashMap<TermId, Option<BigRational>> = HashMap::new();
     while let Some(frame) = stack.pop() {
         match frame {
             Frame::Expand(id) => {
@@ -975,7 +976,7 @@ pub fn eval_rational(
 #[must_use]
 pub fn eval_bool_rational(
     term: TermId,
-    env: &std::collections::HashMap<TermId, num_rational::BigRational>,
+    env: &HashMap<TermId, num_rational::BigRational>,
     manager: &TermManager,
 ) -> Option<bool> {
     use num_rational::BigRational;
@@ -1041,10 +1042,10 @@ pub fn eval_bool_rational(
             );
             let ord = a.cmp(&b);
             Some(match &n.kind {
-                TermKind::Le(_, _) => ord != std::cmp::Ordering::Greater,
-                TermKind::Lt(_, _) => ord == std::cmp::Ordering::Less,
-                TermKind::Ge(_, _) => ord != std::cmp::Ordering::Less,
-                TermKind::Gt(_, _) => ord == std::cmp::Ordering::Greater,
+                TermKind::Le(_, _) => ord != core::cmp::Ordering::Greater,
+                TermKind::Lt(_, _) => ord == core::cmp::Ordering::Less,
+                TermKind::Ge(_, _) => ord != core::cmp::Ordering::Less,
+                TermKind::Gt(_, _) => ord == core::cmp::Ordering::Greater,
                 _ => return None,
             })
         }

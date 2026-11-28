@@ -124,7 +124,7 @@ impl Solver {
         // every SCC pop resets; the loops below read `on_stack[w]` /
         // `lowlink[w]` only for nodes whose epoch matches this round, and
         // both are written before their first read within a visit).
-        let mut scratch = std::mem::take(&mut self.equiv_scratch);
+        let mut scratch = core::mem::take(&mut self.equiv_scratch);
         if scratch.sub.len() != num_lits {
             scratch.sub = (0..num_lits as u32).map(Lit::from_code).collect();
             scratch.index = vec![0; num_lits];

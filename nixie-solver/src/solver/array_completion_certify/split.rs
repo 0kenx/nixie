@@ -27,9 +27,11 @@
 //! anything else (`a[x + 1]`, a `store` under the binder, an array left
 //! symbolic) falls back to the validity query unchanged.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
+use crate::prelude::{FxHashMap, FxHashSet};
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::sort::SortKind;
-use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{Combinations, is_array_value, peel_universal_with_vars, run_query};
 use crate::solver::{Solver, SolverResult};

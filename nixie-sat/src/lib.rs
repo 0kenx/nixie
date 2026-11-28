@@ -100,19 +100,38 @@
 //! ```
 
 #![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(not(feature = "std"), allow(unused_variables))]
+// Without `std`, every item whose only users are `std`-gated (file tracers,
+// thread-backed passes, environment probes behind them) is unused by
+// construction; the configuration is still compiled warning-clean otherwise.
+#![cfg_attr(
+    not(feature = "std"),
+    allow(dead_code, unused_variables, unused_assignments, unused_mut)
+)]
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
 // Native builds must never silently end up on nixie-time's frozen stub clock
-// (the `std` feature forward in this crate's manifest is what selects the real
-// one; see nixie-time/src/lib.rs).
-const _: () = assert!(!nixie_time::IS_FROZEN);
+// (the `nixie-time/std` feature in this crate's manifest is what selects the
+// real one; see nixie-time/src/lib.rs). The frozen clock is *by design* in the
+// two configurations the cfg excludes: `no_std` (`--no-default-features`) and
+// `wasm32-unknown-unknown`, which has no clock.
+#[cfg(all(
+    feature = "std",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
+const _: () = assert!(!nixie_time::IS_FROZEN, "nixie-time/std must be forwarded");
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
+mod env;
 mod prelude;
+
+// The crate root's own diagnostics print through the prelude's `eprintln!`
+// (the real macro under `std`, a no-op without an OS).
+#[cfg(not(feature = "std"))]
+#[allow(unused_imports)]
+use crate::prelude::eprintln;
 
 // ======== Always-available modules (no_std compatible) ========
 mod activity;
@@ -214,7 +233,6 @@ pub mod parallel;
 mod portfolio;
 #[cfg(feature = "profiling")]
 pub mod profiling;
-#[cfg(feature = "std")]
 mod proof;
 #[cfg(feature = "std")]
 mod stats_dashboard;
@@ -243,9 +261,11 @@ pub use chronological_backtrack::{
 /// `docs/studies/`): cached env probe, read once per process.
 #[doc(hidden)]
 pub fn probe_null_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("NIXIE_PROBE_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
+    *FLAG.get_or_init(|| {
+        crate::env::var("NIXIE_PROBE_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
 }
 
 /// Opt-OUT for the root-sweep's retire half (cadical `collect.cpp`'s
@@ -254,9 +274,9 @@ pub fn probe_null_enabled() -> bool {
 /// restores the pre-sweep behavior for A/B.
 #[doc(hidden)]
 pub fn root_sweep_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("NIXIE_ROOT_SWEEP").map_or(true, |v| v != "0"))
+    *FLAG.get_or_init(|| crate::env::var("NIXIE_ROOT_SWEEP").map_or(true, |v| v != "0"))
 }
 
 /// Sub-knob for the root sweep's STRIP half (falsified-literal removal):
@@ -264,10 +284,10 @@ pub fn root_sweep_enabled() -> bool {
 /// two SAT corpus files (see the study); only its g2-slp win is behind it.
 #[doc(hidden)]
 pub fn root_sweep_strip_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_ROOT_SWEEP_STRIP").is_ok_and(|v| !v.is_empty() && v != "0")
+        crate::env::var("NIXIE_ROOT_SWEEP_STRIP").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
@@ -292,7 +312,7 @@ pub fn kitten_sweep_enabled() -> bool {
     }
     #[cfg(feature = "std")]
     {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| std::env::var("NIXIE_SWEEP").map_or(true, |v| v != "0"))
     }
@@ -308,7 +328,7 @@ pub fn kitten_sweep_enabled() -> bool {
 pub fn kitten_sweep_rand_enabled() -> bool {
     #[cfg(feature = "std")]
     {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| {
             std::env::var("NIXIE_SWEEP_RAND").is_ok_and(|v| !v.is_empty() && v != "0")
@@ -338,7 +358,7 @@ pub fn definitions_enabled() -> bool {
     }
     #[cfg(feature = "std")]
     {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| {
             std::env::var("NIXIE_DEFINITIONS").is_ok_and(|v| !v.is_empty() && v != "0")
@@ -364,7 +384,7 @@ pub fn kitten_sweep_null_enabled() -> bool {
     }
     #[cfg(feature = "std")]
     {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| {
             std::env::var("NIXIE_SWEEP_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
@@ -392,7 +412,7 @@ pub fn kitten_sweep_null_enabled() -> bool {
 pub fn kitten_sweep_effort_permille() -> u64 {
     #[cfg(feature = "std")]
     {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<u64> = OnceLock::new();
         *FLAG.get_or_init(|| {
             std::env::var("NIXIE_SWEEP_EFFORT")
@@ -414,7 +434,7 @@ pub fn kitten_sweep_effort_permille() -> u64 {
 pub fn kitten_sweep_trace_enabled() -> bool {
     #[cfg(feature = "std")]
     {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| {
             std::env::var("NIXIE_SWEEP_TRACE").is_ok_and(|v| !v.is_empty() && v != "0")
@@ -522,10 +542,10 @@ pub(crate) mod test_knobs {
 /// multi-seed verdict was chaos-shaped with deep regressions.
 #[doc(hidden)]
 pub fn walk_strip_fixed_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_WALK_STRIP_FIXED").is_ok_and(|v| !v.is_empty() && v != "0")
+        crate::env::var("NIXIE_WALK_STRIP_FIXED").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
@@ -537,10 +557,11 @@ pub fn walk_strip_fixed_enabled() -> bool {
 /// identical random streams.
 #[doc(hidden)]
 pub fn warmup_null_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG
-        .get_or_init(|| std::env::var("NIXIE_WARMUP_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
+    *FLAG.get_or_init(|| {
+        crate::env::var("NIXIE_WARMUP_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
 }
 
 /// Matched-null switch for the analysis-walk-glue restart-EMA experiment
@@ -549,9 +570,10 @@ pub fn warmup_null_enabled() -> bool {
 /// same timing, no current-conflict information.
 #[doc(hidden)]
 pub fn glue_null_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("NIXIE_GLUE_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
+    *FLAG
+        .get_or_init(|| crate::env::var("NIXIE_GLUE_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
 /// A/B switch for the walk-glue restart-EMA port: when set, the EMAs keep
@@ -559,10 +581,11 @@ pub fn glue_null_enabled() -> bool {
 /// study to attribute the restart-cadence effect (see `docs/studies/`).
 #[doc(hidden)]
 pub fn glue_legacy_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG
-        .get_or_init(|| std::env::var("NIXIE_GLUE_LEGACY").is_ok_and(|v| !v.is_empty() && v != "0"))
+    *FLAG.get_or_init(|| {
+        crate::env::var("NIXIE_GLUE_LEGACY").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
 }
 
 /// Matched-null switch for the chronological trail-reuse port: when set,
@@ -570,10 +593,10 @@ pub fn glue_legacy_enabled() -> bool {
 /// key (same scan, same work, no selection semantics).
 #[doc(hidden)]
 pub fn chrono_reuse_null_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_CHRONOREUSE_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
+        crate::env::var("NIXIE_CHRONOREUSE_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
@@ -591,9 +614,9 @@ pub fn chrono_reuse_null_enabled() -> bool {
 /// (see the standing-gap study's reduction-anomaly section).
 #[doc(hidden)]
 pub fn reduce_used_shield_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("NIXIE_REDUCE_USED_SHIELD").is_ok_and(|v| v != "0"))
+    *FLAG.get_or_init(|| crate::env::var("NIXIE_REDUCE_USED_SHIELD").is_ok_and(|v| v != "0"))
 }
 
 /// Cached `NIXIE_VIVIFY_OTF=0` (disable on-the-fly vivify subsumption).
@@ -602,34 +625,35 @@ pub fn reduce_used_shield_enabled() -> bool {
 /// percentages of runtime in `getenv` (profiled 2026-08-21, noL).
 #[doc(hidden)]
 pub fn vivify_otf_disabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("NIXIE_VIVIFY_OTF").as_deref() == Ok("0"))
+    *FLAG.get_or_init(|| crate::env::var("NIXIE_VIVIFY_OTF").as_deref() == Ok("0"))
 }
 
 /// Cached `NIXIE_VIVIFY_TRACE` (per-round vivify diagnostics print).
 #[doc(hidden)]
 pub fn vivify_trace_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("NIXIE_VIVIFY_TRACE").is_ok())
+    *FLAG.get_or_init(|| crate::env::var("NIXIE_VIVIFY_TRACE").is_ok())
 }
 
 /// Cached `NIXIE_NOPROMOTE` (keep learned clauses out of original-slot
 /// promotion).  Checked per learned-clause subsumption event.
 #[doc(hidden)]
 pub fn nopromote_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("NIXIE_NOPROMOTE").is_ok())
+    *FLAG.get_or_init(|| crate::env::var("NIXIE_NOPROMOTE").is_ok())
 }
 
 #[doc(hidden)]
 pub fn shrink_null_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG
-        .get_or_init(|| std::env::var("NIXIE_SHRINK_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
+    *FLAG.get_or_init(|| {
+        crate::env::var("NIXIE_SHRINK_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
 }
 
 /// Treatment switch for the cadical `bump_variable` mode-gating port (see
@@ -641,10 +665,10 @@ pub fn shrink_null_enabled() -> bool {
 /// bumped on every conflict regardless of mode.
 #[doc(hidden)]
 pub fn bump_mode_gate_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_BUMP_MODE_GATE").is_ok_and(|v| !v.is_empty() && v != "0")
+        crate::env::var("NIXIE_BUMP_MODE_GATE").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
@@ -658,10 +682,10 @@ pub fn bump_mode_gate_enabled() -> bool {
 /// removal of double-maintenance overhead or to trajectory reshuffling.
 #[doc(hidden)]
 pub fn bump_mode_gate_null_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_BUMP_MODE_GATE_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
+        crate::env::var("NIXIE_BUMP_MODE_GATE_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
@@ -677,10 +701,10 @@ pub fn bump_mode_gate_null_enabled() -> bool {
 /// the 2026-09-02 studies): a retention-*shape* change.
 #[doc(hidden)]
 pub fn kissat_reduce_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_KISSAT_REDUCE").is_ok_and(|v| !v.is_empty() && v != "0")
+        crate::env::var("NIXIE_KISSAT_REDUCE").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
@@ -691,10 +715,10 @@ pub fn kissat_reduce_enabled() -> bool {
 /// tier-percentage reduce.
 #[doc(hidden)]
 pub fn cadical_reduce_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_CADICAL_REDUCE").is_ok_and(|v| !v.is_empty() && v != "0")
+        crate::env::var("NIXIE_CADICAL_REDUCE").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
@@ -704,10 +728,10 @@ pub fn cadical_reduce_enabled() -> bool {
 /// perturbation, no retention semantics.
 #[doc(hidden)]
 pub fn cadical_reduce_null_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_CADICAL_REDUCE_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
+        crate::env::var("NIXIE_CADICAL_REDUCE_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
@@ -719,10 +743,10 @@ pub fn cadical_reduce_null_enabled() -> bool {
 /// matched null. Default off.
 #[doc(hidden)]
 pub fn reduce_adapt_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_REDUCE_ADAPT").is_ok_and(|v| !v.is_empty() && v != "0")
+        crate::env::var("NIXIE_REDUCE_ADAPT").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
@@ -730,10 +754,10 @@ pub fn reduce_adapt_enabled() -> bool {
 /// computation and firing, the opposite ranking choice.
 #[doc(hidden)]
 pub fn reduce_adapt_null_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_REDUCE_ADAPT_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
+        crate::env::var("NIXIE_REDUCE_ADAPT_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
@@ -744,10 +768,10 @@ pub fn reduce_adapt_null_enabled() -> bool {
 /// null. Default off.
 #[doc(hidden)]
 pub fn reduce_by_used_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_REDUCE_BY_USED").is_ok_and(|v| !v.is_empty() && v != "0")
+        crate::env::var("NIXIE_REDUCE_BY_USED").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
@@ -759,10 +783,10 @@ pub fn reduce_by_used_enabled() -> bool {
 /// before/after and emergency use).
 #[doc(hidden)]
 pub fn arena_compact_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        !std::env::var("NIXIE_NO_ARENA_COMPACT").is_ok_and(|v| !v.is_empty() && v != "0")
+        !crate::env::var("NIXIE_NO_ARENA_COMPACT").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
@@ -774,10 +798,10 @@ pub fn arena_compact_enabled() -> bool {
 /// `stabilize_base`-ticks schedule whose quadratic constant never adapts.
 #[doc(hidden)]
 pub fn stab_faithful_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_STAB_FAITHFUL").is_ok_and(|v| !v.is_empty() && v != "0")
+        crate::env::var("NIXIE_STAB_FAITHFUL").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
@@ -787,9 +811,10 @@ pub fn stab_faithful_enabled() -> bool {
 /// growth semantics.
 #[doc(hidden)]
 pub fn stab_null_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("NIXIE_STAB_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
+    *FLAG
+        .get_or_init(|| crate::env::var("NIXIE_STAB_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
 /// The tiered per-mode schedule arm (`NIXIE_TIERED=1`): the kissat-shaped
@@ -801,9 +826,9 @@ pub fn stab_null_enabled() -> bool {
 /// target-phase resets. Default off = bit-identical trajectories.
 #[doc(hidden)]
 pub fn tiered_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("NIXIE_TIERED").is_ok_and(|v| !v.is_empty() && v != "0"))
+    *FLAG.get_or_init(|| crate::env::var("NIXIE_TIERED").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
 /// Analyze-time on-the-fly clause strengthening (`NIXIE_OTFS=1`): when the
@@ -818,9 +843,9 @@ pub fn tiered_enabled() -> bool {
 /// which a hint-less checker cannot replay. Default off = bit-identical.
 #[doc(hidden)]
 pub fn otfs_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("NIXIE_OTFS").is_ok_and(|v| !v.is_empty() && v != "0"))
+    *FLAG.get_or_init(|| crate::env::var("NIXIE_OTFS").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
 /// Structural AND-gate recognition during elimination (`NIXIE_AND_GATES=1`):
@@ -838,9 +863,10 @@ pub fn otfs_enabled() -> bool {
 /// Default off = bit-identical.
 #[doc(hidden)]
 pub fn eager_sub_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("NIXIE_EAGER_SUB").is_ok_and(|v| !v.is_empty() && v != "0"))
+    *FLAG
+        .get_or_init(|| crate::env::var("NIXIE_EAGER_SUB").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
 /// Subsume fixpoint in the elimination phase (`NIXIE_ELIM_SUBFIX=1`):
@@ -852,10 +878,11 @@ pub fn eager_sub_enabled() -> bool {
 /// phases). Bounded at 8 rounds. Default off = bit-identical.
 #[doc(hidden)]
 pub fn elim_subfix_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG
-        .get_or_init(|| std::env::var("NIXIE_ELIM_SUBFIX").is_ok_and(|v| !v.is_empty() && v != "0"))
+    *FLAG.get_or_init(|| {
+        crate::env::var("NIXIE_ELIM_SUBFIX").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
 }
 
 /// BVE-after-fold skip policy (`NIXIE_FOLD_BVE_SKIP=1`, threshold percent
@@ -885,7 +912,7 @@ pub fn fold_bve_skip_policy() -> (bool, u64) {
 }
 
 fn fold_bve_skip_policy_from_env() -> (bool, u64) {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static POLICY: OnceLock<(bool, u64)> = OnceLock::new();
     #[cfg(feature = "std")]
     {
@@ -933,7 +960,7 @@ pub fn gate_subsume_min_candidates() -> usize {
 }
 
 fn gate_subsume_min_from_env() -> usize {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLOOR: OnceLock<usize> = OnceLock::new();
     #[cfg(feature = "std")]
     {
@@ -968,7 +995,7 @@ pub fn gate_subsume_enabled() -> bool {
 }
 
 fn gate_subsume_enabled_from_env() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     #[cfg(feature = "std")]
     {
@@ -987,9 +1014,10 @@ fn gate_subsume_enabled_from_env() -> bool {
 
 #[doc(hidden)]
 pub fn and_gates_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("NIXIE_AND_GATES").is_ok_and(|v| !v.is_empty() && v != "0"))
+    *FLAG
+        .get_or_init(|| crate::env::var("NIXIE_AND_GATES").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
 /// Matched null for [`tiered_enabled`] (`NIXIE_TIERED_NULL=1`, implies the
@@ -1000,10 +1028,11 @@ pub fn and_gates_enabled() -> bool {
 /// mode-coupling information.
 #[doc(hidden)]
 pub fn tiered_null_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG
-        .get_or_init(|| std::env::var("NIXIE_TIERED_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
+    *FLAG.get_or_init(|| {
+        crate::env::var("NIXIE_TIERED_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
 }
 
 /// Diagnostics (`NIXIE_REASON_STATS`): BCP propagation counts split by whether
@@ -1026,6 +1055,10 @@ pub static DIAG_VMTF_SCAN: core::sync::atomic::AtomicU64 = core::sync::atomic::A
 /// anatomy counters used by the throughput studies.
 #[doc(hidden)]
 pub mod diag_bcp {
+    #[cfg(not(feature = "std"))]
+    #[allow(unused_imports)]
+    use crate::prelude::eprintln;
+
     use core::sync::atomic::{AtomicU64, Ordering};
     macro_rules! bcp_diag {
         ($name:ident, $doc:literal) => {
@@ -1053,6 +1086,10 @@ pub mod diag_bcp {
     /// Conflict-analysis anatomy (same gating; sizes the analyze-side
     /// levers the 2026-09-07 throughput study names).
     pub mod analysis {
+        #[cfg(not(feature = "std"))]
+        #[allow(unused_imports)]
+        use super::eprintln;
+
         use core::sync::atomic::{AtomicU64, Ordering};
         macro_rules! an_diag {
             ($name:ident, $doc:literal) => {
@@ -1111,10 +1148,10 @@ visits={} hits={} del={} miss={} sat1={} satr={} moved={} unit={} conf={} swaps=
         analysis::dump();
     }
     pub fn enabled() -> bool {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| {
-            std::env::var("NIXIE_BCP_STATS").is_ok_and(|v| !v.is_empty() && v != "0")
+            crate::env::var("NIXIE_BCP_STATS").is_ok_and(|v| !v.is_empty() && v != "0")
         })
     }
 }
@@ -1127,10 +1164,10 @@ visits={} hits={} del={} miss={} sat1={} satr={} moved={} unit={} conf={} swaps=
 /// unset by default.
 #[doc(hidden)]
 pub fn restart_stall_multiplier() -> Option<f64> {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<Option<f64>> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_RESTART_STALL")
+        crate::env::var("NIXIE_RESTART_STALL")
             .ok()
             .and_then(|v| v.trim().parse::<f64>().ok())
             .filter(|k| *k > 0.0)
@@ -1158,10 +1195,10 @@ pub fn restart_stall_multiplier() -> Option<f64> {
 /// construction off the class; default off.
 #[doc(hidden)]
 pub fn restart_drought_maxgap() -> Option<u64> {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<Option<u64>> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_RESTART_DROUGHT_MAXGAP")
+        crate::env::var("NIXIE_RESTART_DROUGHT_MAXGAP")
             .ok()
             .and_then(|v| v.trim().parse::<u64>().ok())
             .filter(|n| *n > 0)
@@ -1170,10 +1207,10 @@ pub fn restart_drought_maxgap() -> Option<u64> {
 
 #[doc(hidden)]
 pub fn restart_maxgap() -> Option<u64> {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<Option<u64>> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_RESTART_MAXGAP")
+        crate::env::var("NIXIE_RESTART_MAXGAP")
             .ok()
             .and_then(|v| v.trim().parse::<u64>().ok())
             .filter(|n| *n > 0)
@@ -1189,19 +1226,20 @@ pub fn restart_maxgap() -> Option<u64> {
 /// (docs/studies/2026-09-07-throughput-campaign.md, T1).
 #[doc(hidden)]
 pub fn restart_stall_null_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_RESTART_STALL_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
+        crate::env::var("NIXIE_RESTART_STALL_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 
 /// Gate for [`DIAG_VMTF_SCAN`] accumulation (`NIXIE_VMTF_SCAN=1`).
 #[doc(hidden)]
 pub fn vmtf_scan_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("NIXIE_VMTF_SCAN").is_ok_and(|v| !v.is_empty() && v != "0"))
+    *FLAG
+        .get_or_init(|| crate::env::var("NIXIE_VMTF_SCAN").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
 pub use clause::{Clause, ClauseDatabase, ClauseDatabaseStats, ClauseId, ClauseTier};
@@ -1243,7 +1281,7 @@ pub use smoothed_lbd::{SmoothedLbdStats, SmoothedLbdTracker};
 pub use solver::PropagationWork;
 pub use solver::{
     BoxedBranchingHeuristic, BranchingHeuristic, RestartStrategy, Solver, SolverConfig,
-    SolverError, SolverResult, SolverStats, TheoryCallback, TheoryCheckResult,
+    SolverError, SolverResult, SolverStats, TheoryCallback, TheoryCheckResult, boxed_heuristic,
 };
 pub use stabilization::{
     SearchMode, StabilizationConfig, StabilizationManager, StabilizationStats,
@@ -1290,10 +1328,10 @@ pub use portfolio::{PortfolioConfig, PortfolioResult, PortfolioSolver, Portfolio
 pub use profiling::{
     ProfilingCategory, ProfilingCategorySnapshot, ProfilingSnapshot, ProfilingStats, ScopedTimer,
 };
-#[cfg(feature = "std")]
 pub use proof::{
-    ConclusionType, DratTracer, DratWriter, LratTracer, LratTranscript, LratTranscriptHandle,
-    LratWriter, MemoryLratTracer, Proof, ProofTrimmer, Tracer,
+    ConclusionType, LratTranscript, LratTranscriptHandle, MemoryLratTracer, Proof, Tracer,
 };
+#[cfg(feature = "std")]
+pub use proof::{DratTracer, DratWriter, LratTracer, LratWriter, ProofTrimmer};
 #[cfg(feature = "std")]
 pub use stats_dashboard::{StatsAggregator, StatsDashboard};

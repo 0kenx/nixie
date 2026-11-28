@@ -13,6 +13,19 @@ use crate::prelude::*;
 use num_rational::BigRational;
 use num_traits::{One, Signed, Zero};
 
+/// Whether `NIXIE_GB_TRACE` is set in the environment, turning on the
+/// per-pair trace of [`grobner_basis`]. Reading an environment is `std`'s,
+/// so a `no_std` build simply has no trace.
+#[cfg(feature = "std")]
+fn gb_trace() -> bool {
+    std::env::var_os("NIXIE_GB_TRACE").is_some()
+}
+
+#[cfg(not(feature = "std"))]
+fn gb_trace() -> bool {
+    false
+}
+
 /// Compute the S-polynomial of two polynomials.
 ///
 /// The S-polynomial S(f, g) is defined as:
@@ -275,7 +288,7 @@ pub fn grobner_basis(polynomials: &[Polynomial]) -> Result<Vec<Polynomial>, Grob
         // or the verified chain criterion guarantees the S-polynomial
         // reduces to zero (both record the proven-zero pair inside).
         if syzygy.apply_buchberger_criteria(i, j, &g[i], &g[j], &g) {
-            if std::env::var_os("NIXIE_GB_TRACE").is_some() {
+            if gb_trace() {
                 eprintln!(
                     "[gb] pair ({i},{j}) lms {:?}/{:?}: SKIPPED by criteria",
                     g[i].leading_monomial().map(|m| m.vars().to_vec()),
@@ -295,14 +308,14 @@ pub fn grobner_basis(polynomials: &[Polynomial]) -> Result<Vec<Polynomial>, Grob
             // A processed-to-zero reduction: a proven fact the chain
             // criterion may cite.
             syzygy.record_zero_pair(i, j);
-            if std::env::var_os("NIXIE_GB_TRACE").is_some() {
+            if gb_trace() {
                 eprintln!(
                     "[gb] pair ({i},{j}): reduced to ZERO ({} pairs left, basis {})",
                     pairs.len(),
                     g.len()
                 );
             }
-        } else if std::env::var_os("NIXIE_GB_TRACE").is_some() {
+        } else if gb_trace() {
             eprintln!(
                 "[gb] pair ({i},{j}): ADMIT lm {:?} (basis {})",
                 s_reduced.leading_monomial().map(|m| m.vars().to_vec()),
@@ -348,7 +361,7 @@ impl core::fmt::Display for GrobnerIterationCap {
     }
 }
 
-impl std::error::Error for GrobnerIterationCap {}
+impl core::error::Error for GrobnerIterationCap {}
 
 /// Interreduce a Gröbner basis to make it minimal and reduced.
 ///

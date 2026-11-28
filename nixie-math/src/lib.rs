@@ -32,13 +32,17 @@
 //! # Features
 //!
 //! - **`std`** (default): enables the standard library. Without it the crate
-//!   builds as `no_std` + `alloc`. The following modules need floating-point
-//!   or OS facilities that `core` does not provide and are therefore
+//!   builds as `no_std` + `alloc` (`just verify` builds this configuration
+//!   with warnings denied). The following modules need floating-point or
+//!   OS facilities that `core` does not provide and are therefore
 //!   available only with `std`: [`blas`], [`blas_ops`], [`mpfr`],
 //!   [`simd::matrix_simd`], [`simd::simplex_simd`], and
 //!   [`rational::is_prime`] (which needs a random number generator).
 //!   Everything else -- polynomials, Gröbner bases, simplex, intervals,
-//!   BDDs, real closure -- builds in both configurations.
+//!   BDDs, real closure, the transcendental enclosure -- builds in both
+//!   configurations; the `std`-only `f64` methods it calls come from
+//!   the `F64Ext` trait (exported without `std`, `libm` underneath), so a
+//!   call site is written once.
 //! - **`simd`**: reserved. The kernels in [`simd`] are compiled
 //!   unconditionally and rely on auto-vectorization, so enabling this
 //!   feature currently changes nothing; it exists so that an explicit
@@ -106,12 +110,223 @@
 #![warn(missing_docs)]
 
 // Native builds must never silently end up on nixie-time's frozen stub clock
-// (the `std` feature forward in this crate's manifest is what selects the real
-// one; see nixie-time/src/lib.rs).
-const _: () = assert!(!nixie_time::IS_FROZEN);
+// (the `nixie-time/std` feature in this crate's manifest is what selects the
+// real one; see nixie-time/src/lib.rs). The frozen clock is *by design* in the
+// two configurations the cfg excludes: `no_std` (`--no-default-features`) and
+// `wasm32-unknown-unknown`, which has no clock.
+#[cfg(all(
+    feature = "std",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
+const _: () = assert!(!nixie_time::IS_FROZEN, "nixie-time/std must be forwarded");
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;
+
+/// The `f64` methods that live in `std` rather than `core`, for `no_std` builds.
+///
+/// `core::f64` carries the comparisons, `abs`, `min`, `max`, `clamp`, the
+/// bit-level operations and `is_*` class tests; the transcendental and
+/// rounding methods – `sqrt`, `powi`, `exp`, `log10`, `floor`, `round`, … –
+/// are inherent methods of `std`'s `f64` alone. This trait supplies them under
+/// `#[cfg(not(feature = "std"))]` so that a call site is written once:
+/// `use nixie_math::F64Ext;` and the method calls stay as they are. Under
+/// `std` the trait does not exist and the inherent methods are used.
+///
+/// Each method is the corresponding `libm` routine, or a one-line
+/// construction from one. The rounding methods and `sqrt` are fixed by IEEE
+/// 754 (ties away from zero; correctly rounded), so the two configurations
+/// agree bit for bit there; for the transcendental functions `libm` is the
+/// musl implementation, within 1 ulp of the `std` result.
+#[cfg(not(feature = "std"))]
+pub trait F64Ext {
+    /// `self` raised to an integer power, by squaring.
+    fn powi(self, n: i32) -> f64;
+    /// `self` raised to a floating-point power.
+    fn powf(self, n: f64) -> f64;
+    /// The correctly rounded square root.
+    fn sqrt(self) -> f64;
+    /// The cube root.
+    fn cbrt(self) -> f64;
+    /// *e* raised to `self`.
+    fn exp(self) -> f64;
+    /// *e* raised to `self`, minus one.
+    fn exp_m1(self) -> f64;
+    /// The natural logarithm.
+    fn ln(self) -> f64;
+    /// The natural logarithm of `1 + self`.
+    fn ln_1p(self) -> f64;
+    /// The logarithm of `self` with respect to `base`.
+    fn log(self, base: f64) -> f64;
+    /// The base-2 logarithm.
+    fn log2(self) -> f64;
+    /// The base-10 logarithm.
+    fn log10(self) -> f64;
+    /// The sine.
+    fn sin(self) -> f64;
+    /// The cosine.
+    fn cos(self) -> f64;
+    /// The tangent.
+    fn tan(self) -> f64;
+    /// The arcsine.
+    fn asin(self) -> f64;
+    /// The arccosine.
+    fn acos(self) -> f64;
+    /// The arctangent.
+    fn atan(self) -> f64;
+    /// The four-quadrant arctangent of `self` and `other`.
+    fn atan2(self, other: f64) -> f64;
+    /// The length of the hypotenuse with legs `self` and `other`.
+    fn hypot(self, other: f64) -> f64;
+    /// Fused multiply-add: `self * a + b`, rounded once.
+    fn mul_add(self, a: f64, b: f64) -> f64;
+    /// The smallest integer not less than `self`.
+    fn ceil(self) -> f64;
+    /// The largest integer not greater than `self`.
+    fn floor(self) -> f64;
+    /// The nearest integer, ties away from zero.
+    fn round(self) -> f64;
+    /// The integer part of `self`.
+    fn trunc(self) -> f64;
+    /// The fractional part of `self`.
+    fn fract(self) -> f64;
+    /// Euclidean division.
+    fn div_euclid(self, rhs: f64) -> f64;
+    /// The least non-negative remainder of Euclidean division.
+    fn rem_euclid(self, rhs: f64) -> f64;
+}
+
+#[cfg(not(feature = "std"))]
+impl F64Ext for f64 {
+    fn powi(self, n: i32) -> f64 {
+        // compiler-rt's `__powidf2`, which is what the `std` method lowers
+        // to: exponentiation by squaring, the reciprocal taken at the end.
+        let reciprocal = n < 0;
+        let mut base = self;
+        let mut exp = n;
+        let mut acc = 1.0;
+        loop {
+            if exp & 1 != 0 {
+                acc *= base;
+            }
+            exp /= 2;
+            if exp == 0 {
+                break;
+            }
+            base *= base;
+        }
+        if reciprocal { 1.0 / acc } else { acc }
+    }
+
+    fn powf(self, n: f64) -> f64 {
+        libm::pow(self, n)
+    }
+
+    fn sqrt(self) -> f64 {
+        libm::sqrt(self)
+    }
+
+    fn cbrt(self) -> f64 {
+        libm::cbrt(self)
+    }
+
+    fn exp(self) -> f64 {
+        libm::exp(self)
+    }
+
+    fn exp_m1(self) -> f64 {
+        libm::expm1(self)
+    }
+
+    fn ln(self) -> f64 {
+        libm::log(self)
+    }
+
+    fn ln_1p(self) -> f64 {
+        libm::log1p(self)
+    }
+
+    fn log(self, base: f64) -> f64 {
+        libm::log(self) / libm::log(base)
+    }
+
+    fn log2(self) -> f64 {
+        libm::log2(self)
+    }
+
+    fn log10(self) -> f64 {
+        libm::log10(self)
+    }
+
+    fn sin(self) -> f64 {
+        libm::sin(self)
+    }
+
+    fn cos(self) -> f64 {
+        libm::cos(self)
+    }
+
+    fn tan(self) -> f64 {
+        libm::tan(self)
+    }
+
+    fn asin(self) -> f64 {
+        libm::asin(self)
+    }
+
+    fn acos(self) -> f64 {
+        libm::acos(self)
+    }
+
+    fn atan(self) -> f64 {
+        libm::atan(self)
+    }
+
+    fn atan2(self, other: f64) -> f64 {
+        libm::atan2(self, other)
+    }
+
+    fn hypot(self, other: f64) -> f64 {
+        libm::hypot(self, other)
+    }
+
+    fn mul_add(self, a: f64, b: f64) -> f64 {
+        libm::fma(self, a, b)
+    }
+
+    fn ceil(self) -> f64 {
+        libm::ceil(self)
+    }
+
+    fn floor(self) -> f64 {
+        libm::floor(self)
+    }
+
+    fn round(self) -> f64 {
+        libm::round(self)
+    }
+
+    fn trunc(self) -> f64 {
+        libm::trunc(self)
+    }
+
+    fn fract(self) -> f64 {
+        self - self.trunc()
+    }
+
+    fn div_euclid(self, rhs: f64) -> f64 {
+        let q = (self / rhs).trunc();
+        if self % rhs < 0.0 {
+            return if rhs > 0.0 { q - 1.0 } else { q + 1.0 };
+        }
+        q
+    }
+
+    fn rem_euclid(self, rhs: f64) -> f64 {
+        let r = self % rhs;
+        if r < 0.0 { r + rhs.abs() } else { r }
+    }
+}
 
 mod prelude;
 

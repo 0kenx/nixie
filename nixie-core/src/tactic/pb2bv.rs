@@ -3,6 +3,8 @@
 use super::core::*;
 use crate::ast::{TermId, TermKind, TermManager};
 use crate::error::Result;
+#[allow(unused_imports)]
+use crate::prelude::*;
 
 /// Pseudo-Boolean to Bit-Vector tactic
 ///

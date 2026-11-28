@@ -3,6 +3,8 @@
 //! and operation semantics. No host floating-point bounds are used.
 
 use super::*;
+#[allow(unused_imports)]
+use crate::prelude::*;
 
 const NAN: u16 = 1;
 const PZERO: u16 = 1 << 1;

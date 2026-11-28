@@ -161,9 +161,13 @@ impl EvalOutcome {
 // δ₀-instantiated read).  The free `combine_*` functions read it through
 // this thread-local; the certificate resets it per conjunct and the live
 // read paths set it.  See `EagerKind::CmpStrictCertify`.
+#[cfg(feature = "std")]
 thread_local! {
     static CERTIFY_LIVE_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
+/// The same flag without threads: the one thread there is shares it.
+#[cfg(not(feature = "std"))]
+static CERTIFY_LIVE_READ: nixie_core::no_std::LocalBool = nixie_core::no_std::LocalBool::new(false);
 
 /// A fixed-arity operator whose operands are evaluated left to right, stopping
 /// at the first operand that does not produce a value.
@@ -1290,7 +1294,7 @@ impl Solver {
         if apps.len() < 2 {
             return Vec::new();
         }
-        let mut by_func: rustc_hash::FxHashMap<u32, Vec<u32>> = rustc_hash::FxHashMap::default();
+        let mut by_func: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
         for &a in &apps {
             if let Some(f) = self.euf.node_func(a) {
                 by_func.entry(f).or_default().push(a);

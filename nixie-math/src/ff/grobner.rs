@@ -31,6 +31,9 @@
 use super::field::{FieldCtx, Limbs};
 use super::poly::{MPoly, cmp_monomials, monomial_div, monomial_lcm};
 use crate::polynomial::{Monomial, MonomialOrder, Var};
+#[allow(unused_imports)]
+use crate::prelude::*;
+use core::cmp::Ordering;
 use num_bigint::BigUint;
 
 // Matrix echelonization indexes its columns explicitly (column-major
@@ -181,13 +184,12 @@ pub fn f4_basis(
         for _ in &selected {
             budget.charge(1)?;
         }
-        let sel_set: std::collections::BTreeSet<(usize, usize)> =
-            selected.iter().copied().collect();
+        let sel_set: BTreeSet<(usize, usize)> = selected.iter().copied().collect();
         pairs.retain(|p| !sel_set.contains(p));
 
         // ======== Symbolic preprocessing ========
         let mut rows: Vec<(Monomial, usize)> = Vec::new();
-        let mut queued: rustc_hash::FxHashSet<Monomial> = rustc_hash::FxHashSet::default();
+        let mut queued: FxHashSet<Monomial> = FxHashSet::default();
         let mut queue: Vec<Monomial> = Vec::new();
         for &(i, j) in &selected {
             let lcm = monomial_lcm(&lms[i], &lms[j]);
@@ -206,8 +208,7 @@ pub fn f4_basis(
                 }
             }
         }
-        let mut row_of_mono: rustc_hash::FxHashMap<Monomial, (Monomial, usize)> =
-            rustc_hash::FxHashMap::default();
+        let mut row_of_mono: FxHashMap<Monomial, (Monomial, usize)> = FxHashMap::default();
         while let Some(m) = queue.pop() {
             budget.charge(1)?;
             // Reducer scan over the CACHED leading monomials – an `lm()`
@@ -236,7 +237,7 @@ pub fn f4_basis(
             return Err(GrobnerError::Budget);
         }
         columns.sort_by(|a, b| cmp_monomials(DEGREVLEX, b, a));
-        let col_index: rustc_hash::FxHashMap<&Monomial, usize> =
+        let col_index: FxHashMap<&Monomial, usize> =
             columns.iter().enumerate().map(|(c, m)| (m, c)).collect();
 
         // ======== Matrix construction ========
@@ -503,16 +504,16 @@ fn axpy(
     let (mut i, mut j) = (0, 0);
     while i < dst.len() && j < src.len() {
         match dst[i].0.cmp(&src[j].0) {
-            std::cmp::Ordering::Less => {
+            Ordering::Less => {
                 out.push(dst[i].clone());
                 i += 1;
             }
-            std::cmp::Ordering::Greater => {
+            Ordering::Greater => {
                 let v = f.mul(&src[j].1, c);
                 out.push((src[j].0, v));
                 j += 1;
             }
-            std::cmp::Ordering::Equal => {
+            Ordering::Equal => {
                 let v = f.add(&dst[i].1, &f.mul(&src[j].1, c));
                 if !f.is_zero(&v) {
                     out.push((dst[i].0, v));
@@ -852,7 +853,7 @@ fn grobner_basis_inner(
     // criterion: sp(i,j) reduces to zero if some k has lm_k |
     // lcm(lm_i,lm_j) AND the pairs (i,k), (j,k) are THEMSELVES provably
     // zero (processed-to-zero, coprime, or recursively chain-verified).
-    let mut zero_pairs: rustc_hash::FxHashSet<(usize, usize)> = rustc_hash::FxHashSet::default();
+    let mut zero_pairs: FxHashSet<(usize, usize)> = FxHashSet::default();
     let mut pairs: Vec<(usize, usize)> = Vec::new();
     for i in 0..basis.len() {
         for j in (i + 1)..basis.len() {
@@ -882,6 +883,9 @@ fn grobner_basis_inner(
             break;
         }
         if basis.len() > 8 * inputs_len + 64 || max_terms_seen > 512 {
+            // Diagnostics read the environment, which is `std`'s; the breaker
+            // itself does not.
+            #[cfg(feature = "std")]
             if std::env::var_os("NIXIE_FF_STATS").is_some() {
                 eprintln!(
                     "[ff-stats] bloat breaker: basis {} (cap {}), max terms {max_terms_seen}",
@@ -908,8 +912,7 @@ fn grobner_basis_inner(
             let key = pair_key_lms(&lms, *pair);
             let better = best_key.0 > key.0
                 || (best_key.0 == key.0
-                    && cmp_monomials(DEGREVLEX, &best_key.1, &key.1)
-                        == std::cmp::Ordering::Greater);
+                    && cmp_monomials(DEGREVLEX, &best_key.1, &key.1) == Ordering::Greater);
             if better {
                 best = cand;
                 best_key = key;
@@ -1316,7 +1319,7 @@ pub fn standard_monomials(basis: &GrobnerBasis, cap: usize) -> Vec<Monomial> {
         }
     }
     vars.sort_unstable();
-    let mut max_pow: rustc_hash::FxHashMap<Var, u32> = rustc_hash::FxHashMap::default();
+    let mut max_pow: FxHashMap<Var, u32> = FxHashMap::default();
     for lm in &leadings {
         if lm.vars().len() == 1 {
             let v = lm.vars()[0].var;
@@ -1340,7 +1343,7 @@ pub fn standard_monomials(basis: &GrobnerBasis, cap: usize) -> Vec<Monomial> {
     // `Ord`, and deriving one would invite order-vs-canonicalization
     // confusion; explicit `sort_by` it is).
     let mut out: Vec<Monomial> = Vec::new();
-    let mut seen: rustc_hash::FxHashSet<Monomial> = rustc_hash::FxHashSet::default();
+    let mut seen: FxHashSet<Monomial> = FxHashSet::default();
     let mut queue: Vec<Monomial> = vec![Monomial::unit()];
     while let Some(m) = queue.pop() {
         if !seen.insert(m.clone()) {
@@ -1480,7 +1483,7 @@ pub fn minimal_polynomial(
     if std_monomials.is_empty() {
         return None;
     }
-    let index_of: rustc_hash::FxHashMap<Monomial, usize> = std_monomials
+    let index_of: FxHashMap<Monomial, usize> = std_monomials
         .iter()
         .enumerate()
         .map(|(i, m)| (m.clone(), i))
@@ -1505,7 +1508,7 @@ pub fn minimal_polynomial(
         f: &FieldCtx,
         basis: &GrobnerBasis,
         std_monomials: &[Monomial],
-        index_of: &rustc_hash::FxHashMap<Monomial, usize>,
+        index_of: &FxHashMap<Monomial, usize>,
         x: Var,
         k: &Krylov,
         budget: &mut GrobnerBudget,
@@ -1570,6 +1573,7 @@ pub fn minimal_polynomial(
                 acc.poly[i] = f.sub(&acc.poly[i], &sub);
             }
         }
+        #[cfg(feature = "std")]
         if std::env::var("FFDBG_MP").is_ok() {
             let ps: Vec<String> = acc
                 .poly
@@ -1822,7 +1826,7 @@ mod tests {
         // `VarPower` is exercised through `Monomial::from_powers`; keep a
         // direct pin so the import cannot silently rot.
         let vp = VarPower::new(3, 2);
-        let m = Monomial::from_powers(std::iter::once((vp.var, vp.power)));
+        let m = Monomial::from_powers(core::iter::once((vp.var, vp.power)));
         assert_eq!(m.degree(3), 2);
     }
 }
@@ -1891,8 +1895,7 @@ mod agreement_tests {
             // Point-set agreement over all 49 points.
             for x in 0..7i64 {
                 for y in 0..7i64 {
-                    let mut assignment: rustc_hash::FxHashMap<Var, Limbs> =
-                        rustc_hash::FxHashMap::default();
+                    let mut assignment: FxHashMap<Var, Limbs> = FxHashMap::default();
                     assignment.insert(0, f.from_bigint(&num_bigint::BigInt::from(x)));
                     assignment.insert(1, f.from_bigint(&num_bigint::BigInt::from(y)));
                     let inputs_sat = inputs
@@ -1944,8 +1947,7 @@ mod agreement_tests {
             );
             // Cross-check by enumeration.
             let any_point = (0..5i64).any(|x| {
-                let mut assignment: rustc_hash::FxHashMap<Var, Limbs> =
-                    rustc_hash::FxHashMap::default();
+                let mut assignment: FxHashMap<Var, Limbs> = FxHashMap::default();
                 assignment.insert(0, f.from_bigint(&num_bigint::BigInt::from(x)));
                 assignment.insert(99, f.zero());
                 inputs

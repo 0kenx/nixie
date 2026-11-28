@@ -17,9 +17,11 @@
 //! evaluation finds one, the point it fails at.  The verdict is untouched
 //! (decision (40)): the search's own `sat` claim stands.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
+use crate::prelude::{FxHashMap, FxHashSet};
 use nixie_core::ast::{TermId, TermManager};
 use nixie_core::sort::SortId;
-use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
     Combinations, Goal, completion_points, declined, evaluate_closed, is_array_sort,
@@ -167,7 +169,7 @@ impl Solver {
         if let Some(model) = self.model.as_mut() {
             let mut scalars: Vec<(TermId, TermId)> = printed
                 .iter()
-                .filter(|(term, _)| !merged.contains_key(term))
+                .filter(|(term, _)| !merged.contains_key(*term))
                 .map(|(&term, &value)| (term, value))
                 .collect();
             scalars.sort_unstable_by_key(|&(term, _)| term.raw());

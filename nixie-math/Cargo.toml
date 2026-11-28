@@ -22,6 +22,10 @@ rustc-hash.workspace = true
 thiserror = { workspace = true, default-features = false }
 rand = { workspace = true, optional = true }
 hashbrown.workspace = true
+# `sqrt` and `round` and the other `std`-only `f64` methods in the `no_std` build
+# (see `F64Ext` at the crate root); under `std` the inherent methods are used
+# and this crate is not reached.
+libm.workspace = true
 
 [features]
 default = ["std"]

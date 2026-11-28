@@ -63,11 +63,13 @@
 //! non-convex LIA theory combination (Barrett et al., "Decision Procedures",
 //! ch. 10).
 
+#[allow(unused_imports)]
+use crate::prelude::*;
+use crate::prelude::{FxHashMap, FxHashSet};
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_sat::Lit;
 use num_rational::Rational64;
 use num_traits::{CheckedAdd, CheckedSub, ToPrimitive};
-use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 use super::Solver;
@@ -254,7 +256,7 @@ impl Solver {
         // superset of the true integer range, so the case-split never excludes
         // a reachable value (this is the QF_UFLIA false-SAT fix).
         for &t in &uf_args {
-            if let std::collections::hash_map::Entry::Vacant(entry) = bounds.entry(t) {
+            if let hash_map::Entry::Vacant(entry) = bounds.entry(t) {
                 if let Some((lo, hi)) = self.arith.lp_int_bounds(t) {
                     // A single-value LP range `[v, v]` would make the case-split
                     // a permanent unit `(t = v)`.  That is only sound when `t` is
@@ -484,9 +486,9 @@ impl Solver {
     /// The theory records requests unless `NIXIE_LIA_BRANCH_LEMMA=0`
     /// disarms the channel (armed by default since rung 3).
     fn lia_branch_null() -> bool {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static ON: OnceLock<bool> = OnceLock::new();
-        *ON.get_or_init(|| std::env::var_os("NIXIE_LIA_BRANCH_NULL").is_some())
+        *ON.get_or_init(|| crate::env::var_os("NIXIE_LIA_BRANCH_NULL").is_some())
     }
 
     pub(super) fn refine_lia_branch_requests(&mut self, manager: &mut TermManager) -> bool {

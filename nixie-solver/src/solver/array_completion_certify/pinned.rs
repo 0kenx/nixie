@@ -41,11 +41,13 @@
 //! value equals the default is dropped, so the printed interpretation carries
 //! no redundant `store`.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
+use crate::prelude::{FxHashMap, FxHashSet};
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::reserved::reserved_name;
 use nixie_core::sort::{SortId, SortKind};
 use num_bigint::BigInt;
-use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{Combinations, Goal, const_array, is_literal, peel_universal_with_vars};
 use crate::solver::{Solver, SolverResult};

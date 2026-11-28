@@ -45,8 +45,10 @@
 //! assertion, so it contributes nothing to a conflict clause – which is a very
 //! different statement from "the justification was lost".
 
+use crate::prelude::FxHashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::TermId;
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 /// One tag's explanation: the literal terms that justify the derived equality,
@@ -87,7 +89,7 @@ pub(crate) struct DerivedReasons {
     pub lemma_log_poisoned: bool,
     /// Dedup keys for [`Self::theory_lemmas`] (sorted atom/polarity pairs,
     /// hashed).
-    lemma_keys: std::collections::HashSet<u64>,
+    lemma_keys: HashSet<u64>,
 }
 
 impl DerivedReasons {

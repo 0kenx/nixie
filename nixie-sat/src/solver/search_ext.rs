@@ -704,7 +704,7 @@ impl Solver {
             // unit-clause lemma; the certified gate's congruence-closure
             // check verifies it (e.g. a reflexivity fact `t = t` verifies,
             // anything contingent fails and the certification declines).
-            theory.record_lemma(std::slice::from_ref(&lit));
+            theory.record_lemma(core::slice::from_ref(&lit));
             // The theory's view was just rewound to level 0, so a unit may now
             // collide with a pre-existing level-0 fact.
             match self.trail.lit_value(lit) {

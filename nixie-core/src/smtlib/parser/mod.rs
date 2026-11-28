@@ -313,7 +313,7 @@ pub struct Parser<'a> {
     /// (hundreds of bindings, each referencing earlier ones) would re-measure
     /// the whole referenced DAG per binding – quadratic in the file, and parse
     /// time would dwarf the solve.
-    pub(super) depth_memo: std::cell::RefCell<FxHashMap<TermId, u32>>,
+    pub(super) depth_memo: core::cell::RefCell<FxHashMap<TermId, u32>>,
 }
 
 impl<'a> Parser<'a> {
@@ -335,7 +335,7 @@ impl<'a> Parser<'a> {
             dt_selectors: FxHashMap::default(),
             dt_sorts: FxHashMap::default(),
             script_mode: false,
-            depth_memo: std::cell::RefCell::new(FxHashMap::default()),
+            depth_memo: core::cell::RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -444,7 +444,7 @@ impl<'a> Parser<'a> {
             dt_selectors: FxHashMap::default(),
             dt_sorts: FxHashMap::default(),
             script_mode: false,
-            depth_memo: std::cell::RefCell::new(FxHashMap::default()),
+            depth_memo: core::cell::RefCell::new(FxHashMap::default()),
         }
     }
 

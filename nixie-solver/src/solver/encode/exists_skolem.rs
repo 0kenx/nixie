@@ -67,6 +67,8 @@
 //! existentials.
 
 use crate::prelude::FxHashSet;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 
 use crate::skolemization::SkolemizationContext;

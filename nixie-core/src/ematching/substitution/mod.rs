@@ -254,7 +254,7 @@ impl SubstitutionCache {
 
     /// Hash a substitution for caching
     fn hash_substitution(&self, subst: &Substitution) -> u64 {
-        use crate::prelude::hash_map::DefaultHasher;
+        use crate::prelude::DefaultHasher;
         use core::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();

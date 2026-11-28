@@ -47,6 +47,8 @@
 //! which the ICP engine hits heavily (it re-evaluates the same endpoints
 //! across propagation rounds).
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 use core::cmp::min as imin;
 use num_bigint::BigInt;
 use num_integer::Integer;

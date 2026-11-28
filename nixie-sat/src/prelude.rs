@@ -22,6 +22,9 @@ pub(crate) use hashbrown::{HashMap, HashSet, hash_map};
 #[cfg(feature = "std")]
 #[allow(unused_imports)]
 pub(crate) use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque, hash_map};
+#[cfg(feature = "std")]
+#[allow(unused_imports)]
+pub(crate) use std::{boxed::Box, format, string::String, vec};
 
 #[cfg(feature = "std")]
 #[allow(unused_imports)]
@@ -55,3 +58,13 @@ macro_rules! eprintln {
 #[cfg(not(feature = "std"))]
 #[allow(unused_imports)]
 pub(crate) use eprintln;
+
+// Under `no_std` the `std`-only `f64` methods (`log10`, `ceil`, ...) come
+// from `F64Ext` and `std::sync::{Mutex, OnceLock}` from their stand-ins (all
+// defined in `nixie_core::no_std`); every module gets them through this glob.
+#[cfg(not(feature = "std"))]
+#[allow(unused_imports)]
+pub(crate) use nixie_core::no_std::{F64Ext, Mutex, OnceLock};
+#[cfg(feature = "std")]
+#[allow(unused_imports)]
+pub(crate) use std::sync::{Mutex, OnceLock};

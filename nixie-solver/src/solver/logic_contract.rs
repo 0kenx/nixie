@@ -19,6 +19,8 @@
 //! pin exactly the failure modes substring decoding produces (an invented
 //! name containing "NIA" must not install the nonlinear backend).
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::sort::{SortId, SortKind};
 
@@ -1130,7 +1132,7 @@ impl Capabilities {
     /// treat the formula as unvalidated rather than guess.
     pub fn collect(assertion: TermId, manager: &TermManager) -> Option<Self> {
         let mut caps = Self::default();
-        let mut visited: std::collections::HashSet<TermId> = std::collections::HashSet::new();
+        let mut visited: HashSet<TermId> = HashSet::new();
         let mut stack: Vec<TermId> = vec![assertion];
         let int_sort = manager.sorts.int_sort;
         let real_sort = manager.sorts.real_sort;

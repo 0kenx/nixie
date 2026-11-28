@@ -1,10 +1,12 @@
 //! Candidate-driven functional congruence. Every emitted clause is the valid
 //! Ackermann implication, never an unconditional equality of model collisions.
 use super::{Model, Solver};
+#[allow(unused_imports)]
+use crate::prelude::*;
+use crate::prelude::{FxHashMap, FxHashSet};
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::interner::Spur;
 use nixie_core::sort::{SortId, SortKind};
-use rustc_hash::{FxHashMap, FxHashSet};
 
 const MAX_WORK: usize = 100_000;
 const MAX_LEMMAS: usize = 256;

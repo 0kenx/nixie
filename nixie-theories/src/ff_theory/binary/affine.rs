@@ -7,6 +7,8 @@
 //! See docs/studies/2026-09-23-ff-affine.md for algorithm references.
 
 use super::*;
+#[allow(unused_imports)]
+use crate::prelude::*;
 
 type Affine = Vec<u32>;
 

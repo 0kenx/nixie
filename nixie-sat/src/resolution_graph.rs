@@ -299,7 +299,7 @@ impl ResolutionGraph {
             .map(|(&var, &count)| (var, count))
             .collect();
 
-        vars.sort_by_key(|item| std::cmp::Reverse(item.1));
+        vars.sort_by_key(|item| core::cmp::Reverse(item.1));
         vars.truncate(k);
         vars
     }

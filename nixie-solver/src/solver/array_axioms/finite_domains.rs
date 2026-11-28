@@ -3,9 +3,9 @@
 use super::ArrayStructure;
 #[allow(unused_imports)]
 use crate::prelude::*;
+use crate::prelude::{FxHashMap, FxHashSet};
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::sort::{SortId, SortKind};
-use rustc_hash::{FxHashMap, FxHashSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Cardinality {

@@ -2,19 +2,24 @@
 
 use super::core::*;
 use crate::error::Result;
+#[cfg(feature = "std")]
+use crate::prelude::Arc;
 #[allow(unused_imports)]
 use crate::prelude::*;
+#[cfg(feature = "std")]
 use core::cell::RefCell;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(feature = "std")]
+use core::sync::atomic::{AtomicBool, Ordering};
 
 /// Grace period (in milliseconds) [`TimeoutTactic`] waits, after its
 /// deadline elapses, for a cooperative worker to notice
 /// [`cancellation_requested`] and finish before handing the still-running
 /// `JoinHandle` off to a background reaper. Capped by `timeout_ms` itself
 /// so a very short timeout does not turn into a long extra wait.
+#[cfg(feature = "std")]
 const TIMEOUT_GRACE_PERIOD_MS: u64 = 500;
 
+#[cfg(feature = "std")]
 thread_local! {
     /// Cancellation flag for the [`Tactic::apply`] call currently
     /// executing on this thread, installed by an enclosing
@@ -36,12 +41,19 @@ thread_local! {
 /// Tactics that never poll this still terminate correctly (the wrapping
 /// thread is always eventually joined, see `TimeoutTactic::apply`), just
 /// not promptly.
+#[cfg(feature = "std")]
 pub fn cancellation_requested() -> bool {
     TACTIC_CANCEL_FLAG.with(|flag| {
         flag.borrow()
             .as_ref()
             .is_some_and(|f| f.load(Ordering::Relaxed))
     })
+}
+
+/// Without threads there is no [`TimeoutTactic`] to ask: nothing is cancelled.
+#[cfg(not(feature = "std"))]
+pub fn cancellation_requested() -> bool {
+    false
 }
 
 /// Sequential combinator - applies tactics in sequence
@@ -222,10 +234,12 @@ impl Tactic for RepeatTactic {
 /// - Return the first `Solved` result if any tactic solves the goal
 /// - Return the first `SubGoals` result if no tactic solves but one produces subgoals
 /// - Return `Failed` if all tactics fail
+#[cfg(feature = "std")]
 pub struct ParallelTactic {
-    tactics: Vec<std::sync::Arc<dyn Tactic>>,
+    tactics: Vec<Arc<dyn Tactic>>,
 }
 
+#[cfg(feature = "std")]
 impl core::fmt::Debug for ParallelTactic {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("ParallelTactic")
@@ -234,9 +248,10 @@ impl core::fmt::Debug for ParallelTactic {
     }
 }
 
+#[cfg(feature = "std")]
 impl ParallelTactic {
     /// Create a new parallel combinator from Arc-wrapped tactics
-    pub fn new(tactics: Vec<std::sync::Arc<dyn Tactic>>) -> Self {
+    pub fn new(tactics: Vec<Arc<dyn Tactic>>) -> Self {
         Self { tactics }
     }
 
@@ -245,12 +260,13 @@ impl ParallelTactic {
         Self {
             tactics: tactics
                 .into_iter()
-                .map(|t| -> std::sync::Arc<dyn Tactic> { t.into() })
+                .map(|t| -> Arc<dyn Tactic> { t.into() })
                 .collect(),
         }
     }
 }
 
+#[cfg(feature = "std")]
 impl Tactic for ParallelTactic {
     fn name(&self) -> &str {
         "parallel"
@@ -279,7 +295,7 @@ impl Tactic for ParallelTactic {
             .map(|(idx, tactic)| {
                 let goal_clone = goal.clone();
                 let tx_clone = tx.clone();
-                let tactic_clone = std::sync::Arc::clone(tactic);
+                let tactic_clone = Arc::clone(tactic);
 
                 thread::spawn(move || {
                     let result = tactic_clone.apply(&goal_clone);
@@ -349,11 +365,13 @@ impl Tactic for ParallelTactic {
 /// This tactic wraps another tactic and enforces a maximum execution time.
 /// If the wrapped tactic doesn't complete within the timeout, it returns Failed.
 /// Timeout combinator - limits execution time of a tactic
+#[cfg(feature = "std")]
 pub struct TimeoutTactic {
-    tactic: std::sync::Arc<dyn Tactic>,
+    tactic: Arc<dyn Tactic>,
     timeout_ms: u64,
 }
 
+#[cfg(feature = "std")]
 impl core::fmt::Debug for TimeoutTactic {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("TimeoutTactic")
@@ -363,13 +381,14 @@ impl core::fmt::Debug for TimeoutTactic {
     }
 }
 
+#[cfg(feature = "std")]
 impl TimeoutTactic {
     /// Create a new timeout tactic
     ///
     /// # Arguments
     /// * `tactic` - The tactic to run with a timeout
     /// * `timeout_ms` - Timeout in milliseconds
-    pub fn new(tactic: std::sync::Arc<dyn Tactic>, timeout_ms: u64) -> Self {
+    pub fn new(tactic: Arc<dyn Tactic>, timeout_ms: u64) -> Self {
         Self { tactic, timeout_ms }
     }
 
@@ -382,6 +401,7 @@ impl TimeoutTactic {
     }
 }
 
+#[cfg(feature = "std")]
 impl Tactic for TimeoutTactic {
     fn name(&self) -> &str {
         "timeout"
@@ -394,7 +414,7 @@ impl Tactic for TimeoutTactic {
 
         let (tx, rx) = mpsc::channel();
         let goal_clone = goal.clone();
-        let tactic_clone = std::sync::Arc::clone(&self.tactic);
+        let tactic_clone = Arc::clone(&self.tactic);
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_for_worker = Arc::clone(&cancel);
 

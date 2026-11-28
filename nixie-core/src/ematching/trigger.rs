@@ -533,7 +533,7 @@ impl TriggerGenerator {
         }
 
         // Sort by coverage (descending)
-        candidate_vars.sort_by_key(|item| std::cmp::Reverse(item.1.len()));
+        candidate_vars.sort_by_key(|item| core::cmp::Reverse(item.1.len()));
 
         // Greedy selection
         let mut current_set = SmallVec::new();

@@ -2,6 +2,8 @@
 //! an array index position's relevant set (`#P2b-60`; see
 //! `mbqi::sat_certify::unnamed_region`).
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 
 use super::super::model_completion::CompletedModel;

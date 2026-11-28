@@ -1706,7 +1706,7 @@ impl Solver {
         // entries on this box, so each lookup is a linear scan).
         #[cfg(feature = "std")]
         {
-            use std::sync::OnceLock;
+            use crate::prelude::OnceLock;
             static FLAG: OnceLock<bool> = OnceLock::new();
             *FLAG.get_or_init(|| std::env::var("NIXIE_SHRINK_TRACE").is_ok())
         }
@@ -1891,7 +1891,7 @@ impl Solver {
                     (key, l)
                 })
                 .collect();
-            keyed.sort_unstable_by_key(|&(key, _)| std::cmp::Reverse(key));
+            keyed.sort_unstable_by_key(|&(key, _)| core::cmp::Reverse(key));
             #[cfg(feature = "bcp-stats")]
             {
                 use crate::diag_bcp::analysis::*;

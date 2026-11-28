@@ -60,7 +60,9 @@
 //! real-sorted difference logic to the sparse `Rational64` engine instead –
 //! see `solver.rs`.)
 
-use rustc_hash::FxHashMap;
+use crate::prelude::FxHashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 
 /// No supporting edge (Z3 `null_edge_id`).
 pub const NO_EDGE: u32 = u32::MAX;

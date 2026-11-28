@@ -24,10 +24,11 @@
 //! asymmetry is why `Solver::flatten_lookup_spines` populates the priority
 //! list but `enable_domain_first_branching` defaults to `false` – see
 //! `SolverConfig`'s doc comment.
-use std::sync::{Arc, Mutex};
+#[allow(unused_imports)]
+use crate::prelude::*;
 
-use nixie_sat::{BoxedBranchingHeuristic, BranchingHeuristic, Var};
-use rustc_hash::FxHashSet;
+use crate::prelude::FxHashSet;
+use nixie_sat::{BoxedBranchingHeuristic, BranchingHeuristic, Var, boxed_heuristic};
 
 use super::Solver;
 
@@ -61,9 +62,9 @@ impl BranchingHeuristic for PriorityHeuristic {
 /// `nixie_sat::SolverConfig::external_branching`.
 pub(super) fn new_priority_branching() -> (PriorityQueue, BoxedBranchingHeuristic) {
     let queue: PriorityQueue = Arc::new(Mutex::new(Vec::new()));
-    let heuristic: BoxedBranchingHeuristic = Arc::new(Mutex::new(PriorityHeuristic {
+    let heuristic: BoxedBranchingHeuristic = boxed_heuristic(PriorityHeuristic {
         queue: Arc::clone(&queue),
-    }));
+    });
     (queue, heuristic)
 }
 

@@ -8,6 +8,8 @@ use super::simplex::{
     LinExpr, Simplex, SnapBound, VarId, checked_add_r64, checked_div_r64, checked_mul_r64,
     checked_sub_r64,
 };
+#[allow(unused_imports)]
+use crate::prelude::*;
 use num_rational::Rational64;
 use num_traits::Zero;
 

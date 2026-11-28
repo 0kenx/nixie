@@ -31,7 +31,8 @@
 
 use super::*;
 use crate::literal::LBool;
-use rustc_hash::FxHashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum GateType {
@@ -576,7 +577,7 @@ pub(super) fn ssr_binaries_enabled() -> bool {
 pub(super) fn ssr_binaries_enabled() -> bool {
     #[cfg(feature = "std")]
     {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| {
             !std::env::var("NIXIE_SSR_BIN")
@@ -672,7 +673,7 @@ pub(super) fn els_presearch_arm_enabled() -> bool {
 pub(super) fn els_presearch_arm_enabled() -> bool {
     #[cfg(feature = "std")]
     {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| {
             !std::env::var("NIXIE_ELS_PRESEARCH")

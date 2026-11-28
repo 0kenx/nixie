@@ -40,7 +40,8 @@
 
 use super::*;
 use crate::literal::LBool;
-use std::collections::BinaryHeap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 
 pub(super) use super::equiv::SubstOutcome;
 
@@ -51,7 +52,7 @@ pub(super) use super::equiv::SubstOutcome;
 pub(super) fn elim_dtl_enabled() -> bool {
     #[cfg(feature = "std")]
     {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| std::env::var("NIXIE_LOG_ELIMDTL").is_ok())
     }
@@ -66,7 +67,7 @@ pub(super) fn elim_dtl_enabled() -> bool {
 pub fn elim_onesided_enabled() -> bool {
     #[cfg(feature = "std")]
     {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| std::env::var("NIXIE_ELIM_ONESIDED").is_ok())
     }
@@ -82,7 +83,7 @@ pub fn elim_onesided_enabled() -> bool {
 /// `None` when unset.
 #[cfg(feature = "std")]
 fn elim_reset_phases_threshold() -> Option<u64> {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<Option<u64>> = OnceLock::new();
     *FLAG.get_or_init(|| {
         std::env::var("NIXIE_ELIM_RESET_PHASES")
@@ -347,7 +348,7 @@ struct Eliminator {
     /// marked (same scheme as `subsume.rs`).
     mark: Vec<i8>,
     /// Elimination schedule (min-heap on `ElimRank`).
-    schedule: BinaryHeap<std::cmp::Reverse<(ElimRank, u32)>>,
+    schedule: BinaryHeap<core::cmp::Reverse<(ElimRank, u32)>>,
     /// Variables popped from the schedule this round, including retries
     /// (cadical's `tried` diagnostic: pops minus the schedule remainder).
     tried: usize,
@@ -1138,12 +1139,12 @@ impl Solver {
                     ctx.noccs[Lit::pos(Var::new(idx as u32)).code() as usize],
                     ctx.noccs[Lit::neg(Var::new(idx as u32)).code() as usize],
                 );
-                ctx.schedule.push(std::cmp::Reverse((rank, idx as u32)));
+                ctx.schedule.push(core::cmp::Reverse((rank, idx as u32)));
             }
         }
         self.elim_mark_count = 0;
 
-        while let Some(std::cmp::Reverse((_, v))) = ctx.schedule.pop() {
+        while let Some(core::cmp::Reverse((_, v))) = ctx.schedule.pop() {
             if self.trivially_unsat {
                 break;
             }
@@ -1165,7 +1166,7 @@ impl Solver {
         // including a pivot interrupted inside its pair product. Otherwise
         // draining the round-local heap loses the only scheduling marks.
         if ctx.resolution_aborted {
-            for std::cmp::Reverse((_, v)) in ctx.schedule.drain() {
+            for core::cmp::Reverse((_, v)) in ctx.schedule.drain() {
                 self.mark_elim_one(Var::new(v));
             }
         }
@@ -2002,7 +2003,7 @@ impl Solver {
                     ctx.noccs[Lit::neg(v).code() as usize],
                 );
                 ctx.schedule
-                    .push(std::cmp::Reverse((rank, v.index() as u32)));
+                    .push(core::cmp::Reverse((rank, v.index() as u32)));
             }
         }
         // Physical removal from `occs` is lazy (filtered on access).
@@ -2116,7 +2117,7 @@ impl Solver {
                     ctx.noccs[Lit::neg(v).code() as usize],
                 );
                 ctx.schedule
-                    .push(std::cmp::Reverse((rank, v.index() as u32)));
+                    .push(core::cmp::Reverse((rank, v.index() as u32)));
             }
         }
         // The shrunken clause may now subsume others: queue it.
@@ -2661,7 +2662,7 @@ impl Solver {
         // `(¬g ∨ xi)` (an "actual binary": a longer clause with all other
         // literals falsified counts, mirroring cadical's
         // `second_literal_in_binary_clause`).
-        let mut side_of: rustc_hash::FxHashMap<u32, ClauseId> = rustc_hash::FxHashMap::default();
+        let mut side_of: FxHashMap<u32, ClauseId> = FxHashMap::default();
         for cid in ctx.occs.iter(neg.code() as usize) {
             let Some(c) = self.clauses.get(cid) else {
                 continue;

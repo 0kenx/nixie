@@ -161,7 +161,7 @@ impl DelayedCombination {
         self.stats.forced_propagations += 1;
 
         // Collect deferred equalities to avoid borrow checker issues
-        let equalities: Vec<_> = std::mem::take(&mut self.deferred);
+        let equalities: Vec<_> = core::mem::take(&mut self.deferred);
         for eq in equalities {
             self.propagate_equality(eq.lhs, eq.rhs, eq.source_theory);
         }

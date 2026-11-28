@@ -536,17 +536,14 @@ pub enum TraceKind {
 }
 /// The diagnosis counters themselves (see [`TraceKind`]); the GNF driver
 /// prints them under `STATS=1`.
-pub static TRACE: [std::sync::atomic::AtomicU64; TraceKind::KindCount as usize] =
-    [const { std::sync::atomic::AtomicU64::new(0) }; TraceKind::KindCount as usize];
+pub static TRACE: [core::sync::atomic::AtomicU64; TraceKind::KindCount as usize] =
+    [const { core::sync::atomic::AtomicU64::new(0) }; TraceKind::KindCount as usize];
 
-#[cfg(feature = "std")]
-/// Bump a [`TraceKind`] counter (no-op off `std`).
+/// Bump a [`TraceKind`] counter.
 pub fn trace_bump(kind: TraceKind) {
-    use std::sync::atomic::Ordering;
+    use core::sync::atomic::Ordering;
     TRACE[kind as usize].fetch_add(1, Ordering::Relaxed);
 }
-#[cfg(not(feature = "std"))]
-pub fn trace_bump(_kind: TraceKind) {}
 
 /// Negative ("possible") reachability over the backward closure, following
 /// MonoSAT's `buildNonReachReason`: `seen` is the set of vertices that can
@@ -1633,7 +1630,7 @@ impl GraphModel {
                     // conflict's witness was stashed by the returning site;
                     // a missing one is a broken invariant – fail closed.
                     let Some(rule) = self.conflict_rules.get(g).cloned().flatten() else {
-                        if std::env::var("NIXIE_GRAPH_CERT_DEBUG").is_ok() {
+                        if crate::env::var("NIXIE_GRAPH_CERT_DEBUG").is_ok() {
                             eprintln!("RUN FALLBACK graph {g}");
                         }
                         return PropagatorResult::Unknown;
@@ -1876,7 +1873,7 @@ impl GraphModel {
                     };
                     if search_reaches {
                         let (Some(mut conflict), Some(edges)) = (path, witness) else {
-                            if std::env::var("NIXIE_GRAPH_CERT_DEBUG").is_ok() {
+                            if crate::env::var("NIXIE_GRAPH_CERT_DEBUG").is_ok() {
                                 eprintln!("PATH CONFLICT FALLBACK");
                             }
                             return PropagatorResult::Unknown;
@@ -2137,8 +2134,8 @@ impl UserPropagator for GraphModel {
     /// only: the search layer skips assigned literals and any proposed
     /// literal is a legal decision.
     fn decide(&mut self) -> Option<(TermId, bool)> {
-        static ARM: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-        let arm = *ARM.get_or_init(|| match std::env::var("NIXIE_GRAPH_DECIDE").as_deref() {
+        static ARM: crate::prelude::OnceLock<u8> = crate::prelude::OnceLock::new();
+        let arm = *ARM.get_or_init(|| match crate::env::var("NIXIE_GRAPH_DECIDE").as_deref() {
             Ok("1") => 1,
             Ok("2") => 2,
             Ok("3") => 3,

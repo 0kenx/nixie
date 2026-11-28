@@ -28,12 +28,14 @@
 //! Learned clauses only prune; a buggy clause can at worst miss a model or slow
 //! the search, never produce a wrong answer.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 use num_bigint::BigInt;
 use num_rational::Rational64;
 use num_traits::{ToPrimitive, Zero};
 
+use crate::prelude::FxHashMap;
 use nixie_core::ast::{TermId, TermKind, TermManager};
-use rustc_hash::FxHashMap;
 
 use crate::ania_ground::eval_assertions_true;
 use crate::arithmetic::simplex::{LinExpr, Simplex, VarId};
@@ -93,7 +95,7 @@ pub fn cdcl_nia_search(
 }
 
 fn env_u64(name: &str, default: u64) -> u64 {
-    std::env::var(name)
+    crate::env::var(name)
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(default)
@@ -1378,8 +1380,8 @@ impl<'a> CdclSolver<'a> {
         self.simplex.check().is_ok()
     }
 
-    fn extract_env(&self) -> std::collections::HashMap<TermId, BigInt> {
-        let mut env = std::collections::HashMap::new();
+    fn extract_env(&self) -> HashMap<TermId, BigInt> {
+        let mut env = HashMap::new();
         for (&t, &vid) in &self.var {
             let r = self.simplex.value(vid);
             let v = if r.is_integer() {
@@ -1397,8 +1399,8 @@ impl<'a> CdclSolver<'a> {
     /// capture from an earlier feasible check cannot be used – later splits
     /// and conflicts move the live values, and a stale capture made the
     /// concrete verification test a model the search had already left.
-    fn feasible_env(&self) -> Option<std::collections::HashMap<TermId, BigInt>> {
-        let mut env = std::collections::HashMap::new();
+    fn feasible_env(&self) -> Option<HashMap<TermId, BigInt>> {
+        let mut env = HashMap::new();
         for (&t, &vid) in &self.var {
             let rv = self.captured_value(vid);
             if !rv.is_integer() {
@@ -1450,7 +1452,7 @@ fn signed(var: usize, value: i8) -> i32 {
 }
 
 fn concrete_sat(
-    env: &std::collections::HashMap<TermId, BigInt>,
+    env: &HashMap<TermId, BigInt>,
     assertions: &[TermId],
     manager: &TermManager,
 ) -> bool {

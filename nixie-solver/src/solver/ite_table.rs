@@ -14,11 +14,13 @@
 //!
 //! so nested tool-generated nests unit-propagate / collapse once indices pin.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
+use crate::prelude::{FxHashMap, FxHashSet};
 use nixie_core::ast::{TermId, TermKind, TermManager, collect_subterms};
 use nixie_core::sort::SortId;
 use nixie_sat::Lit;
 use num_traits::ToPrimitive;
-use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::Solver;
 use super::types::Constraint;
@@ -55,7 +57,7 @@ impl Solver {
         }
 
         let mut covered: FxHashSet<TermId> = FxHashSet::default();
-        matches.sort_by_key(|m| std::cmp::Reverse(m.cases.len()));
+        matches.sort_by_key(|m| core::cmp::Reverse(m.cases.len()));
         let mut maximal: Vec<EqIteTable> = Vec::with_capacity(matches.len());
         for m in matches {
             if covered.contains(&m.root) {
@@ -352,7 +354,7 @@ impl Solver {
         if self.table_index_terms.is_empty() {
             return;
         }
-        let dbg = std::env::var("NIXIE_DBG_ITE").is_ok();
+        let dbg = crate::env::var("NIXIE_DBG_ITE").is_ok();
         let mut bounds: FxHashMap<TermId, (Option<i64>, Option<i64>)> = FxHashMap::default();
         for &assertion in &self.assertions {
             collect_conjunctive_int_bounds(assertion, manager, &mut bounds, &self.unit_eq_rep);
@@ -484,7 +486,7 @@ impl Solver {
                 .iter()
                 .map(|&(k, lit)| (scores.get(&k).copied().unwrap_or(0), lit))
                 .collect();
-            keyed.sort_by_key(|x| std::cmp::Reverse(x.0));
+            keyed.sort_by_key(|x| core::cmp::Reverse(x.0));
             // Only force-priority the top keys of large domains (rest via VSIDS).
             let top_n = if vals.len() <= 8 {
                 vals.len()

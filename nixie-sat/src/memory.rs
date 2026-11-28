@@ -62,6 +62,8 @@
 
 use crate::clause::{ClauseId, ClauseTier};
 use crate::literal::Lit;
+#[allow(unused_imports)]
+use crate::prelude::*;
 
 /// Clause reference: byte offset of the clause's slot in the arena.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

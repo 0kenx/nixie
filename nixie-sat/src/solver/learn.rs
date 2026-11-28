@@ -21,7 +21,7 @@ pub(super) fn theory_reason_literals(
         }
     } else {
         // Local scratch only: no marks can leak across calls or push/pop.
-        let mut seen = rustc_hash::FxHashSet::default();
+        let mut seen = FxHashSet::default();
         seen.reserve(reason_lits.len());
         seen.insert(propagated_lit.var());
         for &lit in reason_lits {
@@ -60,7 +60,7 @@ pub(super) const THEORY_LAZY_SWITCH_AFTER: u64 = 1_000_000;
 /// `NIXIE_FOCUSED_MARGIN_NULL=1`: arms the matched null for the margin arm.
 #[cfg(feature = "std")]
 fn focused_margin_null_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| std::env::var("NIXIE_FOCUSED_MARGIN_NULL").is_ok_and(|v| v == "1"))
 }
@@ -73,7 +73,7 @@ fn focused_margin_null_enabled() -> bool {
 /// `NIXIE_FOCUSED_FIRE_EVERY=k` (default 20): the null's pass-skip period.
 #[cfg(feature = "std")]
 fn focused_fire_every() -> u64 {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static K: OnceLock<u64> = OnceLock::new();
     *K.get_or_init(|| {
         std::env::var("NIXIE_FOCUSED_FIRE_EVERY")
@@ -97,7 +97,7 @@ fn focused_fire_every() -> u64 {
 /// stays below 3 keep margin exactly 1.10 – bit-identical trajectories.
 #[cfg(feature = "std")]
 fn focused_adaptive_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| std::env::var("NIXIE_FOCUSED_ADAPTIVE").is_ok_and(|v| v == "1"))
 }
@@ -120,7 +120,7 @@ pub(super) fn adaptive_margin(dec_conf_ema: f64) -> f64 {
 
 #[cfg(feature = "std")]
 fn focused_restart_margin() -> f64 {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static MARGIN: OnceLock<f64> = OnceLock::new();
     *MARGIN.get_or_init(|| {
         std::env::var("NIXIE_FOCUSED_MARGIN")
@@ -154,17 +154,12 @@ pub(super) const DROUGHT_WARMUP: u64 = 1_000;
 pub(super) const DROUGHT_GAP_K: f64 = 8.0;
 
 pub(super) fn inproc_round_trace_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_INPROC_TRACE")
+        crate::env::var("NIXIE_INPROC_TRACE")
             .is_ok_and(|v| !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
     })
-}
-
-#[cfg(not(feature = "std"))]
-pub(super) fn inproc_round_trace_enabled() -> bool {
-    false
 }
 
 /// Whether the effort-relative inprocessing-round schedule is on.
@@ -179,7 +174,7 @@ pub(super) fn inproc_round_trace_enabled() -> bool {
 /// budgets); the null arm `NIXIE_INPROC_SCHED_NULL=1` still implies it.
 #[cfg(feature = "std")]
 pub(super) fn inproc_sched_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
         if std::env::var("NIXIE_INPROC_SCHED_NULL").is_ok_and(|v| !v.is_empty() && v != "0") {
@@ -205,7 +200,7 @@ pub(super) fn inproc_sched_enabled() -> bool {
 /// their true window (nothing to lag from).
 #[cfg(feature = "std")]
 pub(super) fn inproc_sched_null() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
         std::env::var("NIXIE_INPROC_SCHED_NULL")
@@ -228,7 +223,7 @@ pub(super) fn inproc_sched_null() -> bool {
 /// mid-size instances entirely).  `NIXIE_INPROC_VIVSKIP=1` restores
 /// cadical's τ=20 skip for A/B.
 pub(super) fn vivify_thresh_disabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
         !std::env::var("NIXIE_INPROC_VIVSKIP")
@@ -1025,7 +1020,7 @@ impl Solver {
             "force_theory_unit requires decision level 0 (caller backtracks first)"
         );
         // Store the unit lemma (Core tier, tracked for reduction).
-        let clause_id = self.clauses.add_learned(std::iter::once(lit));
+        let clause_id = self.clauses.add_learned(core::iter::once(lit));
         self.learned_clause_ids.push(clause_id);
         // Scope-record like every other learned clause (see `learn_clause`):
         // a level-0 theory fact is entailed by the current scope's atoms;
@@ -1438,13 +1433,13 @@ impl Solver {
         // Cached (this fires per reduce round): the three tier percentages,
         // historical defaults 10 / 30 / 75 (see the standing-gap study for
         // the retention experiments behind the knobs).
-        static PCT_CORE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-        static PCT_MID: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-        static PCT_LOCAL: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        static PCT_CORE: crate::prelude::OnceLock<usize> = crate::prelude::OnceLock::new();
+        static PCT_MID: crate::prelude::OnceLock<usize> = crate::prelude::OnceLock::new();
+        static PCT_LOCAL: crate::prelude::OnceLock<usize> = crate::prelude::OnceLock::new();
         let pct =
-            |flag: &'static std::sync::OnceLock<usize>, name: &str, default: usize| -> usize {
+            |flag: &'static crate::prelude::OnceLock<usize>, name: &str, default: usize| -> usize {
                 *flag.get_or_init(|| {
-                    std::env::var(name)
+                    crate::env::var(name)
                         .ok()
                         .and_then(|v| v.parse::<usize>().ok())
                         .filter(|p| *p <= 100)
@@ -3364,7 +3359,7 @@ impl Solver {
         // keeps everything else).  This is the counter the mixed-per-work
         // cost analysis lacked – cross-solver wall comparisons folded the
         // inprocessing share into "per-prop cost" invisibly.
-        let t0 = std::time::Instant::now();
+        let t0 = nixie_time::Instant::now();
         self.inprocess_inner();
         self.stats.inprocessing_ns = self
             .stats
@@ -3427,7 +3422,7 @@ impl Solver {
         // subsumption's.  Propagation is the dominant round cost on the
         // corpus (occurrence scans barely propagate); diagnostic only.
         let els_p0 = t.then_some(self.stats.propagations);
-        let els_w0 = t.then(std::time::Instant::now);
+        let els_w0 = t.then(nixie_time::Instant::now);
 
         // Equivalent-literal substitution round (cadical interleaves its
         // `decompose`/`sweep`-class ELS inside the inprocessing schedule).
@@ -3494,7 +3489,7 @@ impl Solver {
             diag_wall[0] = w.elapsed().as_micros() as u64;
         }
         let bva_p0 = t.then_some(self.stats.propagations);
-        let bva_w0 = t.then(std::time::Instant::now);
+        let bva_w0 = t.then(nixie_time::Instant::now);
         let mut introduced_now = 0usize;
         if self.config.enable_mid_bva {
             let (n, _saved) = self.structured_bva_mid();
@@ -3536,7 +3531,7 @@ impl Solver {
         let mut preprocessor = Preprocessor::new(self.num_vars);
         // Per-pass cost attribution: pure-literal + subsume pass marker.
         let puresub_p0 = t.then_some(self.stats.propagations);
-        let puresub_w0 = t.then(std::time::Instant::now);
+        let puresub_w0 = t.then(nixie_time::Instant::now);
         // Snapshot every live clause's literals before the elimination passes
         // below run. `Preprocessor::pure_literal_elimination` and
         // `subsumption_elimination` retire clauses by setting `Clause::deleted`
@@ -3687,7 +3682,7 @@ impl Solver {
             diag_wall[2] = w.elapsed().as_micros() as u64;
         }
         let viv_p0 = t.then_some(self.stats.propagations);
-        let viv_w0 = t.then(std::time::Instant::now);
+        let viv_w0 = t.then(nixie_time::Instant::now);
 
         // Vivification round (cadical schedules `vivify` inside its
         // inprocessing rounds): shortens both learned and – when no proof is
@@ -3704,7 +3699,7 @@ impl Solver {
             diag_wall[3] = w.elapsed().as_micros() as u64;
         }
         let tred_p0 = t.then_some(self.stats.propagations);
-        let tred_w0 = t.then(std::time::Instant::now);
+        let tred_w0 = t.then(nixie_time::Instant::now);
 
         // Transitive reduction of the binary implication graph (cadical
         // schedules `transred` inside `inprobe`; the documented amortizer

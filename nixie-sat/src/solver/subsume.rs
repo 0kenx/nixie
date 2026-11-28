@@ -59,7 +59,7 @@ pub(super) enum SubsumeScheduleMode {
 
 #[cfg(feature = "std")]
 pub(super) fn subsume2_mode() -> SubsumeScheduleMode {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<SubsumeScheduleMode> = OnceLock::new();
     *FLAG.get_or_init(|| {
         if let Ok(v) = std::env::var("NIXIE_SUBSUME2") {
@@ -96,7 +96,7 @@ pub(super) fn subsume2_mode() -> SubsumeScheduleMode {
 /// are frequent, so continuous hygiene needs the explicit full pass.
 #[cfg(feature = "std")]
 pub(super) fn subsume2_fullk() -> u64 {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<u64> = OnceLock::new();
     *FLAG.get_or_init(|| {
         std::env::var("NIXIE_SUBSUME2_FULLK")
@@ -120,7 +120,7 @@ pub(super) fn subsume2_fullk() -> u64 {
 /// invisible).  Bounded occs growth: p x (clauses with hot literals).
 #[cfg(feature = "std")]
 pub(super) fn subsume2_hotp() -> u64 {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<u64> = OnceLock::new();
     *FLAG.get_or_init(|| {
         std::env::var("NIXIE_SUBSUME2_HOTP")
@@ -138,7 +138,7 @@ pub(super) fn subsume2_hotp() -> u64 {
 
 #[cfg(feature = "std")]
 pub(super) fn subsume2_null() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
         std::env::var("NIXIE_SUBSUME2_NULL")
@@ -154,7 +154,7 @@ pub(super) fn subsume2_null() -> bool {
 /// Trace flag for the dirty-schedule diagnostics (`NIXIE_SUB2_TRACE`).
 #[cfg(feature = "std")]
 pub(super) fn subsume_round_trace_enabled() -> bool {
-    use std::sync::OnceLock;
+    use crate::prelude::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| std::env::var("NIXIE_SUB2_TRACE").is_ok())
 }
@@ -700,10 +700,10 @@ impl Solver {
         // alloc/free per round on big-DB instances - the dominant round
         // wall cost (measured 78 ms/round on g2-slp).  Same contents, same
         // order: trajectory-identical by construction.
-        let mut sched = std::mem::take(&mut self.subsume_scratch.schedule);
-        let mut occs = std::mem::take(&mut self.subsume_scratch.occs);
-        let mut mark = std::mem::take(&mut self.subsume_scratch.mark);
-        let mut payloads = std::mem::take(&mut self.subsume_scratch.payloads);
+        let mut sched = core::mem::take(&mut self.subsume_scratch.schedule);
+        let mut occs = core::mem::take(&mut self.subsume_scratch.occs);
+        let mut mark = core::mem::take(&mut self.subsume_scratch.mark);
+        let mut payloads = core::mem::take(&mut self.subsume_scratch.payloads);
         // No connection is evidence across rounds, scopes or arena collection.
         payloads.words.clear();
         sched.clear();

@@ -24,7 +24,6 @@ use watch_cursor::WatchCursor;
 /// storm the unit test caught); 4 branchless compares + a prefix mask
 /// give the run.  The win over the scalar loop is skipping its per-entry
 /// machinery (the Entry token, the write-cursor dance), not the loads.
-#[cfg(all(target_arch = "x86_64", feature = "std"))]
 mod block_filter {
     use super::Watcher;
 
@@ -41,14 +40,23 @@ mod block_filter {
     }
 
     /// Runtime gate, cached once; `NIXIE_NO_SIMD=1` opts out.
+    #[cfg(all(target_arch = "x86_64", feature = "std"))]
     #[inline]
     pub(super) fn enabled() -> bool {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static ON: OnceLock<bool> = OnceLock::new();
         *ON.get_or_init(|| {
             std::arch::is_x86_feature_detected!("avx2")
                 && !std::env::var("NIXIE_NO_SIMD").is_ok_and(|v| v == "1")
         })
+    }
+
+    /// No AVX2 to probe for off x86_64, and no environment to opt out from
+    /// without an OS: the scalar loop is the whole scan.
+    #[cfg(not(all(target_arch = "x86_64", feature = "std")))]
+    #[inline]
+    pub(super) fn enabled() -> bool {
+        false
     }
 }
 
@@ -317,14 +325,7 @@ pub(super) fn scan_list<D: ScanDest>(
 /// watchers, `NIXIE_NO_SIMD` unset).
 #[inline]
 fn use_simd_prefilter() -> bool {
-    #[cfg(all(target_arch = "x86_64", feature = "std"))]
-    {
-        block_filter::enabled() && core::mem::size_of::<Watcher>() == 8
-    }
-    #[cfg(not(all(target_arch = "x86_64", feature = "std")))]
-    {
-        false
-    }
+    block_filter::enabled() && core::mem::size_of::<Watcher>() == 8
 }
 
 /// Per-solver snapshot of the process-wide scan gates (the `NIXIE_CWRITE`

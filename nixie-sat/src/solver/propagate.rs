@@ -910,7 +910,7 @@ impl Solver {
     /// `NIXIE_REASON_STATS` gate (search-shape diagnostics only).
     #[cfg(feature = "std")]
     pub(super) fn reason_stats_enabled() -> bool {
-        use std::sync::OnceLock;
+        use crate::prelude::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| {
             std::env::var("NIXIE_REASON_STATS").is_ok_and(|v| !v.is_empty() && v != "0")

@@ -33,6 +33,8 @@
 use super::{Parser, RecFunDecl};
 use crate::ast::TermId;
 use crate::error::{NixieError, Result};
+#[allow(unused_imports)]
+use crate::prelude::*;
 use crate::sort::SortId;
 
 /// A parsed signature, held between the signature pass and the body pass of a

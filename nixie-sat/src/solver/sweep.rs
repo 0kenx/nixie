@@ -148,7 +148,7 @@ struct Sweeper {
     /// swept dedup, which the clear pass walks).
     refs: Vec<ClauseId>,
     /// Dedup set for `refs` (kissat's per-clause `swept` flag).
-    swept: rustc_hash::FxHashSet<ClauseId>,
+    swept: FxHashSet<ClauseId>,
     /// Scratch clause under construction (literal codes).
     clause: Vec<u32>,
     /// Backbone candidates (literal codes).
@@ -1469,7 +1469,7 @@ impl Sweeper {
             last: INVALID,
             vars: Vec::new(),
             refs: Vec::new(),
-            swept: rustc_hash::FxHashSet::default(),
+            swept: FxHashSet::default(),
             clause: Vec::new(),
             backbone: Vec::new(),
             partition: Vec::new(),

@@ -19,12 +19,14 @@
 //! into the named points and the unnamed region, `split`), so a wrong
 //! proposal costs a certificate and never a verdict.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
+use crate::prelude::{FxHashMap, FxHashSet};
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::sort::{SortId, SortKind};
 use num_bigint::BigInt;
 use num_rational::Rational64;
 use num_traits::{CheckedAdd, CheckedSub};
-use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{Combinations, Goal, collect_constants, const_array, element_sort, is_literal};
 use crate::solver::Solver;

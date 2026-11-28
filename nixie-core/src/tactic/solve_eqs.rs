@@ -1426,10 +1426,10 @@ impl Tactic for ScriptableTactic {
 /// This tactic evaluates a probe on the goal and selects one of two tactics
 /// based on whether the probe value exceeds a threshold.
 pub struct CondTactic {
-    probe: std::sync::Arc<dyn Probe>,
+    probe: Arc<dyn Probe>,
     threshold: f64,
-    if_true: std::sync::Arc<dyn Tactic>,
-    if_false: std::sync::Arc<dyn Tactic>,
+    if_true: Arc<dyn Tactic>,
+    if_false: Arc<dyn Tactic>,
 }
 
 impl core::fmt::Debug for CondTactic {
@@ -1452,10 +1452,10 @@ impl CondTactic {
     /// * `if_true` - Tactic to use when probe > threshold
     /// * `if_false` - Tactic to use when probe <= threshold
     pub fn new(
-        probe: std::sync::Arc<dyn Probe>,
+        probe: Arc<dyn Probe>,
         threshold: f64,
-        if_true: std::sync::Arc<dyn Tactic>,
-        if_false: std::sync::Arc<dyn Tactic>,
+        if_true: Arc<dyn Tactic>,
+        if_false: Arc<dyn Tactic>,
     ) -> Self {
         Self {
             probe,
@@ -1514,9 +1514,9 @@ impl Tactic for CondTactic {
 /// This is a convenience wrapper around CondTactic that returns NotApplicable
 /// when the condition is not met.
 pub struct WhenTactic {
-    probe: std::sync::Arc<dyn Probe>,
+    probe: Arc<dyn Probe>,
     threshold: f64,
-    tactic: std::sync::Arc<dyn Tactic>,
+    tactic: Arc<dyn Tactic>,
 }
 
 impl core::fmt::Debug for WhenTactic {
@@ -1531,11 +1531,7 @@ impl core::fmt::Debug for WhenTactic {
 
 impl WhenTactic {
     /// Create a new when tactic
-    pub fn new(
-        probe: std::sync::Arc<dyn Probe>,
-        threshold: f64,
-        tactic: std::sync::Arc<dyn Tactic>,
-    ) -> Self {
+    pub fn new(probe: Arc<dyn Probe>, threshold: f64, tactic: Arc<dyn Tactic>) -> Self {
         Self {
             probe,
             threshold,
@@ -1571,7 +1567,7 @@ impl Tactic for WhenTactic {
 ///
 /// Useful for checking preconditions before applying tactics.
 pub struct FailIfTactic {
-    probe: std::sync::Arc<dyn Probe>,
+    probe: Arc<dyn Probe>,
     threshold: f64,
     message: String,
 }
@@ -1587,7 +1583,7 @@ impl core::fmt::Debug for FailIfTactic {
 
 impl FailIfTactic {
     /// Create a new fail-if tactic
-    pub fn new(probe: std::sync::Arc<dyn Probe>, threshold: f64, message: String) -> Self {
+    pub fn new(probe: Arc<dyn Probe>, threshold: f64, message: String) -> Self {
         Self {
             probe,
             threshold,

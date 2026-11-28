@@ -31,7 +31,6 @@ pub use solver::ImpliedAtom;
 // witness type and the exact re-verification `nla` performs before returning
 // `sat` both live in `crate::nl_eval`, which is itself std-only.
 // (Ported from upstream v0.3.3.)
-#[cfg(feature = "std")]
 pub mod nla;
 #[cfg(feature = "std")]
 pub use nla::{NlaConfig, NlaVerdict, check_assertions as check_nonlinear};

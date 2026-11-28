@@ -34,7 +34,7 @@ pub struct SyzygyComputer {
     /// missed-refutation class root-caused in the 𝔽_p engine on
     /// 2026-09-18; tests/grobner_rational_soundness.rs is this
     /// module's gate.
-    zero_pairs: std::collections::HashSet<(usize, usize)>,
+    zero_pairs: HashSet<(usize, usize)>,
     /// Statistics
     stats: SyzygyStats,
 }
@@ -98,7 +98,7 @@ impl SyzygyComputer {
             critical_pairs: BinaryHeap::new(),
             syzygies: Vec::new(),
             criteria_cache: FxHashMap::default(),
-            zero_pairs: std::collections::HashSet::new(),
+            zero_pairs: HashSet::new(),
             stats: SyzygyStats::default(),
         }
     }

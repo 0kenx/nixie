@@ -12,6 +12,10 @@
 
 #[allow(unused_imports)]
 use crate::prelude::*;
+#[cfg(not(feature = "std"))]
+use alloc::vec::IntoIter as VecIntoIter;
+#[cfg(feature = "std")]
+use std::vec::IntoIter as VecIntoIter;
 
 /// Sequence operation result
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1089,7 +1093,7 @@ impl SeqRewriter {
         /// fixed when the frame is built, so the operand is always present;
         /// the empty literal keeps the impossible case from being written as
         /// an `expect`.
-        fn operand(operands: &mut std::vec::IntoIter<SeqExpr>) -> SeqExpr {
+        fn operand(operands: &mut VecIntoIter<SeqExpr>) -> SeqExpr {
             operands
                 .next()
                 .unwrap_or_else(|| SeqExpr::Literal(String::new()))

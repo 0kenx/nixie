@@ -385,7 +385,7 @@ impl ArraySolver {
 
         let mut visited: FxHashSet<u32> = FxHashSet::default();
         visited.insert(a);
-        let mut queue: std::collections::VecDeque<u32> = std::collections::VecDeque::new();
+        let mut queue: VecDeque<u32> = VecDeque::new();
         queue.push_back(a);
         // came_from[node] = (predecessor, reason for the edge used to reach it)
         let mut came_from: FxHashMap<u32, (u32, TermId)> = FxHashMap::default();

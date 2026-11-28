@@ -107,7 +107,7 @@ impl PbConstraint {
             .collect();
 
         // Sort by weight (descending) for better propagation
-        self.lits.sort_by_key(|wl| std::cmp::Reverse(wl.weight));
+        self.lits.sort_by_key(|wl| core::cmp::Reverse(wl.weight));
 
         // Update kind
         let is_card = self.lits.iter().all(|wl| wl.weight == 1);

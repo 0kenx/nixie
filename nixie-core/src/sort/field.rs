@@ -13,9 +13,10 @@
 //! include the defining polynomial; equal cardinality does not imply equality.
 //! `modulus(id)` intentionally remains PRIME ONLY, fencing off legacy algebra.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
-use std::sync::Arc;
 
 /// Unique identifier for a finite field, indexing a [`FieldTable`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -149,8 +150,8 @@ pub enum FieldError {
 #[derive(Debug, Default)]
 pub struct FieldTable {
     fields: Vec<FieldDesc>,
-    by_modulus: rustc_hash::FxHashMap<Arc<BigUint>, FieldId>,
-    by_binary_polynomial: rustc_hash::FxHashMap<BigUint, FieldId>,
+    by_modulus: FxHashMap<Arc<BigUint>, FieldId>,
+    by_binary_polynomial: FxHashMap<BigUint, FieldId>,
 }
 
 /// Miller–Rabin bases that are *deterministically complete* for every

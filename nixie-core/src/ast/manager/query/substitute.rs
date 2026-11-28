@@ -56,7 +56,6 @@ use crate::interner::Spur;
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::sort::SortId;
-use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 /// Result of [`TermManager::prepare_binder_subst`]: the effective
@@ -153,7 +152,7 @@ struct SubstContext<C: SubstCache = FxHashMap<TermId, TermId>> {
     /// prefilter.  A set bit does NOT promise membership – the exact map
     /// probe decides; a clear bit provably misses (every scope's map is a
     /// subset of the mapping the bitmap was built from).
-    domain: Option<std::rc::Rc<[u64]>>,
+    domain: Option<Rc<[u64]>>,
 }
 
 impl<C: SubstCache> SubstContext<C> {
@@ -313,7 +312,7 @@ impl TermManager {
         id: TermId,
         subst: &FxHashMap<TermId, TermId>,
         cache: &mut C,
-        domain: &std::rc::Rc<[u64]>,
+        domain: &Rc<[u64]>,
     ) -> TermId {
         let keep = FxHashSet::default();
         self.substitute_cached_keep_domain::<C>(id, subst, &keep, cache, Some(domain))
@@ -341,7 +340,7 @@ impl TermManager {
         subst: &FxHashMap<TermId, TermId>,
         keep: &FxHashSet<TermId>,
         cache: &mut C,
-        domain: Option<&std::rc::Rc<[u64]>>,
+        domain: Option<&Rc<[u64]>>,
     ) -> TermId {
         // Fast path matching the entry checks every recursive call used to
         // make: a direct substitution-map hit, or already memoized from a

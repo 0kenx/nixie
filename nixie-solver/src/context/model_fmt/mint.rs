@@ -38,6 +38,8 @@
 //! is caught by `printed_check` and printed without them.
 
 use super::*;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use crate::prelude::{FxHashMap, FxHashSet};
 
 /// A literal's value, as the key the minting avoids collisions on.
@@ -118,8 +120,7 @@ impl Context {
         // Applications and reads, innermost first; at each depth the points
         // a theory valued are registered before any fresh value is chosen.
         let mut points: FxHashMap<Point, TermId> = FxHashMap::default();
-        let mut by_depth: std::collections::BTreeMap<usize, Vec<TermId>> =
-            std::collections::BTreeMap::new();
+        let mut by_depth: BTreeMap<usize, Vec<TermId>> = BTreeMap::new();
         let depths = self.nesting_depths(&members);
         for &term in &members {
             by_depth

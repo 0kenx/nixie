@@ -1138,7 +1138,7 @@ impl Solver {
         // value – a shared value means some committed-true term equality
         // may hold between the two sides' terms, and congruence would then
         // require the sizes to stay equal.
-        if std::env::var("NIXIE_NO_SIZE_SPLIT").is_err() {
+        if crate::env::var("NIXIE_NO_SIZE_SPLIT").is_err() {
             let value_of = |t: TermId| model.get(t);
             let mut committed_false_size_pairs: Vec<(TermId, TermId)> = Vec::new();
             for (&var, constraint) in self.var_to_constraint.iter() {
@@ -1365,7 +1365,7 @@ impl Solver {
             let (l, r) = (*l, *r);
             match self.sat.model_value(var) {
                 nixie_sat::LBool::True => {
-                    for t in std::iter::once(atom)
+                    for t in core::iter::once(atom)
                         .chain(nixie_core::ast::traversal::collect_subterms(atom, manager))
                     {
                         true_sides.insert(t);
@@ -2914,7 +2914,7 @@ fn occurs_in(manager: &TermManager, needle: TermId, haystack: TermId) -> bool {
     /// Past this, assume it might occur. Declining to assign is always safe:
     /// the name keeps the value it had, which is none.
     const BUDGET: usize = 100_000;
-    let mut seen: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+    let mut seen: FxHashSet<TermId> = FxHashSet::default();
     let mut stack = vec![haystack];
     let mut budget = BUDGET;
     while let Some(t) = stack.pop() {

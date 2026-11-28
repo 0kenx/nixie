@@ -120,7 +120,7 @@ pub struct EnhancedBuchberger {
     /// Pairs whose S-polynomial PROVABLY reduces to zero (processed to
     /// zero, product criterion, or a verified chain) – the sound chain
     /// criterion's bookkeeping. See `satisfies_chain_criterion`.
-    zero_pairs: std::collections::HashSet<(usize, usize)>,
+    zero_pairs: HashSet<(usize, usize)>,
 }
 
 impl EnhancedBuchberger {
@@ -132,7 +132,7 @@ impl EnhancedBuchberger {
             basis: Vec::new(),
             pairs: BinaryHeap::new(),
             sugar_degrees: Vec::new(),
-            zero_pairs: std::collections::HashSet::new(),
+            zero_pairs: HashSet::new(),
         }
     }
 

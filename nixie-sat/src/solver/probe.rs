@@ -85,7 +85,7 @@ impl Solver {
         // Study knob: probe effort per-mille of accumulated search ticks
         // (kissat spends up to ~26% of its ticks on probing on the
         // 6s167 class; our default is 80 permille = 8%).
-        let permille: u64 = std::env::var("NIXIE_PROBE_PERMILLE")
+        let permille: u64 = crate::env::var("NIXIE_PROBE_PERMILLE")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(PROBE_EFFORT_PERMILLE);
@@ -319,7 +319,7 @@ impl Solver {
         // ranked by total occurrence count descending.
         // A/B knob: `NIXIE_PROBE_WIDE=0` restores the legacy
         // single-polarity binary-roots-only schedule.
-        let wide = !std::env::var("NIXIE_PROBE_WIDE").is_ok_and(|v| v == "0");
+        let wide = !crate::env::var("NIXIE_PROBE_WIDE").is_ok_and(|v| v == "0");
         let mut probes: Vec<(u32, Lit)> = Vec::new();
         for idx in 0..num_vars {
             let v = Var::new(idx as u32);
@@ -351,7 +351,7 @@ impl Solver {
             // two propagation cones expose different equivalences and
             // hyper-binary resolvents that single-polarity probing
             // misses.  Gated on `NIXIE_PROBE_BOTH` (default on).
-            let both = std::env::var("NIXIE_PROBE_BOTH").is_ok_and(|v| v == "0");
+            let both = crate::env::var("NIXIE_PROBE_BOTH").is_ok_and(|v| v == "0");
             let total = n_pos + n_neg;
             if self.probe_propfixed[first.code() as usize] >= self.trail.size() as i64 {
                 continue;

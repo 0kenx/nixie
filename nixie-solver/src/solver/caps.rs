@@ -18,15 +18,16 @@
 //! The defaults stay in the callers: this module is instrumentation, not
 //! policy.
 
-use std::collections::HashMap;
-use std::sync::OnceLock;
+use crate::prelude::OnceLock;
+#[allow(unused_imports)]
+use crate::prelude::*;
 
 /// The parsed `NIXIE_CAPS` overrides, read once.
 fn overrides() -> &'static HashMap<String, usize> {
     static CACHE: OnceLock<HashMap<String, usize>> = OnceLock::new();
     CACHE.get_or_init(|| {
         let mut out = HashMap::new();
-        if let Ok(raw) = std::env::var("NIXIE_CAPS") {
+        if let Ok(raw) = crate::env::var("NIXIE_CAPS") {
             for pair in raw.split(',') {
                 let Some((name, value)) = pair.split_once('=') else {
                     continue;
@@ -51,7 +52,7 @@ pub(crate) fn cap(name: &str, default: usize) -> usize {
 /// One line per firing under `NIXIE_DEBUG_CAPS`, so corpus runs tally
 /// completeness loss without touching the verdicts.
 pub(crate) fn report_fired(name: &str, actual: usize, limit: usize) {
-    if std::env::var_os("NIXIE_DEBUG_CAPS").is_some() {
+    if crate::env::var_os("NIXIE_DEBUG_CAPS").is_some() {
         eprintln!("[cap] {name} actual={actual} cap={limit}");
     }
 }

@@ -5,6 +5,8 @@
 //! They recursively encode BV-sorted terms into a [`BvSolver`]'s bit-blasted
 //! circuits so the embedded SAT solver can reason about them.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_theories::bv::BvSolver;
 
@@ -185,7 +187,7 @@ pub(super) fn encode_bv_term_recursive(
     // line per encoded operator term – the SAT-var delta and the term's
     // width – so the encoding budget can be attributed per operator
     // class (the BBB-32 encoding-gap work item's instrument).
-    let trace_blast = std::env::var("NIXIE_BV_BLAST_STATS").is_ok_and(|v| v == "trace");
+    let trace_blast = crate::env::var("NIXIE_BV_BLAST_STATS").is_ok_and(|v| v == "trace");
     // Work-stack entry: (term_id, children_pushed)
     // We push a term twice: first time to push children, second time to
     // encode the term itself (post-order).

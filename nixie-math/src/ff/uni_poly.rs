@@ -13,6 +13,8 @@
 //! built for odd primes.
 
 use super::field::{FieldCtx, Limbs};
+#[allow(unused_imports)]
+use crate::prelude::*;
 use num_bigint::BigUint;
 use num_traits::Zero;
 

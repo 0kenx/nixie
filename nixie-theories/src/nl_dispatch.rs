@@ -8,9 +8,11 @@
 //! answering QF_NIA nonlinear goals the searches can decide, exactly as
 //! upstream v0.3.3's feature split does.
 
+use crate::prelude::HashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::TermId;
 use num_rational::BigRational;
-use std::collections::HashMap;
 
 /// Concrete arithmetic assignment produced by a nonlinear decision procedure.
 ///
@@ -25,7 +27,7 @@ pub struct NlSatModel {
     /// Exact values (`root-obj` form) for EVERY variable of the problem,
     /// populated only when at least one of them is irrational – then
     /// `assignments` is left empty. (Upstream v0.3.3.)
-    pub algebraic: rustc_hash::FxHashMap<TermId, crate::nl_witness::NlWitnessValue>,
+    pub algebraic: FxHashMap<TermId, crate::nl_witness::NlWitnessValue>,
     /// TermId → Boolean value for every Boolean variable the search DECIDED:
     /// the free-Boolean case-split choices, and the grounded definition
     /// Booleans (`(= b φ)` conjuncts whose variable the grounding substituted
@@ -62,7 +64,7 @@ impl NlDispatchResult {
     pub fn sat_with(assignments: HashMap<TermId, BigRational>) -> Self {
         Self::Sat(NlSatModel {
             assignments,
-            algebraic: rustc_hash::FxHashMap::default(),
+            algebraic: FxHashMap::default(),
             truths: HashMap::new(),
         })
     }
@@ -76,7 +78,7 @@ impl NlDispatchResult {
     ) -> Self {
         Self::Sat(NlSatModel {
             assignments,
-            algebraic: rustc_hash::FxHashMap::default(),
+            algebraic: FxHashMap::default(),
             truths,
         })
     }
@@ -84,9 +86,7 @@ impl NlDispatchResult {
     /// A `Sat` whose witness is algebraic: exact `root-obj` values for every
     /// variable, no rational channel. (Upstream v0.3.3.)
     #[must_use]
-    pub fn sat_algebraic(
-        algebraic: rustc_hash::FxHashMap<TermId, crate::nl_witness::NlWitnessValue>,
-    ) -> Self {
+    pub fn sat_algebraic(algebraic: FxHashMap<TermId, crate::nl_witness::NlWitnessValue>) -> Self {
         Self::Sat(NlSatModel {
             assignments: HashMap::new(),
             algebraic,

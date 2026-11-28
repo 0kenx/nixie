@@ -5,6 +5,8 @@
 //! 1 <= i <= floor(deg(f)/2). Compare NTL GF2XFactoring::IterIrredTest.
 //! Arithmetic is carryless polynomial arithmetic followed by long division.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
 

@@ -5,6 +5,8 @@
 //! three are hand-written here instead of derived.
 
 use super::{IntExpr, SeqExpr};
+#[allow(unused_imports)]
+use crate::prelude::*;
 
 /// One step of the iterative [`Clone`] walk for the mutually recursive
 /// [`SeqExpr`]/[`IntExpr`] pair. `Enter` expands a node's operands; `Reduce`
@@ -514,9 +516,9 @@ enum SeqHashNode<'a> {
 /// Hash `root` and everything reachable from it, in the same left-to-right
 /// order `drain_seq_eq_worklist` compares in -- which is what keeps
 /// `a == b` implying equal hashes.
-fn hash_seq_or_int<H: std::hash::Hasher>(root: SeqHashNode<'_>, state: &mut H) {
+fn hash_seq_or_int<H: core::hash::Hasher>(root: SeqHashNode<'_>, state: &mut H) {
     // Brings `.hash()` into method-call scope for the leaf field types below.
-    use std::hash::Hash as _;
+    use core::hash::Hash as _;
 
     let mut stack = vec![root];
 
@@ -586,17 +588,17 @@ fn hash_seq_or_int<H: std::hash::Hasher>(root: SeqHashNode<'_>, state: &mut H) {
     }
 }
 
-impl std::hash::Hash for SeqExpr {
+impl core::hash::Hash for SeqExpr {
     /// Iterative structural hashing, consistent with the [`PartialEq`]
     /// above; see `hash_seq_or_int`.
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         hash_seq_or_int(SeqHashNode::Seq(self), state);
     }
 }
 
-impl std::hash::Hash for IntExpr {
+impl core::hash::Hash for IntExpr {
     /// Iterative for the same reason as [`SeqExpr`]'s.
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         hash_seq_or_int(SeqHashNode::Int(self), state);
     }
 }

@@ -37,6 +37,8 @@
 //! trivial structure never allocates.
 
 use crate::prelude::FxHashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_sat::Var;
 
 /// One IR node.  Children are literal codes.

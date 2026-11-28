@@ -1587,7 +1587,7 @@ pub(crate) fn reduce(
     //   other four operators and `|setof b| ≤ |b|` (squashing removes
     //   copies, never adds) – every bound is `Σ min(count,1)-shaped`,
     //   i.e. pointwise ≤ the operand sums.
-    if std::env::var_os("NIXIE_NO_BAG_EQCARD").is_none() {
+    if crate::env::var_os("NIXIE_NO_BAG_EQCARD").is_none() {
         for &(atom, a, b) in &s.bag_equalities {
             if !user_eq_atoms.contains(&atom) && minted_eq_atoms.contains(&atom) {
                 continue;
@@ -1599,7 +1599,7 @@ pub(crate) fn reduce(
         }
     }
     for &(b, _) in &s.bags {
-        if std::env::var_os("NIXIE_NO_BAG_BOUNDS").is_none() {
+        if crate::env::var_os("NIXIE_NO_BAG_BOUNDS").is_none() {
             let Some(kind) = manager.get(b).map(|d| d.kind.clone()) else {
                 continue;
             };
@@ -1680,7 +1680,7 @@ pub(crate) fn reduce(
 
     let mut seen: FxHashSet<TermId> = FxHashSet::default();
     out.axioms.retain(|a| seen.insert(*a));
-    if std::env::var_os("NIXIE_DEBUG_BAGS").is_some() {
+    if crate::env::var_os("NIXIE_DEBUG_BAGS").is_some() {
         let printer = nixie_core::smtlib::Printer::new(manager);
         for a in &out.axioms {
             eprintln!("BAGAXIOM {}", printer.print_term(*a));

@@ -533,7 +533,7 @@ impl UnicodeNormalizer {
                 }
 
                 // Sort combining characters by CCC in descending order
-                combining.sort_by_key(|&(_, ccc)| std::cmp::Reverse(ccc));
+                combining.sort_by_key(|&(_, ccc)| core::cmp::Reverse(ccc));
 
                 // Append sorted combining characters
                 for (ch, _) in combining {

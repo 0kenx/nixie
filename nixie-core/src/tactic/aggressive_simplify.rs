@@ -3,6 +3,8 @@
 use super::core::*;
 use crate::ast::{TermId, TermManager};
 use crate::error::Result;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use crate::simplification::{AggressiveSimplifier, SimplificationConfig};
 
 /// Simplification tactic with more expensive preprocessing rewrites enabled.

@@ -17,9 +17,11 @@
 //! sees pure polynomials over variables; array/UF theories own the foreign
 //! structure via the interface equalities.
 
+use crate::prelude::FxHashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::sort::SortId;
-use rustc_hash::FxHashMap;
 
 /// Result of purifying one assertion.
 #[derive(Debug)]

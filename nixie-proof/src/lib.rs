@@ -28,9 +28,11 @@
 //! - **Normalize**: Proof normalization for canonical representation
 
 // Native builds must never silently end up on nixie-time's frozen stub clock
-// (the `std` feature forward in this crate's manifest is what selects the real
-// one; see nixie-time/src/lib.rs).
-const _: () = assert!(!nixie_time::IS_FROZEN);
+// (the `nixie-time/std` feature in this crate's manifest is what selects the
+// real one; see nixie-time/src/lib.rs). `wasm32-unknown-unknown` is excluded
+// because it has no clock: there the frozen stub is the intended build.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+const _: () = assert!(!nixie_time::IS_FROZEN, "nixie-time/std must be forwarded");
 
 pub mod alethe;
 pub mod carcara;

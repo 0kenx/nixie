@@ -31,10 +31,12 @@
 //! or an uninterpreted argument (both polarities) is certified `true` as
 //! before; only which value is tried depends on the polarity.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
+use crate::prelude::{FxHashMap, FxHashSet};
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::interner::Spur;
 use nixie_core::sort::SortId;
-use rustc_hash::{FxHashMap, FxHashSet};
 
 /// The polarity of a sub-term's occurrence in an assertion.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

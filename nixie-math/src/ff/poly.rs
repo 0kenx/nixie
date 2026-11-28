@@ -13,8 +13,9 @@
 
 use super::field::{FieldCtx, Limbs};
 use crate::polynomial::{Monomial, MonomialOrder, Var};
-use rustc_hash::FxHashMap;
-use std::cmp::Ordering;
+#[allow(unused_imports)]
+use crate::prelude::*;
+use core::cmp::Ordering;
 
 /// A sparse multivariate polynomial over one 𝔽_p.
 #[derive(Debug, Clone)]

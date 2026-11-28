@@ -89,14 +89,29 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+// Without `std`, every item whose only users are `std`-gated (file tracers,
+// thread-backed combinators, environment probes behind them) is unused by
+// construction; the configuration is still compiled warning-clean otherwise.
+#![cfg_attr(
+    not(feature = "std"),
+    allow(dead_code, unused_variables, unused_assignments, unused_mut)
+)]
 
 // Native builds must never silently end up on nixie-time's frozen stub clock
-// (the `std` feature forward in this crate's manifest is what selects the real
-// one; see nixie-time/src/lib.rs).
-const _: () = assert!(!nixie_time::IS_FROZEN);
+// (the `nixie-time/std` feature in this crate's manifest is what selects the
+// real one; see nixie-time/src/lib.rs). The frozen clock is *by design* in the
+// two configurations the cfg excludes: `no_std` (`--no-default-features`) and
+// `wasm32-unknown-unknown`, which has no clock.
+#[cfg(all(
+    feature = "std",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
+const _: () = assert!(!nixie_time::IS_FROZEN, "nixie-time/std must be forwarded");
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;
+
+mod env;
 
 mod prelude;
 
@@ -105,7 +120,6 @@ mod nelson_oppen;
 mod optimization;
 pub mod resource_limits;
 mod simplify;
-#[cfg(feature = "std")]
 pub mod skolemization;
 mod solver;
 

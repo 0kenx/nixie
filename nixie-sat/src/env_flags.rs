@@ -19,7 +19,7 @@
 #![cfg(feature = "std")]
 #![cfg_attr(not(test), allow(unused))]
 
-use std::sync::OnceLock;
+use crate::prelude::OnceLock;
 
 macro_rules! env_flag_fn {
     ($(#[$meta:meta])* $name:ident, $env:expr) => {

@@ -62,6 +62,8 @@
 
 use super::theory_bv_encode::encode_bv_term_recursive;
 use super::*;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::get_children;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 
@@ -109,8 +111,8 @@ impl Solver {
         // watch registration), and `std::env::var` is a linear scan over the
         // environment – it measured at ~11 % of a graph-corpus solve.
         // Environment variables cannot meaningfully change mid-process.
-        static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *FLAG.get_or_init(|| match std::env::var("NIXIE_BV_UNIFIED") {
+        static FLAG: crate::prelude::OnceLock<bool> = crate::prelude::OnceLock::new();
+        *FLAG.get_or_init(|| match crate::env::var("NIXIE_BV_UNIFIED") {
             Ok(v) => !(v == "0" || v.is_empty()),
             Err(_) => true,
         })
@@ -129,8 +131,8 @@ impl Solver {
     /// dispatch (its CEGAR machinery has no unified-path equivalent).
     pub(crate) fn bv_dispatch_unified() -> bool {
         // Memoized for the same reason as `bv_unify_enabled`.
-        static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *FLAG.get_or_init(|| match std::env::var("NIXIE_BV_DISPATCH_UNIFIED") {
+        static FLAG: crate::prelude::OnceLock<bool> = crate::prelude::OnceLock::new();
+        *FLAG.get_or_init(|| match crate::env::var("NIXIE_BV_DISPATCH_UNIFIED") {
             Ok(v) => !(v == "0" || v.is_empty()),
             Err(_) => true,
         })
@@ -227,7 +229,7 @@ impl Solver {
         let mut linked_atoms = 0usize;
         // Atom-level blast attribution (`NIXIE_BV_BLAST_STATS=trace`):
         // same flush pattern as the word-op instrument.
-        let atom_trace = std::env::var("NIXIE_BV_BLAST_STATS").is_ok_and(|v| v == "trace");
+        let atom_trace = crate::env::var("NIXIE_BV_BLAST_STATS").is_ok_and(|v| v == "trace");
         let mut atom_pending: Option<(&'static str, usize)> = None;
         self.bv.build_with(&mut self.sat, |bv| {
             let mut encoded: FxHashSet<TermId> = FxHashSet::default();
@@ -374,7 +376,7 @@ impl Solver {
         if self.bv_elim_deferred.is_empty() {
             return;
         }
-        let deferred = std::mem::take(&mut self.bv_elim_deferred);
+        let deferred = core::mem::take(&mut self.bv_elim_deferred);
         for term in deferred {
             self.link_or_blast_bv_circuits_inner(term, manager);
         }
@@ -421,7 +423,7 @@ impl Solver {
 
         let mut expensive = false;
         let mut candidate = false;
-        let mut visited: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
         // (node, parent application kind) – the parent decides whether a
         // first-occurrence variable is an elimination candidate.
         let mut stack: Vec<(TermId, Option<&TermKind>)> = vec![(term, None)];
@@ -828,7 +830,7 @@ impl Solver {
     /// large `distinct` over BitVec (`NIXIE_BV_DISTINCT_ORDER=0` disables;
     /// default on).
     pub(super) fn bv_distinct_order_enabled() -> bool {
-        match std::env::var("NIXIE_BV_DISTINCT_ORDER") {
+        match crate::env::var("NIXIE_BV_DISTINCT_ORDER") {
             Ok(v) => !(v == "0" || v.is_empty()),
             Err(_) => true,
         }
@@ -936,7 +938,7 @@ impl Solver {
         if self.bv_order_specs.is_empty() {
             return;
         }
-        let specs = std::mem::take(&mut self.bv_order_specs);
+        let specs = core::mem::take(&mut self.bv_order_specs);
         let mut built: Vec<BvOrderSpec> = Vec::new();
         self.bv.build_with(&mut self.sat, |bv| {
             let mut encoded: FxHashSet<TermId> = FxHashSet::default();
@@ -982,7 +984,7 @@ impl Solver {
     pub(super) fn materialise_pending_order_specs(&mut self, manager: &mut TermManager) {
         self.add_order_spec_eq_guards();
         const MAX_PAIRS: usize = 200_000;
-        let specs = std::mem::take(&mut self.bv_order_specs);
+        let specs = core::mem::take(&mut self.bv_order_specs);
         for spec in specs {
             // The pairwise atoms are over the *arguments*; recover them
             // from the term so pads are excluded (cloned out so the
@@ -1122,7 +1124,7 @@ impl Solver {
         if !net_failed.is_empty() {
             // Dump first, fail second (see the net's comment).
             for (t, why) in &net_failed {
-                if std::env::var("NIXIE_NET_DUMP_CLAUSES").is_ok()
+                if crate::env::var("NIXIE_NET_DUMP_CLAUSES").is_ok()
                     && let Some(bits) = self.bv.debug_bits(*t).map(<[nixie_sat::Var]>::to_vec)
                 {
                     for v in bits {

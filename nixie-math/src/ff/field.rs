@@ -25,6 +25,8 @@
 //! growth mitigations tied to ℚ, and NRA is a live, sound path a generics
 //! refactor would put at risk for no gain. Duplication is the cheaper trade.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
 use smallvec::SmallVec;
@@ -588,7 +590,7 @@ mod tests {
         let f = ctx(7919);
         let values: Vec<Limbs> = (1..=30u64)
             .map(|x| f.from_biguint(&BigUint::from(x)))
-            .chain(std::iter::once(f.zero()))
+            .chain(core::iter::once(f.zero()))
             .collect();
         let batched = f.batch_inv(&values);
         for (v, inv) in values.iter().zip(&batched) {

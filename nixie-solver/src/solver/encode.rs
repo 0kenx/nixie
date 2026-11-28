@@ -152,7 +152,7 @@ pub(super) fn needs_ite_elimination(sort: SortId, manager: &TermManager) -> bool
 /// Order is a stable pre-order (children pushed in reverse so they pop
 /// left-to-right), matching this crate's other explicit-stack term walks.
 pub(super) fn collect_ground_subterms(term: TermId, manager: &TermManager) -> Vec<TermId> {
-    use rustc_hash::FxHashSet;
+    use crate::prelude::FxHashSet;
     let mut out = Vec::new();
     let mut seen: FxHashSet<TermId> = FxHashSet::default();
     let mut stack = vec![term];
@@ -1689,7 +1689,7 @@ impl Solver {
             // the routing changed): emit every deferred assertion raw, in
             // order, before this one – the assert-time semantics they would
             // have had.
-            let deferred = std::mem::take(&mut self.deferred_bv_asserts);
+            let deferred = core::mem::take(&mut self.deferred_bv_asserts);
             for d in deferred {
                 self.emit_assertion_clauses(d, manager);
                 self.link_or_blast_bv_circuits(d, manager);
@@ -1749,7 +1749,7 @@ impl Solver {
     /// other benchmark families (e.g. WiSA), which would otherwise time out
     /// from the clause blow-up of axiomatizing every arith term.
     pub(super) fn axiomatize_arith_constant_equalities(&mut self, manager: &mut TermManager) {
-        use rustc_hash::FxHashSet;
+        use crate::prelude::FxHashSet;
 
         // The triangle axiomatization is a *quantifier-free* theory-combination
         // technique: the non-convex LIA⇄EUF gaps it closes (EufLaArithmetic/hard)
@@ -1959,7 +1959,7 @@ impl Solver {
     /// Theory-aware decision hint: bump value atoms of `(or (= x v0) … (= x vn))`
     /// enumerations so CDCL decides them early (and prefers positive phase).
     pub(super) fn bump_finite_domain_enumerations(&mut self, manager: &TermManager) {
-        use rustc_hash::FxHashSet;
+        use crate::prelude::FxHashSet;
         let mut atoms: Vec<nixie_sat::Var> = Vec::new();
         let mut seen_or: FxHashSet<TermId> = FxHashSet::default();
         for &assertion in &self.assertions {
@@ -2802,7 +2802,7 @@ impl Solver {
         if self.bv_terms.is_empty() {
             return;
         }
-        let mut encoded = rustc_hash::FxHashSet::default();
+        let mut encoded = FxHashSet::default();
         blast_bv_term(&mut self.bv, term, manager, &mut encoded);
     }
 
@@ -3155,7 +3155,7 @@ impl Solver {
         term: TermId,
         manager: &mut TermManager,
     ) -> TermId {
-        use rustc_hash::FxHashMap;
+        use crate::prelude::FxHashMap;
 
         let mut map: FxHashMap<TermId, TermId> = FxHashMap::default();
         // First pass: assign a fresh var to each ite subterm whose sort the
@@ -3256,8 +3256,8 @@ impl Solver {
         term: TermId,
         manager: &mut TermManager,
     ) -> TermId {
+        use crate::prelude::FxHashMap;
         use nixie_core::ast::collect_subterms;
-        use rustc_hash::FxHashMap;
 
         let bool_sort = manager.sorts.bool_sort;
         let mut to_abstract: Vec<TermId> = Vec::new();
@@ -3329,15 +3329,14 @@ impl Solver {
         term: TermId,
         manager: &mut TermManager,
     ) -> TermId {
+        use crate::prelude::FxHashMap;
         use nixie_core::ast::collect_subterms;
-        use rustc_hash::FxHashMap;
         let int_sort = manager.sorts.int_sort;
         let real_sort = manager.sorts.real_sort;
         // Collect numeric constants that appear as a `Mul` factor: proxying one
         // of these would (via the global `substitute`) rewrite the coefficient
         // too, manufacturing spurious nonlinearity.  See the arg-scan note.
-        let mut coefficient_consts: rustc_hash::FxHashSet<TermId> =
-            rustc_hash::FxHashSet::default();
+        let mut coefficient_consts: FxHashSet<TermId> = FxHashSet::default();
         for st in collect_subterms(term, manager) {
             let Some(t) = manager.get(st) else { continue };
             if let TermKind::Mul(args) = &t.kind {
@@ -4821,7 +4820,7 @@ impl Solver {
         // recursion makes the cardinality infinite, and the visited set is
         // what detects it (a cycle re-entering a sort mid-computation
         // cannot contribute a finite factor).
-        let mut visited: rustc_hash::FxHashSet<SortId> = rustc_hash::FxHashSet::default();
+        let mut visited: FxHashSet<SortId> = FxHashSet::default();
         Self::finite_sort_cardinality_vis(sort, manager, &mut visited)
     }
 
@@ -4839,7 +4838,7 @@ impl Solver {
     fn finite_sort_cardinality_vis(
         sort: SortId,
         manager: &TermManager,
-        visited: &mut rustc_hash::FxHashSet<SortId>,
+        visited: &mut FxHashSet<SortId>,
     ) -> Option<u64> {
         let s = manager.sorts.get(sort)?;
         match &s.kind {
@@ -5495,7 +5494,7 @@ pub(super) fn blast_bv_term(
     bv: &mut nixie_theories::bv::BvSolver,
     root: TermId,
     manager: &TermManager,
-    encoded: &mut rustc_hash::FxHashSet<TermId>,
+    encoded: &mut FxHashSet<TermId>,
 ) {
     for st in nixie_core::ast::traversal::collect_subterms(root, manager) {
         let Some(td) = manager.get(st) else { continue };

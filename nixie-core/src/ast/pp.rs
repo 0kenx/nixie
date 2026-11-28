@@ -13,8 +13,10 @@
 
 use super::manager::TermManager;
 use super::term::{TermId, TermKind};
+#[allow(unused_imports)]
+use crate::prelude::*;
+use core::fmt::Write;
 use num_traits::ToPrimitive;
-use std::fmt::Write;
 
 /// One work item of the explicit print stack: emit `term` after emitting
 /// everything pushed above it.
@@ -284,11 +286,7 @@ pub fn to_smt2(manager: &TermManager, root: TermId) -> String {
 
 /// Collect the names of every `Var` under `root` (explicit stack; the
 /// printer's sibling for emitting `declare-fun` lines).
-pub fn collect_var_names(
-    manager: &TermManager,
-    root: TermId,
-    out: &mut std::collections::BTreeSet<String>,
-) {
+pub fn collect_var_names(manager: &TermManager, root: TermId, out: &mut BTreeSet<String>) {
     let mut stack = vec![root];
     while let Some(id) = stack.pop() {
         let Some(term) = manager.get(id) else {

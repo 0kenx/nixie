@@ -1,0 +1,23 @@
+[package]
+name = "nixie-nostd-smoke"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Runs the solver core as compiled without std: the `no_std` configuration's smoke test"
+keywords = ["smt", "solver", "no-std"]
+categories = ["algorithms"]
+# A workspace gate, not a product: `just verify` runs it, nobody publishes it.
+publish = false
+
+[dependencies]
+# `default-features = false` is the point: nothing in this graph turns the
+# library crates' `std` feature on, so they build as `no_std` + `alloc` while
+# this binary itself links `std` to print the verdict. (`nixie-solver`'s own
+# examples cannot do this: its dev-dependencies unify `std` back in.)
+nixie-core = { workspace = true, default-features = false }
+nixie-solver = { workspace = true, default-features = false }
+
+[lints]
+workspace = true

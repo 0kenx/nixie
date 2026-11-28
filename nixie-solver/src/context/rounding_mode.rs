@@ -36,6 +36,8 @@
 //! out of that list.
 
 use super::Context;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::{RoundingMode, TermId};
 use nixie_core::sort::SortId;
 

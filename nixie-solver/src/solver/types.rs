@@ -1394,7 +1394,7 @@ fn term_kind_is_false(term: TermId, manager: &TermManager) -> bool {
 struct SelectRead {
     term: TermId,
     index: TermId,
-    seen: rustc_hash::FxHashSet<TermId>,
+    seen: FxHashSet<TermId>,
     state: SelectState,
 }
 enum SelectState {
@@ -1420,7 +1420,7 @@ impl SelectRead {
         Self {
             term,
             index,
-            seen: rustc_hash::FxHashSet::default(),
+            seen: FxHashSet::default(),
             state: SelectState::Walk(array),
         }
     }

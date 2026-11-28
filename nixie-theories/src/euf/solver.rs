@@ -1089,8 +1089,8 @@ impl EufSolver {
     /// Every term that appears as the argument of a function application in
     /// the e-graph – the structural EUF interface (congruence fires on these
     /// terms' equality).
-    pub fn app_argument_terms(&self) -> rustc_hash::FxHashSet<TermId> {
-        let mut out: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+    pub fn app_argument_terms(&self) -> FxHashSet<TermId> {
+        let mut out: FxHashSet<TermId> = FxHashSet::default();
         for n in &self.nodes {
             if n.is_app() {
                 for &arg_node in &n.args {
@@ -1285,13 +1285,13 @@ impl EufSolver {
     }
 
     /// Iterate over all node indices (0..node_count)
-    pub fn all_node_indices(&self) -> std::ops::Range<u32> {
+    pub fn all_node_indices(&self) -> core::ops::Range<u32> {
         0..self.nodes.len() as u32
     }
 
     /// Get all distinct function symbols present in the E-graph
     pub fn all_func_symbols(&self) -> Vec<u32> {
-        use rustc_hash::FxHashSet;
+        use crate::prelude::FxHashSet;
         let mut funcs = FxHashSet::default();
         for node in &self.nodes {
             if node.is_app() {

@@ -491,7 +491,7 @@ pub(crate) fn compute_constructor_tables(
     if qms.is_empty() && hints.is_empty() {
         return;
     }
-    if std::env::var_os("NIXIE_DEBUG_CT").is_some() {
+    if crate::env::var_os("NIXIE_DEBUG_CT").is_some() {
         let printer = nixie_core::smtlib::Printer::new(manager);
         for qm in &qms {
             eprintln!(
@@ -790,7 +790,7 @@ pub(crate) fn compute_constructor_tables(
             continue;
         };
         if !row_determined.contains(&qm.func) {
-            if std::env::var_os("NIXIE_DEBUG_CT").is_some() {
+            if crate::env::var_os("NIXIE_DEBUG_CT").is_some() {
                 eprintln!(
                     "[ct d{}] semantic domains skipped: axes not row-determined",
                     crate::mbqi::model_checker::nested_depth()
@@ -811,7 +811,7 @@ pub(crate) fn compute_constructor_tables(
                 .map(|e| model.semantic_value_of(e, manager))
                 .filter(|e| seen.insert(*e))
                 .collect();
-            if std::env::var_os("NIXIE_DEBUG_CT").is_some() {
+            if crate::env::var_os("NIXIE_DEBUG_CT").is_some() {
                 eprintln!(
                     "[ct d{}] semantic domain (q={:?}, var {}): {} points",
                     crate::mbqi::model_checker::nested_depth(),
@@ -926,7 +926,7 @@ fn compute_one(
         points
     };
 
-    if std::env::var_os("NIXIE_DEBUG_CT").is_some() {
+    if crate::env::var_os("NIXIE_DEBUG_CT").is_some() {
         let printer = nixie_core::smtlib::Printer::new(manager);
         let elems: Vec<String> = universe.iter().map(|&u| printer.print_term(u)).collect();
         eprintln!(
@@ -937,7 +937,7 @@ fn compute_one(
         );
     }
     let else_table = crate::mbqi::model_checker::choose_else_table(model, manager);
-    if std::env::var_os("NIXIE_DEBUG_CT").is_some() {
+    if crate::env::var_os("NIXIE_DEBUG_CT").is_some() {
         eprintln!(
             "[ct] observer {} in interps: {}, in else_table: {}",
             qm.observer.into_inner().get(),
@@ -945,7 +945,7 @@ fn compute_one(
             else_table.contains_key(&qm.observer)
         );
     }
-    if std::env::var_os("NIXIE_DEBUG_CT").is_some() {
+    if crate::env::var_os("NIXIE_DEBUG_CT").is_some() {
         let keys: Vec<String> = model
             .function_interps
             .keys()
@@ -956,7 +956,7 @@ fn compute_one(
 
     // The row of every range element, under the completed model.
     let mut rows: Vec<Vec<bool>> = Vec::with_capacity(universe.len());
-    if std::env::var_os("NIXIE_DEBUG_CT_ROWS").is_some() {
+    if crate::env::var_os("NIXIE_DEBUG_CT_ROWS").is_some() {
         eprintln!(
             "[rows d{}] fn {} row_points {}",
             crate::mbqi::model_checker::nested_depth(),
@@ -976,7 +976,7 @@ fn compute_one(
                 Some(b) => row.push(b),
                 None => {
                     // cannot evaluate: decline the table
-                    if std::env::var_os("NIXIE_DEBUG_CT").is_some() {
+                    if crate::env::var_os("NIXIE_DEBUG_CT").is_some() {
                         let printer = nixie_core::smtlib::Printer::new(manager);
                         eprintln!(
                             "[ct] fn {} DECLINED: row eval failed at z={} point={:?}",
@@ -994,7 +994,7 @@ fn compute_one(
         }
         rows.push(row);
     }
-    if std::env::var_os("NIXIE_DEBUG_CT_ROWS").is_some() {
+    if crate::env::var_os("NIXIE_DEBUG_CT_ROWS").is_some() {
         let printer = nixie_core::smtlib::Printer::new(manager);
         for (&z, row) in universe.iter().zip(rows.iter()) {
             let bits: String = row.iter().map(|&b| if b { '1' } else { '0' }).collect();
@@ -1024,12 +1024,12 @@ fn compute_one(
     let mut missed_this_round: Vec<(Vec<TermId>, Vec<bool>)> = Vec::new();
     // Matched null (NIXIE_MINT_NULL=<seed>): mint the same ONE tuple,
     // chosen by a seeded pick instead of the odometer prefix.
-    let null_seed: Option<u64> = std::env::var("NIXIE_MINT_NULL")
+    let null_seed: Option<u64> = crate::env::var("NIXIE_MINT_NULL")
         .ok()
         .and_then(|s| s.parse().ok());
     // The constructor-tables unit's matched null (see the choice site
     // below): read once per table, never per tuple.
-    let null_seed_ct: Option<u64> = std::env::var("NIXIE_CT_NULL")
+    let null_seed_ct: Option<u64> = crate::env::var("NIXIE_CT_NULL")
         .ok()
         .and_then(|s| s.parse().ok());
     'tuples: loop {
@@ -1060,7 +1060,7 @@ fn compute_one(
                 match eval_ground_bool(body, model, &else_table, manager) {
                     Some(b) => target.push(b),
                     None => {
-                        if std::env::var_os("NIXIE_DEBUG_CT").is_some() {
+                        if crate::env::var_os("NIXIE_DEBUG_CT").is_some() {
                             let printer = nixie_core::smtlib::Printer::new(manager);
                             eprintln!(
                                 "[ct] fn {} DECLINED: psi eval failed at point={:?} tuple={:?}",
@@ -1221,7 +1221,7 @@ fn compute_one(
         .entry(qm.quantifier)
         .or_default()
         .push(qm.func);
-    if std::env::var_os("NIXIE_DEBUG_CT").is_some() {
+    if crate::env::var_os("NIXIE_DEBUG_CT").is_some() {
         eprintln!(
             "[ct] fn {}: {} computed entries over universe {}",
             qm.func.into_inner().get(),
@@ -1347,12 +1347,12 @@ fn mint_fresh_row_element(
         domain.push(fresh);
     }
     match model.table_domains.entry(qm.func_range) {
-        std::collections::hash_map::Entry::Occupied(mut occ) => {
+        hash_map::Entry::Occupied(mut occ) => {
             if !occ.get().contains(&fresh) {
                 occ.get_mut().push(fresh);
             }
         }
-        std::collections::hash_map::Entry::Vacant(vac) => {
+        hash_map::Entry::Vacant(vac) => {
             // The sort is frozen but the model's table-domain view was
             // not yet installed: mirror the frozen view plus the fresh
             // element so the consumers see one structure.
@@ -1525,7 +1525,7 @@ fn compute_hint_one(
             }
         }
     }
-    if std::env::var_os("NIXIE_DEBUG_CT").is_some() {
+    if crate::env::var_os("NIXIE_DEBUG_CT").is_some() {
         eprintln!(
             "[ct d{}] hint fn {}: {} computed entries",
             crate::mbqi::model_checker::nested_depth(),

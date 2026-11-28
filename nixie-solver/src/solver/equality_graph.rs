@@ -27,11 +27,12 @@
 //! skip the CDCL(T) loop entirely – otherwise the EUF theory would keep emitting
 //! the long chain-conflict clauses that cause the original exponential blowup.
 
+use crate::prelude::FxHashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use crate::solver::Solver;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_sat::{LBool, Lit, Var};
-use rustc_hash::FxHashMap;
-use std::collections::BTreeSet;
 
 impl Solver {
     /// Solve a pure-equality-logic formula using plain SAT over the skeleton
@@ -99,7 +100,7 @@ impl Solver {
         out: &mut Vec<(TermId, TermId, TermId, Var)>,
     ) -> bool {
         let mut stack = vec![term];
-        let mut seen = rustc_hash::FxHashSet::default();
+        let mut seen = FxHashSet::default();
         while let Some(term) = stack.pop() {
             if !seen.insert(term) {
                 continue;
@@ -209,7 +210,7 @@ impl Solver {
         let mut idx_term: Vec<TermId> = Vec::new();
         for &(a, b) in edge_var.keys() {
             for t in [a, b] {
-                if let std::collections::hash_map::Entry::Vacant(e) = term_index.entry(t) {
+                if let hash_map::Entry::Vacant(e) = term_index.entry(t) {
                     e.insert(idx_term.len());
                     idx_term.push(t);
                 }
@@ -313,7 +314,7 @@ impl Solver {
         pure: &mut bool,
     ) {
         let mut stack = vec![term];
-        let mut seen = rustc_hash::FxHashSet::default();
+        let mut seen = FxHashSet::default();
         while let Some(term) = stack.pop() {
             if !*pure {
                 return;

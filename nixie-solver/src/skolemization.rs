@@ -11,12 +11,13 @@
 //! quantifier polarities are correctly determined before replacement.
 
 use crate::prelude::FxHashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
+use core::fmt;
 use nixie_core::ast::TermManager;
 use nixie_core::ast::{TermId, TermKind};
 use nixie_core::interner::Spur;
 use nixie_core::sort::SortId;
-use std::collections::HashMap;
-use std::fmt;
 
 /// Memo key for the Skolemization walk: the subterm, the universal variables
 /// currently in scope, and the size of the Skolem map.
@@ -307,7 +308,7 @@ impl fmt::Display for SkolemizationError {
     }
 }
 
-impl std::error::Error for SkolemizationError {}
+impl core::error::Error for SkolemizationError {}
 
 /// Represents a generated Skolem symbol (constant or function)
 #[derive(Debug, Clone)]
@@ -897,7 +898,7 @@ impl SkolemizationContext {
                             let children: Vec<TermId> = bindings
                                 .iter()
                                 .map(|(_, value)| *value)
-                                .chain(std::iter::once(body))
+                                .chain(core::iter::once(body))
                                 .collect();
                             push_children(&mut steps, key, SkolemOp::Let { names }, children);
                         }

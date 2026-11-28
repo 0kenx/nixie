@@ -299,10 +299,10 @@ impl PatternGenerator {
 
         match self.strategy {
             PatternStrategy::StaticDepth => {
-                patterns.sort_by_key(|p| std::cmp::Reverse(p.quality));
+                patterns.sort_by_key(|p| core::cmp::Reverse(p.quality));
             }
             PatternStrategy::GreedyCover => {
-                patterns.sort_by_key(|p| std::cmp::Reverse(p.quality));
+                patterns.sort_by_key(|p| core::cmp::Reverse(p.quality));
             }
         }
 
@@ -556,9 +556,7 @@ impl MultiPatternCoordinator {
 
             for pattern in &pattern_set.patterns {
                 for &term in &pattern.terms {
-                    if let std::collections::hash_map::Entry::Vacant(entry) =
-                        self.match_cache.entry(term)
-                    {
+                    if let hash_map::Entry::Vacant(entry) = self.match_cache.entry(term) {
                         let mut found = Vec::new();
                         for &candidate in ground_terms {
                             let mut bindings = FxHashMap::default();

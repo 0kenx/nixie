@@ -27,8 +27,10 @@
 //! unparseable one leaves the certified completion installed, so a model is
 //! never swapped for one nobody verified.
 
+use crate::prelude::FxHashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::{TermId, TermManager};
-use rustc_hash::FxHashMap;
 
 use super::super::Solver;
 use super::super::types::Model;

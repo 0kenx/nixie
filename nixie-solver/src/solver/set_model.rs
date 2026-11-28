@@ -410,7 +410,7 @@ impl<'a> SetView<'a> {
                         *next += 1;
                         Step::Child(child, polarity)
                     } else {
-                        Step::Combine(*conjunct, std::mem::take(results))
+                        Step::Combine(*conjunct, core::mem::take(results))
                     }
                 }
                 // Only a `Combine` empties the stack, and it returns; an

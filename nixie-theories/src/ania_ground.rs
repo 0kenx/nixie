@@ -10,12 +10,13 @@
 //! and on residual `ite`/`select` still present under arith after purification.
 
 use crate::nl_dispatch::NlDispatchResult;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::sort::SortKind;
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::ToPrimitive;
-use std::collections::{HashMap, HashSet};
 
 /// Soft cap on visited partial assignments. Pruning usually keeps
 /// real work far below this for constrained formulas.

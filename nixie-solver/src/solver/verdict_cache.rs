@@ -58,6 +58,8 @@
 
 use super::Solver;
 use super::types::{Proof, SolverConfig, SolverResult};
+#[allow(unused_imports)]
+use crate::prelude::*;
 
 #[cfg(test)]
 mod tests;
@@ -178,7 +180,7 @@ impl Solver {
         self.candidate_certified_as_printed = false;
         self.model_euf_snapshot = None;
         self.mbqi.publication_candidate = None;
-        self.completion_work = std::sync::Arc::default();
+        self.completion_work = Arc::default();
         #[cfg(feature = "std")]
         {
             self.user_state.cp_proof = None;

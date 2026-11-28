@@ -32,12 +32,14 @@
 //! than axiomatised. Index values must be numeric; anything else is outside
 //! the grammar and answers `None`.
 
+use crate::prelude::BTreeMap;
+use crate::prelude::FxHashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{One, Signed, ToPrimitive, Zero};
-use rustc_hash::FxHashMap;
-use std::collections::BTreeMap;
 
 /// A value in a candidate interpretation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -244,7 +246,7 @@ fn congruence_holds(
     memo: &FxHashMap<TermId, Value>,
 ) -> bool {
     let mut groups: Vec<(nixie_core::interner::Spur, Vec<Value>, Value)> = Vec::new();
-    let mut seen: std::collections::HashSet<TermId> = std::collections::HashSet::new();
+    let mut seen: HashSet<TermId> = HashSet::new();
     let mut stack: Vec<TermId> = formulas.to_vec();
     while let Some(id) = stack.pop() {
         if !seen.insert(id) {
@@ -749,7 +751,7 @@ fn same_value(left: &Value, right: &Value, interp: &Interpretation) -> Option<bo
                 }
             }
             (Value::Mapping(a), Value::Mapping(b)) => {
-                let mut probes = std::collections::BTreeSet::new();
+                let mut probes = BTreeSet::new();
                 probes.extend(a.writes.iter().chain(&b.writes).map(|(index, _)| index));
                 probes.extend(interp.cells.keys().filter_map(|(root, index)| {
                     (*root == a.root || *root == b.root).then_some(index)

@@ -3,6 +3,8 @@
 //! Exponents are widened enough to hold both format bounds and normalization
 //! distances, including small-exponent/large-significand custom formats.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 use core::cell::{Cell, RefCell};
 use nixie_core::ast::{RoundingMode, TermId, TermKind, TermManager};
 use nixie_theories::{FpFormat, FpValue};

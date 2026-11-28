@@ -14,6 +14,8 @@
 //!   **unconditionally asserted**. It is the only walk a definite-conflict
 //!   collector may use to reach new facts.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind};
 
 /// Push every immediate sub-term of `kind` onto `out`.

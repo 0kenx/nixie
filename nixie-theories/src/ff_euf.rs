@@ -40,10 +40,12 @@
 //! congruent pair merged first, so no merge order and no hash-iteration
 //! order feeds any output.
 
+use crate::prelude::FxHashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::interner::Spur;
 use nixie_core::sort::SortKind;
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 /// A node in the closure: an FF-sorted term (leaf, compound arithmetic
@@ -136,7 +138,7 @@ impl CongruenceClosure {
     /// structure is walked through (Bool connectives) but never
     /// registered. One frame stack; user DAGs can be arbitrarily deep.
     pub fn register_dag(&mut self, manager: &TermManager, root: TermId) {
-        let mut visited: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
         let mut stack: Vec<TermId> = vec![root];
         while let Some(t) = stack.pop() {
             if !visited.insert(t) {
@@ -184,7 +186,7 @@ impl CongruenceClosure {
             return ra;
         }
         if self.rank[ra as usize] < self.rank[rb as usize] {
-            std::mem::swap(&mut ra, &mut rb);
+            core::mem::swap(&mut ra, &mut rb);
         }
         self.parent[rb as usize] = ra;
         if self.rank[ra as usize] == self.rank[rb as usize] {
@@ -195,7 +197,7 @@ impl CongruenceClosure {
         // them to the root that class has by then (it may have merged
         // again). `ra`'s own members keep their root, so no application
         // that takes one of them as an argument changes signature.
-        let losers = std::mem::take(&mut self.class_members[rb as usize]);
+        let losers = core::mem::take(&mut self.class_members[rb as usize]);
         self.pending.push(losers.into_iter().collect());
         ra
     }

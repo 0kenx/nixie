@@ -17,8 +17,10 @@
 //! installed, and that certificate is the soundness argument, exactly as for
 //! a single search.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
+use crate::prelude::{FxHashMap, FxHashSet};
 use nixie_core::ast::{TermId, TermManager};
-use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::Goal;
 
