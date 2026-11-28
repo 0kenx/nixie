@@ -105,9 +105,7 @@ impl ClauseWeightManager {
 
     /// Reset all weights
     pub fn reset(&mut self) {
-        for w in &mut self.weights {
-            *w = 1.0;
-        }
+        self.weights.fill(1.0);
     }
 }
 
@@ -184,9 +182,7 @@ impl VarActivity {
 
     /// Reset all activities
     pub fn reset(&mut self) {
-        for a in &mut self.activities {
-            *a = 0.0;
-        }
+        self.activities.fill(0.0);
         self.bump = 1.0;
     }
 }
@@ -310,12 +306,8 @@ impl CcanrEnhancer {
 
     /// Reset
     pub fn reset(&mut self) {
-        for s in &mut self.scores {
-            *s = 0.0;
-        }
-        for b in &mut self.config_bits {
-            *b = false;
-        }
+        self.scores.fill(0.0);
+        self.config_bits.fill(false);
         self.total_weight = 0.0;
     }
 }
@@ -424,9 +416,7 @@ impl DdfwManager {
     /// Reset
     pub fn reset(&mut self) {
         let n = self.weights.len();
-        for w in &mut self.weights {
-            *w = self.config.init_weight;
-        }
+        self.weights.fill(self.config.init_weight);
         self.total_weight = self.config.init_weight * n as f64;
         self.flip_counter = 0;
     }
@@ -519,12 +509,8 @@ impl ClauseImportance {
 
     /// Reset
     pub fn reset(&mut self) {
-        for h in &mut self.hit_counts {
-            *h = 0;
-        }
-        for c in &mut self.critical_counts {
-            *c = 0;
-        }
+        self.hit_counts.fill(0);
+        self.critical_counts.fill(0);
         self.current_flip = 0;
     }
 }

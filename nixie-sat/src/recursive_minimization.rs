@@ -78,9 +78,7 @@ impl RecursiveMinimizer {
         current_level: u32,
     ) -> SmallVec<[Lit; 8]> {
         // Reset status for all literals
-        for status in &mut self.status {
-            *status = LitStatus::Unknown;
-        }
+        self.status.fill(LitStatus::Unknown);
 
         // Mark all literals in the clause that are at the current decision level
         let mut abstract_level = 0u32;

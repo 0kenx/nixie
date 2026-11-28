@@ -390,11 +390,7 @@ impl Solver {
         // Concretely, check:
         //   sq > 0  AND  sq + v = 0  AND  v >= 0
         // → v = -sq < 0  contradicts  v >= 0
-        if self.check_sq_sum_bound_contradiction(&atoms) {
-            return true;
-        }
-
-        false
+        self.check_sq_sum_bound_contradiction(&atoms)
     }
 
     /// Check for the "sq > 0 AND sq + v = 0 AND v >= 0" type contradiction.

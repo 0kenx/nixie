@@ -169,9 +169,7 @@ impl VariableActivityManager {
 
     /// Reset all activities
     pub fn reset(&mut self) {
-        for activity in &mut self.activities {
-            *activity = 0.0;
-        }
+        self.activities.fill(0.0);
         self.increment = 1.0;
         self.stats = ActivityStats {
             current_increment: 1.0,

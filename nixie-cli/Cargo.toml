@@ -8,6 +8,7 @@ repository.workspace = true
 description = "CLI for Nixie SMT Solver (SMT-LIB2 compliant)"
 keywords = ["smt", "cli", "smtlib"]
 categories = ["command-line-utilities"]
+autotests = false
 
 [[bin]]
 name = "nixie"
@@ -38,7 +39,7 @@ walkdir = { workspace = true }
 globset = { workspace = true }
 notify = { workspace = true }
 sysinfo = { workspace = true }
-pprof = { version = "0.13", features = ["flamegraph"], optional = true }
+pprof = { version = "0.15", features = ["flamegraph"], optional = true }
 rayon = { workspace = true }
 dirs = { workspace = true }
 tower-lsp = { workspace = true }
@@ -56,3 +57,14 @@ unwrap_used = "deny"
 [features]
 default = []
 pprof-signal = ["dep:pprof"]
+
+# Integration tests: one binary (see tests/main.rs), plus files
+# that install a global allocator or mutate the process environment,
+# which keep a process of their own under `cargo test`.
+[[test]]
+name = "integration"
+path = "tests/main.rs"
+
+[[test]]
+name = "benchmark"
+path = "tests/benchmark.rs"

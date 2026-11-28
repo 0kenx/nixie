@@ -498,7 +498,7 @@ pub fn run_coordinator(
         let workers_guard = workers
             .lock()
             .map_err(|_| lock_poisoned("workers map for shutdown"))?;
-        for (_, state) in workers_guard.iter() {
+        for state in workers_guard.values() {
             let _ = send_message(&state.stream, &Message::Shutdown);
         }
     }

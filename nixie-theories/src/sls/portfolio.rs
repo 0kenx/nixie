@@ -326,9 +326,7 @@ impl YalsatSolver {
     /// Clear all caches
     pub fn clear_cache(&mut self) {
         self.score_cache.clear();
-        for best in &mut self.clause_best {
-            *best = None;
-        }
+        self.clause_best.fill(None);
     }
 
     /// Reset
@@ -462,8 +460,6 @@ impl PortfolioSls {
         }
         self.best_result = None;
         self.best_unsat = u32::MAX;
-        for p in &mut self.algo_performance {
-            *p = 0;
-        }
+        self.algo_performance.fill(0);
     }
 }

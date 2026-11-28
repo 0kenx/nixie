@@ -141,7 +141,7 @@ pub enum Condition {
     Lookahead(Box<AdvancedRegex>),
 }
 
-/// Character class (e.g., [a-z], [^0-9])
+/// Character class (e.g., `[a-z]`, `[^0-9]`)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CharacterClass {
     /// Character ranges

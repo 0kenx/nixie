@@ -307,10 +307,7 @@ pub fn solve_integer_eq_system(a: &[Vec<i128>], b: &[i128]) -> EqSolution {
             // Lineage: the failing effective row is `pr` after
             // substituting the earlier pivots, so every pivot row that
             // fed a z value (transitively) is responsible.
-            let mut core: Vec<usize> = Vec::new();
-            for j in 0..=i {
-                core.push(e.pivot_rows[j]);
-            }
+            let mut core: Vec<usize> = e.pivot_rows[..=i].to_vec();
             core.sort_unstable();
             core.dedup();
             return EqSolution::Infeasible(core);

@@ -852,7 +852,7 @@ impl BooleanLratChecker {
                     for &(atom, pol) in lemma {
                         let detail = manager
                             .get(atom)
-                            .map(|t| format!("{:?}", &t.kind))
+                            .map(|t| format!("{:?}", t.kind))
                             .unwrap_or_else(|| "<missing>".to_string());
                         eprintln!("[lemma-skip] atom={atom:?} pol={pol} kind={detail}");
                     }

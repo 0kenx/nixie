@@ -207,16 +207,8 @@ impl QueryBudget {
             .saturating_add(solver.statistics.conflicts)
             .saturating_add(solver.bv.conflicts_spent());
         let decisions = solver.sat.stats().decisions;
-        let _ = self.shared.conflicts.fetch_update(
-            core::sync::atomic::Ordering::Relaxed,
-            core::sync::atomic::Ordering::Relaxed,
-            |n| Some(n.saturating_add(conflicts)),
-        );
-        let _ = self.shared.decisions.fetch_update(
-            core::sync::atomic::Ordering::Relaxed,
-            core::sync::atomic::Ordering::Relaxed,
-            |n| Some(n.saturating_add(decisions)),
-        );
+        saturating_fetch_add(&self.shared.conflicts, conflicts);
+        saturating_fetch_add(&self.shared.decisions, decisions);
         // start() charges the shared delta, including this query, before
         // issuing another. Separate attempts see it in for_solver().
     }
@@ -1308,4 +1300,17 @@ pub(crate) fn is_const_array(term: TermId, manager: &TermManager) -> bool {
         }
         _ => false,
     })
+}
+
+/// `counter += delta`, saturating at `u64::MAX`. Spelled as a CAS loop rather
+/// than `fetch_update` (deprecated in 1.100, renamed `try_update`) so it builds
+/// on both the 1.88 MSRV and current toolchains without a deprecation allow.
+fn saturating_fetch_add(counter: &core::sync::atomic::AtomicU64, delta: u64) {
+    use core::sync::atomic::Ordering::Relaxed;
+    let mut current = counter.load(Relaxed);
+    while let Err(seen) =
+        counter.compare_exchange_weak(current, current.saturating_add(delta), Relaxed, Relaxed)
+    {
+        current = seen;
+    }
 }

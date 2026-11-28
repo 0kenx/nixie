@@ -255,14 +255,10 @@ impl VSIDS {
 
     /// Clear the VSIDS state
     pub fn clear(&mut self) {
-        for act in &mut self.activity {
-            *act = 0.0;
-        }
+        self.activity.fill(0.0);
         self.increment = 1.0;
         self.heap.clear();
-        for pos in &mut self.heap_pos {
-            *pos = usize::MAX;
-        }
+        self.heap_pos.fill(usize::MAX);
     }
 }
 

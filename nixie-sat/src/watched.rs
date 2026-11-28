@@ -1699,12 +1699,8 @@ impl WatchLists {
         for watches in &mut self.watches {
             watches.clear();
         }
-        for c in &mut self.bin_phantom {
-            *c = 0;
-        }
-        for c in &mut self.ghost_debt {
-            *c = 0;
-        }
+        self.bin_phantom.fill(0);
+        self.ghost_debt.fill(0);
         if let Some(csr) = &mut self.csr {
             csr.clear_all();
         }

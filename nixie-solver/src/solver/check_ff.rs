@@ -1264,9 +1264,9 @@ impl Solver {
                 encoded: FxHashMap::default(),
             };
             for &assertion in &self.assertions {
-                match encoder.encode(assertion, manager) {
-                    Some(l) => unit_lits.push(l),
-                    None => return None,
+                {
+                    let l = encoder.encode(assertion, manager)?;
+                    unit_lits.push(l)
                 }
             }
         }

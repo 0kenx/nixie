@@ -8,6 +8,7 @@ rust-version.workspace = true
 description = "TLA+ intermediate representation: the KerA kernel language and lowering from surface syntax"
 keywords = ["tla", "verification", "smt", "model-checking", "ir"]
 categories = ["science", "compilers"]
+autotests = false
 
 [dependencies]
 nixie-tla-syntax = { workspace = true }
@@ -16,3 +17,10 @@ smallvec = { workspace = true }
 
 [lints.clippy]
 unwrap_used = "deny"
+
+# Integration tests: one binary (see tests/main.rs), plus files
+# that install a global allocator or mutate the process environment,
+# which keep a process of their own under `cargo test`.
+[[test]]
+name = "integration"
+path = "tests/main.rs"

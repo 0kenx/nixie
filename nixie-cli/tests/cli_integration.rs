@@ -477,7 +477,10 @@ fn test_issue_5_memory_reports_process_rss_not_system_total() {
         assert!(mb > 0, "Reported memory is 0 – RSS collection failed");
 
         // Must be well below total system RAM: a tiny problem can't consume all RAM
-        let total_system_mb = System::new_all().total_memory() / 1_048_576;
+        let total_system_mb = System::new_all()
+            .expect("sysinfo supports this platform")
+            .total_memory()
+            / 1_048_576;
         assert!(
             mb < total_system_mb,
             "Reported memory ({} MB) equals or exceeds total system RAM ({} MB) \

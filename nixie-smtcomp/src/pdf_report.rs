@@ -600,7 +600,7 @@ mod tests {
         assert!(
             bytes.starts_with(b"%PDF-"),
             "missing %PDF- magic; first bytes: {:?}",
-            &bytes.get(..8)
+            bytes.get(..8)
         );
         let size = bytes.len() as u64;
         assert!(

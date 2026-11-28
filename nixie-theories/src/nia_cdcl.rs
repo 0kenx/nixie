@@ -988,9 +988,9 @@ impl<'a> CdclSolver<'a> {
                     return TheoryResult::LevelZeroUnsat;
                 }
                 let mut clause: Vec<i32> = Vec::new();
-                for av in 1..self.atoms.len() {
-                    if self.value[av] != 0 {
-                        clause.push(-signed(av, self.value[av]));
+                for (av, &value) in self.value[..self.atoms.len()].iter().enumerate().skip(1) {
+                    if value != 0 {
+                        clause.push(-signed(av, value));
                     }
                 }
                 if clause.is_empty() {
